@@ -12,14 +12,13 @@ Uso:
 """
 
 import json
-import time
 import argparse
 import urllib.parse
 import os
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from playwright.sync_api import sync_playwright, Page, Response
+from playwright.sync_api import sync_playwright, Page, Response, Route
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
@@ -29,6 +28,68 @@ console = Console()
 BASE_URL = "https://dashboard.openfinancebrasil.org.br"
 EVOLUTION_URL = f"{BASE_URL}/transactional-data/api-requests/evolution"
 CHROMIUM_BIN = "/root/.cache/ms-playwright/chromium-1194/chrome-linux/chrome"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Datas — replica a função Jw(t) do frontend
+# ─────────────────────────────────────────────────────────────────────────────
+
+def fridays_between(start: datetime, end: datetime) -> list[str]:
+    """Retorna todas as sextas-feiras entre start e end como ISO strings UTC."""
+    result = []
+    current = start.replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=timezone.utc)
+    end_utc = end.replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=timezone.utc)
+    while current <= end_utc:
+        if current.weekday() == 4:  # Friday
+            result.append(current.strftime("%Y-%m-%dT%H:%M:%S.000Z"))
+        current += timedelta(days=1)
+    return result
+
+
+def resolve_date_range(months: int | None, start: str | None, end: str | None) -> list[str] | None:
+    """
+    Converte argumentos de data em lista de sextas-feiras.
+    Retorna None se nenhum argumento de data foi fornecido (usa default do browser: 90 dias).
+    """
+    today = datetime.now(timezone.utc)
+
+    if start or end:
+        s = datetime.fromisoformat(start) if start else today - timedelta(days=90)
+        e = datetime.fromisoformat(end) if end else today
+        fridays = fridays_between(s, e)
+    elif months:
+        # Aproxima meses como 30 dias cada
+        s = today - timedelta(days=months * 30)
+        fridays = fridays_between(s, today)
+    else:
+        return None  # usa o default do browser (90 dias)
+
+    if not fridays:
+        console.print("[yellow]⚠ Nenhuma sexta-feira encontrada no período informado.[/yellow]")
+    return fridays
+
+
+def make_date_route_handler(custom_dates: list[str]):
+    """
+    Cria handler de route que intercepta POST /api/api-requests
+    e substitui o campo 'dates' com as datas personalizadas.
+    Permite filtrar qualquer período sem precisar interagir com o calendário da UI.
+    """
+    def handler(route: Route):
+        request = route.request
+        try:
+            body = json.loads(request.post_data or "{}")
+            original_dates = body.get("dates", [])
+            body["dates"] = custom_dates
+            console.print(
+                f"  [dim]Route: datas substituídas "
+                f"({len(original_dates)} → {len(custom_dates)} sextas)[/dim]"
+            )
+            route.continue_(post_data=json.dumps(body))
+        except Exception as e:
+            console.print(f"  [yellow]Route handler erro: {e}[/yellow]")
+            route.continue_()
+    return handler
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Proxy
@@ -172,6 +233,7 @@ def run_session(
     receiver_filter: str | None = None,
     transmitter_filter: str | None = None,
     status_filter: int | None = None,
+    custom_dates: list[str] | None = None,
     list_filters: bool = False,
     screenshot: bool = True,
 ) -> list[dict]:
@@ -200,6 +262,14 @@ def run_session(
         # Registrar interceptadores
         page.on("response", make_response_handler(captured))
         page.on("request", make_request_handler(requests_log))
+
+        # ── Route handler: substitui datas nos POSTs de gráfico ──
+        if custom_dates:
+            console.print(
+                f"  [dim]Período personalizado: {len(custom_dates)} sextas "
+                f"({custom_dates[0][:10]} → {custom_dates[-1][:10]})[/dim]"
+            )
+            page.route(f"{BASE_URL}/api/api-requests", make_date_route_handler(custom_dates))
 
         # ── Navegar ──
         console.print(f"[dim]Navegando para {EVOLUTION_URL}[/dim]")
@@ -354,6 +424,12 @@ def main():
     parser.add_argument("--receiver", help="Filtrar por receptor (nome parcial do banco)")
     parser.add_argument("--transmitter", help="Filtrar por transmissor (nome parcial)")
     parser.add_argument("--status", type=int, choices=[200, 500], help="200=Sucesso, 500=Falha")
+    parser.add_argument("--months", type=int, metavar="N",
+                        help="Últimos N meses de dados (ex: 6 → ~6 meses atrás até hoje)")
+    parser.add_argument("--start", metavar="YYYY-MM-DD",
+                        help="Data de início do período (ex: 2025-10-01)")
+    parser.add_argument("--end", metavar="YYYY-MM-DD",
+                        help="Data de fim do período (padrão: hoje)")
     parser.add_argument("--list-filters", action="store_true", help="Listar filtros disponíveis")
     parser.add_argument("--no-screenshot", action="store_true", help="Não salvar screenshots")
     args = parser.parse_args()
@@ -364,11 +440,23 @@ def main():
         border_style="blue",
     ))
 
+    custom_dates = resolve_date_range(
+        months=args.months,
+        start=args.start,
+        end=args.end,
+    )
+    if custom_dates is not None:
+        console.print(
+            f"[dim]Período: {custom_dates[0][:10]} → {custom_dates[-1][:10]} "
+            f"({len(custom_dates)} sextas)[/dim]"
+        )
+
     results = run_session(
         api_filter=args.api,
         receiver_filter=args.receiver,
         transmitter_filter=args.transmitter,
         status_filter=args.status,
+        custom_dates=custom_dates,
         list_filters=args.list_filters,
         screenshot=not args.no_screenshot,
     )
