@@ -1,0 +1,346 @@
+[
+  {
+    "value": "18a5f8fd-836e-4a7f-8db3-32d0c98da989",
+    "label": "99PAY INSTITUICAO DE PAGAMENTO S.A."
+  },
+  {
+    "value": "12db6790-1ec9-4199-b20a-2820b7ec22c2",
+    "label": "ACCREDITO"
+  },
+  {
+    "value": "e1d52399-a2a1-53be-a84b-085c1a94aac5",
+    "label": "ACESSO SOLUÇÕES"
+  },
+  {
+    "value": "f7817b3c-c319-575f-8896-727c1b12cfda",
+    "label": "AILOS"
+  },
+  {
+    "value": "17bcf6a1-4249-45cf-a2f1-db0fbcdbecad",
+    "label": "AME DIGITAL BRASIL INSTITUICAO DE PAGAMENTO LTDA"
+  },
+  {
+    "value": "5403880c-21cf-4c5e-b2d3-6bb6e8d0a2a3",
+    "label": "ASA SOCIEDADE DE CREDITO FINANCIAMENTO E INVESTIMENTO S.A."
+  },
+  {
+    "value": "7e780f5a-c95e-4e5e-a4e7-66a4fa43dc6c",
+    "label": "ASAAS GESTÃO FINANCEIRA"
+  },
+  {
+    "value": "b6e68e03-c85d-54e8-8649-6e9bf9bb5dd8",
+    "label": "BANCO AGIBANK"
+  },
+  {
+    "value": "65a9cfe4-b7a1-5b59-8e10-3ce0e271b0a5",
+    "label": "BANCO ARBI"
+  },
+  {
+    "value": "4ae2cefb-e3c1-5624-9448-b3aa4777c539",
+    "label": "BANCO BMG"
+  },
+  {
+    "value": "4a7250ec-eac5-5d8f-b7eb-dc0e8e880203",
+    "label": "BANCO BOCOM BBM"
+  },
+  {
+    "value": "0bd0b05e-ce18-5105-bbe9-ddf16a79eff9",
+    "label": "BANCO BTG PACTUAL"
+  },
+  {
+    "value": "b024cf43-9ce6-52c4-8820-9b5d0bccb74c",
+    "label": "BANCO C6"
+  },
+  {
+    "value": "c4bc3d73-a6a8-4376-ae28-8fbfa431916b",
+    "label": "BANCO CSF S/A"
+  },
+  {
+    "value": "9ff5e023-dcfe-595b-8be9-4a1b9c1597d6",
+    "label": "BANCO DA AMAZONIA"
+  },
+  {
+    "value": "0e7f1342-d2bf-52f6-adbe-3f137aea9449",
+    "label": "BANCO DE LA NACION ARGENTINA"
+  },
+  {
+    "value": "36404f3b-743d-5b87-92a0-ddda3618e7a1",
+    "label": "BANCO DIGIMAIS"
+  },
+  {
+    "value": "27aea8f6-2119-55f8-9553-5ad4b08eeb17",
+    "label": "BANCO DIGIO"
+  },
+  {
+    "value": "9415f224-9f58-56b5-af4c-085b4438e4eb",
+    "label": "BANCO DO BRASIL"
+  },
+  {
+    "value": "a60b7fb5-f7f3-5536-a41f-1bff137f47d1",
+    "label": "BANCO DO NORDESTE"
+  },
+  {
+    "value": "31ee4f72-8769-5136-83e4-03f2dd4c935e",
+    "label": "BANCO INTER"
+  },
+  {
+    "value": "1e6aeb44-8b00-5e2a-bcf7-e3db7f3b7e6f",
+    "label": "BANCO MASTER S/A"
+  },
+  {
+    "value": "5d249486-c697-5295-a856-9955ed3ac332",
+    "label": "BANCO MERCANTIL DO BRASIL"
+  },
+  {
+    "value": "d3f8a4f7-7b6e-5b82-bdbe-bd90414650f0",
+    "label": "BANCO ORIGINAL"
+  },
+  {
+    "value": "b6a214c7-6332-5a41-8464-a281fb9a4ca0",
+    "label": "BANCO PAN"
+  },
+  {
+    "value": "99aff3b0-5617-5fad-bc6e-66e320a217fc",
+    "label": "BANCO PAULISTA"
+  },
+  {
+    "value": "f0f1cc87-02af-4227-9d3d-8b82cd6512cf",
+    "label": "BANCO RNX"
+  },
+  {
+    "value": "709138dd-6e9d-5f96-bfff-69a5b2cb3ec0",
+    "label": "BANCO SAFRA"
+  },
+  {
+    "value": "bb3b0993-554d-5ea4-91ee-13af4ffe988d",
+    "label": "BANCO SOFISA"
+  },
+  {
+    "value": "c7b11d9f-05a9-5cca-bfc7-2f103fdfbf99",
+    "label": "BANCO TOPÁZIO"
+  },
+  {
+    "value": "062c5edb-4e83-5002-9981-e2a96c5ad41e",
+    "label": "BANCO VOTORANTIM"
+  },
+  {
+    "value": "79717d71-0cf4-58f6-b2d0-370d5404d383",
+    "label": "BANCO XP"
+  },
+  {
+    "value": "56d70da7-b73c-5b59-801a-54fb418e95ed",
+    "label": "BANESTES"
+  },
+  {
+    "value": "2a01e202-e8f0-5f5a-9651-ebc257371e6e",
+    "label": "BANRISUL"
+  },
+  {
+    "value": "5883e379-43b1-4184-8304-df32a018620e",
+    "label": "BELVO IP"
+  },
+  {
+    "value": "7d1cf083-fae2-559b-b6ed-d01a7230062f",
+    "label": "BNDES"
+  },
+  {
+    "value": "b20c07c6-ec63-5add-bdef-e1023017f166",
+    "label": "BPP"
+  },
+  {
+    "value": "a72a6d4f-79be-5362-afb6-f8d9c9c39cf5",
+    "label": "BRADESCO"
+  },
+  {
+    "value": "effb6cae-e6d6-5f0b-8f31-ee7922850300",
+    "label": "BRB - BANCO DE BRASILIA"
+  },
+  {
+    "value": "c160a6f5-e5df-5067-9e97-ec6fba62fd87",
+    "label": "CAIXA ECONOMICA FEDERAL"
+  },
+  {
+    "value": "ea5f58d1-b363-58ef-9d09-46ae53398b5d",
+    "label": "CARTOS SCD"
+  },
+  {
+    "value": "c55ceb2e-c9fb-4989-8ed1-39208d6d7951",
+    "label": "CELCOIN"
+  },
+  {
+    "value": "d96d6def-7f8f-5623-b15a-0bb5910920d1",
+    "label": "CIELO"
+  },
+  {
+    "value": "df49c2b5-0de6-5a66-a05a-233f1d3cce65",
+    "label": "CITIBANK"
+  },
+  {
+    "value": "fae29bd3-fac3-4f34-b2e1-139ba63f9440",
+    "label": "CLOUDWALK"
+  },
+  {
+    "value": "96ac0818-f830-56c4-8d31-1e716c4f0138",
+    "label": "COOPFISCO"
+  },
+  {
+    "value": "d0405b3d-3708-5297-ba26-626e2a15da93",
+    "label": "COOPSEFES"
+  },
+  {
+    "value": "f1d2b054-dc92-4beb-9a9e-0a3607e8d3b7",
+    "label": "CRED SYSTEM SOCIEDADE DE CREDITO DIRETO SA"
+  },
+  {
+    "value": "9294c0e8-ab01-5614-942d-97f261fe3454",
+    "label": "CREFISA"
+  },
+  {
+    "value": "294afb98-2089-4272-a6ba-88401c1baa45",
+    "label": "CRYSTAL BMC"
+  },
+  {
+    "value": "0fdc39da-a699-4f85-90cc-936c7b872791",
+    "label": "CUMBUCA INSTITUICAO DE PAGAMENTO LTDA"
+  },
+  {
+    "value": "538e025b-79fb-4a44-8321-587a84f3bef9",
+    "label": "DELEND INSTITUICAO DE PAGAMENTO LTDA"
+  },
+  {
+    "value": "b43131be-6a7f-5bfb-b436-c3ac5c5c2dac",
+    "label": "EFÍ BANK"
+  },
+  {
+    "value": "39bf5c68-08b7-4039-9fb3-b211792c5082",
+    "label": "FINNET S/A - TECNOLOGIA E INSTITUICAO DE PAGAMENTO"
+  },
+  {
+    "value": "0ca05092-025f-47c4-b878-4a03c150cccf",
+    "label": "GERU"
+  },
+  {
+    "value": "0e5ae3f4-ad98-4b40-b603-d9fed2a5f89b",
+    "label": "INICIADOR"
+  },
+  {
+    "value": "9c721898-9ce0-50f1-bf85-05075557850b",
+    "label": "ITAÚ UNIBANCO"
+  },
+  {
+    "value": "63157678-2559-4c12-a1f8-859a278e408a",
+    "label": "KLAVI INSTITUICAO DE PAGAMENTO E GESTAO DE DADOS LTDA."
+  },
+  {
+    "value": "0add85e7-086c-41d0-bd35-a3641d7acc36",
+    "label": "LINA INSTITUICAO DE PAGAMENTO S.A"
+  },
+  {
+    "value": "e5a1c7ad-11d4-560d-914c-611003a39219",
+    "label": "MERCADO PAGO"
+  },
+  {
+    "value": "42609b73-82bc-5758-9c12-7e0bcc84885e",
+    "label": "MIDWAY"
+  },
+  {
+    "value": "6f86d2ab-8ef7-4a9b-8c5f-d081f183c490",
+    "label": "NEON PAGAMENTOS"
+  },
+  {
+    "value": "926e3037-a685-553c-afa3-f7cb46ff8084",
+    "label": "NUBANK"
+  },
+  {
+    "value": "23f9e3dd-31a1-4eaf-a440-37711ad34e81",
+    "label": "OKTO"
+  },
+  {
+    "value": "1dbfe32a-5f1e-4841-a30c-9f1b5f24ad36",
+    "label": "Open Finance Brasil - FVP - Iniciador"
+  },
+  {
+    "value": "21f306af-5a9a-5dc6-a8f3-f56ff394e7be",
+    "label": "PAGSEGURO"
+  },
+  {
+    "value": "01843746-0350-4758-8647-f8c9c5aa86d8",
+    "label": "PAGUEVELOZ"
+  },
+  {
+    "value": "9cbed331-1e64-5d5a-84aa-fc64758993ab",
+    "label": "PARANÁ BANCO"
+  },
+  {
+    "value": "aaa29038-e09c-5210-afe4-132750a6157c",
+    "label": "PEFISA"
+  },
+  {
+    "value": "c0f47d95-78e7-5f20-b0ea-ff8a75a44a76",
+    "label": "PICPAY"
+  },
+  {
+    "value": "24651a57-42bc-4d94-88cd-8cacf03f8c49",
+    "label": "PLUGGY BRASIL INSTITUICAO DE PAGAMENTO LTDA"
+  },
+  {
+    "value": "d4a3c47e-2983-4b37-9996-1e8ab203c1cb",
+    "label": "PORTOSEG"
+  },
+  {
+    "value": "30e4d3c0-f0a8-53b8-95d3-0af6b2ffddee",
+    "label": "QI"
+  },
+  {
+    "value": "73d7035b-3c09-40ab-b4c2-900d9f7a5f1f",
+    "label": "QUANTO NETWORK"
+  },
+  {
+    "value": "315af131-b651-4d60-884e-ae571774f450",
+    "label": "REALIZE SOCIEDADE DE CREDITO, FINANCIAMENTO E INVESTIMENTO S.A."
+  },
+  {
+    "value": "63d4b5c5-1a5b-47a8-ac33-36609f934c87",
+    "label": "RECARGAPAY"
+  },
+  {
+    "value": "b8d20b1b-e8a7-5099-8174-05ea48bcb566",
+    "label": "SANTANDER BRASIL"
+  },
+  {
+    "value": "96748716-9b96-448c-a2b7-2abf9762af8e",
+    "label": "SHOPEE"
+  },
+  {
+    "value": "777b3ece-75ea-5fa7-a464-dd29b141e99e",
+    "label": "SICOOB"
+  },
+  {
+    "value": "0da3f6e5-a748-55d1-b39f-1653df146729",
+    "label": "SICREDI"
+  },
+  {
+    "value": "a3cec8d6-65b1-529d-bac5-9892d0c4efa3",
+    "label": "STONE"
+  },
+  {
+    "value": "cbabc7d7-249a-448a-8dab-2f82c5488018",
+    "label": "Socinal S.A. - Credito Financiamento e Investimento"
+  },
+  {
+    "value": "3526aff7-18d3-52f9-9668-ddd4753ea09e",
+    "label": "UNICRED DO BRASIL"
+  },
+  {
+    "value": "18543a69-338d-5e5b-8aa3-dc640ef5f4a2",
+    "label": "UNIPRIME CENTRAL"
+  },
+  {
+    "value": "e5b51083-adc2-5775-b0fc-02b263b1c40d",
+    "label": "UP.P"
+  },
+  {
+    "value": "6b152df6-271b-40a5-8c5b-a9207e4b4547",
+    "label": "WILL IP"
+  }
+]

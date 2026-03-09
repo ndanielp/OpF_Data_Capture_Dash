@@ -1,0 +1,92 @@
+[
+  {
+    "_id": "credit-cards-accounts",
+    "value": "credit-cards-accounts",
+    "label": "Cartão de Crédito",
+    "name": "Cartão de Crédito"
+  },
+  {
+    "_id": "consents",
+    "value": "consents",
+    "label": "Consentimento",
+    "name": "Consentimento"
+  },
+  {
+    "_id": "accounts",
+    "value": "accounts",
+    "label": "Contas",
+    "name": "Contas"
+  },
+  {
+    "_id": "exchanges",
+    "value": "exchanges",
+    "label": "Câmbio",
+    "name": "Câmbio"
+  },
+  {
+    "_id": "customers",
+    "value": "customers",
+    "label": "Dados cadastrais",
+    "name": "Dados Cadastrais"
+  },
+  {
+    "_id": "funds",
+    "value": "funds",
+    "label": "Fundos de Investimento",
+    "name": "Fundos de Investimento"
+  },
+  {
+    "_id": "unarranged-accounts-overdraft",
+    "value": "unarranged-accounts-overdraft",
+    "label": "Adiantamento a Depositantes",
+    "name": "Operações de Crédito - Adiantamento a Depositantes"
+  },
+  {
+    "_id": "invoice-financings",
+    "value": "invoice-financings",
+    "label": "Direitos Creditórios Descontados",
+    "name": "Operações de Crédito - Direitos Creditórios Descontados"
+  },
+  {
+    "_id": "loans",
+    "value": "loans",
+    "label": "Empréstimos",
+    "name": "Operações de Crédito - Empréstimos"
+  },
+  {
+    "_id": "financings",
+    "value": "financings",
+    "label": "Financiamentos",
+    "name": "Operações de Crédito - Financiamentos"
+  },
+  {
+    "_id": "resources",
+    "value": "resources",
+    "label": "Resources",
+    "name": "Recursos"
+  },
+  {
+    "_id": "bank-fixed-incomes",
+    "value": "bank-fixed-incomes",
+    "label": "Renda Fixa Bancária",
+    "name": "Renda Fixa Bancária"
+  },
+  {
+    "_id": "credit-fixed-incomes",
+    "value": "credit-fixed-incomes",
+    "label": "Renda Fixa Crédito",
+    "name": "Renda Fixa Crédito"
+  },
+  {
+    "_id": "variable-incomes",
+    "value": "variable-incomes",
+    "label": "Renda Variável",
+    "name": "Renda Variável"
+  },
+  {
+    "_id": "treasure-titles",
+    "value": "treasure-titles",
+    "label": "Títulos do Tesouro Direto",
+    "name": "Títulos do Tesouro Direto"
+  }
+]
