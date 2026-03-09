@@ -1,0 +1,96 @@
+[
+  {
+    "url": "https://dashboard.openfinancebrasil.org.br/api/updated-at",
+    "body": {
+      "pathname": "/transactional-data/api-requests/evolution"
+    }
+  },
+  {
+    "url": "https://dashboard.openfinancebrasil.org.br/api/organisations",
+    "body": {
+      "role": "client",
+      "phase": "transactional-data",
+      "collection": "api_requests_weekly"
+    }
+  },
+  {
+    "url": "https://dashboard.openfinancebrasil.org.br/api/organisations",
+    "body": {
+      "role": "server",
+      "phase": "transactional-data",
+      "collection": "api_requests_weekly"
+    }
+  },
+  {
+    "url": "https://dashboard.openfinancebrasil.org.br/api/apis",
+    "body": {
+      "phase": "transactional-data"
+    }
+  },
+  {
+    "url": "https://dashboard.openfinancebrasil.org.br/api/endpoints",
+    "body": {
+      "phase": "transactional-data"
+    }
+  },
+  {
+    "url": "https://dashboard.openfinancebrasil.org.br/api/api-requests",
+    "body": {
+      "axis": "date",
+      "apis": [
+        "loans"
+      ],
+      "dates": [
+        "2025-12-12T00:00:00.000Z",
+        "2025-12-19T00:00:00.000Z",
+        "2025-12-26T00:00:00.000Z",
+        "2026-01-02T00:00:00.000Z",
+        "2026-01-09T00:00:00.000Z",
+        "2026-01-16T00:00:00.000Z",
+        "2026-01-23T00:00:00.000Z",
+        "2026-01-30T00:00:00.000Z",
+        "2026-02-06T00:00:00.000Z",
+        "2026-02-13T00:00:00.000Z",
+        "2026-02-20T00:00:00.000Z",
+        "2026-02-27T00:00:00.000Z",
+        "2026-03-06T00:00:00.000Z"
+      ],
+      "phase": "transactional-data"
+    }
+  },
+  {
+    "url": "https://dashboard.openfinancebrasil.org.br/api/endpoints",
+    "body": {
+      "phase": "transactional-data",
+      "apis": [
+        "loans"
+      ]
+    }
+  },
+  {
+    "url": "https://dashboard.openfinancebrasil.org.br/api/api-requests",
+    "body": {
+      "axis": "date",
+      "apis": [
+        "loans"
+      ],
+      "dates": [
+        "2025-12-12T00:00:00.000Z",
+        "2025-12-19T00:00:00.000Z",
+        "2025-12-26T00:00:00.000Z",
+        "2026-01-02T00:00:00.000Z",
+        "2026-01-09T00:00:00.000Z",
+        "2026-01-16T00:00:00.000Z",
+        "2026-01-23T00:00:00.000Z",
+        "2026-01-30T00:00:00.000Z",
+        "2026-02-06T00:00:00.000Z",
+        "2026-02-13T00:00:00.000Z",
+        "2026-02-20T00:00:00.000Z",
+        "2026-02-27T00:00:00.000Z",
+        "2026-03-06T00:00:00.000Z"
+      ],
+      "phase": "transactional-data",
+      "status": 200
+    }
+  }
+]
