@@ -13,13 +13,18 @@ from pathlib import Path
 from rich.console import Console
 from rich.table import Table
 
-console = Console()
+console = Console(legacy_windows=False)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Constantes
 # ─────────────────────────────────────────────────────────────────────────────
 
-CHROMIUM_BIN = "/root/.cache/ms-playwright/chromium-1194/chrome-linux/chrome"
+CHROMIUM_BIN = os.environ.get(
+    "CHROMIUM_BIN",
+    str(Path.home() / "AppData/Local/ms-playwright/chromium-1208/chrome-win64/chrome.exe")
+    if os.name == "nt"
+    else "/root/.cache/ms-playwright/chromium-1194/chrome-linux/chrome",
+)
 OUTPUT_DIR = Path("data/exports")
 BASE_URL = "https://dashboard.openfinancebrasil.org.br"
 

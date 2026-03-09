@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 build_consents_dec25.py)",
+      "Bash(pip install playwright -q)",
+      "Bash(python3 -m playwright install chromium)",
+      "Bash(pip install rich -q)",
+      "Bash(python3 -m playwright show-browser-path chromium)",
+      "Read(//c/Users/LENOVO/AppData/Local/ms-playwright/**)",
+      "Bash(PYTHONUTF8=1 PYTHONIOENCODING=utf-8 python3 build_consents_dec25.py)"
+    ]
+  }
+}
