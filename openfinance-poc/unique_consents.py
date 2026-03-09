@@ -1,6 +1,6 @@
 """
-Unique Consents Scraper — Dashboard Open Finance Brasil
-=======================================================
+unique_consents.py — Consentimentos únicos por receptor
+========================================================
 Captura dados de consentimentos únicos (CPF + CNPJ) por receptor ou transmissor.
 
 Uso:
@@ -8,71 +8,25 @@ Uso:
   python3 unique_consents.py --receiver "BANCO BMG"
   python3 unique_consents.py --receiver "Itaú" --months 6
   python3 unique_consents.py --receiver "BTG" --start 2025-10-01 --end 2026-01-31
-  python3 unique_consents.py --all-orgs --months 3        # itera todas as orgs
+  python3 unique_consents.py -r "BTG" -r "C6" --months 6
+  python3 unique_consents.py --all-orgs --months 3
 """
 
 import json
 import argparse
-import urllib.parse
-import os
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from pathlib import Path
 
 from playwright.sync_api import sync_playwright, Route
-from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
 
-console = Console()
+from utils import (
+    BASE_URL, CHROMIUM_BIN, OUTPUT_DIR,
+    console, get_proxy, resolve_date_range, parse_record_date, save_json,
+)
 
-BASE_URL = "https://dashboard.openfinancebrasil.org.br"
 PAGE_URL = f"{BASE_URL}/transactional-data/unique-consents/receivers"
-CHROMIUM_BIN = "/root/.cache/ms-playwright/chromium-1194/chrome-linux/chrome"
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Proxy
-# ─────────────────────────────────────────────────────────────────────────────
-
-def get_proxy() -> dict | None:
-    proxy_url = os.environ.get("HTTPS_PROXY") or os.environ.get("HTTP_PROXY")
-    if not proxy_url:
-        return None
-    p = urllib.parse.urlparse(proxy_url)
-    return {
-        "server": f"{p.scheme}://{p.hostname}:{p.port}",
-        "username": p.username or "",
-        "password": p.password or "",
-    }
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Datas
-# ─────────────────────────────────────────────────────────────────────────────
-
-def fridays_between(start: datetime, end: datetime) -> list[str]:
-    result = []
-    current = start.replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=timezone.utc)
-    end_utc = end.replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=timezone.utc)
-    while current <= end_utc:
-        if current.weekday() == 4:
-            result.append(current.strftime("%Y-%m-%dT%H:%M:%S.000Z"))
-        current += timedelta(days=1)
-    return result
-
-
-def resolve_date_range(months: int | None, start: str | None, end: str | None) -> list[str]:
-    today = datetime.now(timezone.utc)
-    if start or end:
-        s = datetime.fromisoformat(start).replace(tzinfo=timezone.utc) if start else today - timedelta(days=90)
-        e = datetime.fromisoformat(end).replace(tzinfo=timezone.utc) if end else today
-    elif months:
-        s = today - timedelta(days=months * 30)
-        e = today
-    else:
-        s = today - timedelta(days=90)
-        e = today
-    return fridays_between(s, e)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -80,7 +34,7 @@ def resolve_date_range(months: int | None, start: str | None, end: str | None) -
 # ─────────────────────────────────────────────────────────────────────────────
 
 def fetch_orgs(page) -> list[dict]:
-    """Retorna lista de {value, label} de organizações disponíveis."""
+    """Navega para a página e captura a lista de organizações disponíveis."""
     orgs = []
 
     def capture_orgs(resp):
@@ -96,18 +50,13 @@ def fetch_orgs(page) -> list[dict]:
     return orgs
 
 
-def fetch_unique_consents(
-    org_uuids: list[str],
-    dates: list[str],
-    page,
-) -> list[dict]:
+def fetch_unique_consents(org_uuids: list[str], dates: list[str], page) -> list[dict]:
     """
-    Dispara a chamada a /api/unique-consents para as orgs e datas especificadas.
-    Usa route interception para injetar os parâmetros certos.
+    Dispara POST /api/unique-consents com as orgs e datas desejadas.
+    Usa route interception para injetar os parâmetros no body antes do envio.
     """
     captured = []
 
-    # Route: substitui datas e orgs no body do POST
     def route_handler(route: Route):
         try:
             body = json.loads(route.request.post_data or "{}")
@@ -130,7 +79,7 @@ def fetch_unique_consents(
     page.route(f"{BASE_URL}/api/unique-consents", route_handler)
     page.on("response", capture_response)
 
-    # Selecionar a primeira org no dropdown para disparar o fetch
+    # Seleciona a primeira org no dropdown para disparar o fetch
     page.locator(".css-13cymwt-control").click()
     page.wait_for_timeout(400)
     page.locator("[class*='option']").first.click()
@@ -145,19 +94,15 @@ def run_session(
     dates: list[str],
     list_orgs: bool,
 ) -> dict:
-    proxy = get_proxy()
-
     with sync_playwright() as p:
         browser = p.chromium.launch(
             headless=True,
             executable_path=CHROMIUM_BIN,
-            proxy=proxy,
+            proxy=get_proxy(),
             args=["--ignore-certificate-errors", "--no-sandbox", "--disable-dev-shm-usage"],
         )
         ctx = browser.new_context(
-            ignore_https_errors=True,
-            viewport={"width": 1440, "height": 900},
-            locale="pt-BR",
+            ignore_https_errors=True, viewport={"width": 1440, "height": 900}, locale="pt-BR",
         )
         page = ctx.new_page()
 
@@ -168,7 +113,6 @@ def run_session(
             browser.close()
             return {"orgs": orgs, "data": []}
 
-        # Resolver quais orgs buscar
         if all_orgs:
             target_orgs = orgs
         elif org_names:
@@ -195,24 +139,16 @@ def run_session(
             f"[dim]Período: {dates[0][:10]} → {dates[-1][:10]} ({len(dates)} sextas)[/dim]"
         )
 
-        # Buscar todas as orgs de uma vez (passa lista de UUIDs)
         org_uuids = [o["value"] for o in target_orgs]
         raw = fetch_unique_consents(org_uuids, dates, page)
-
         browser.close()
 
-    # Enriquecer com label da org (quando single-org)
     org_label = target_orgs[0]["label"] if len(target_orgs) == 1 else f"{len(target_orgs)} orgs"
     records = []
     for item in raw:
         raw_date = str(item.get("date") or item.get("_id") or "")
-        try:
-            dt = datetime.fromisoformat(raw_date.replace("Z", "+00:00"))
-            date_str = dt.strftime("%Y-%m-%d")
-        except Exception:
-            date_str = raw_date
         records.append({
-            "date": date_str,
+            "date": parse_record_date(raw_date),
             "cpf": item.get("cpf", 0),
             "cnpj": item.get("cnpj", 0),
             "total": item.get("cpf", 0) + item.get("cnpj", 0),
@@ -226,20 +162,22 @@ def run_session(
 # Rendering
 # ─────────────────────────────────────────────────────────────────────────────
 
-def render_table(records: list[dict], title: str = "Consentimentos Únicos"):
+def _render_consents(records: list[dict], title: str):
+    """Renderiza tabela com colunas CPF / CNPJ / Total (e Org quando multi-org)."""
     if not records:
         console.print("[yellow]Nenhum dado capturado.[/yellow]")
         return
+    multi_org = len({r["org"] for r in records}) > 1
     table = Table(title=title, show_lines=True)
     table.add_column("Data", style="cyan", no_wrap=True)
     table.add_column("CPF", justify="right", style="green")
     table.add_column("CNPJ", justify="right", style="blue")
     table.add_column("Total", justify="right", style="bold white")
-    if len({r["org"] for r in records}) > 1:
+    if multi_org:
         table.add_column("Org", style="dim")
     for r in records:
         row = [r["date"], f"{r['cpf']:,}", f"{r['cnpj']:,}", f"{r['total']:,}"]
-        if len({rec["org"] for rec in records}) > 1:
+        if multi_org:
             row.append(r["org"])
         table.add_row(*row)
     console.print(table)
@@ -256,15 +194,13 @@ def main():
     parser.add_argument("--receiver", "-r", metavar="NOME", action="append",
                         help="Filtrar por receptor (pode repetir: -r 'Itaú' -r 'BTG')")
     parser.add_argument("--all-orgs", action="store_true",
-                        help="Buscar todas as organizações (iteração)")
+                        help="Buscar todas as organizações")
     parser.add_argument("--list-orgs", action="store_true",
                         help="Listar organizações disponíveis e sair")
-    parser.add_argument("--months", type=int, metavar="N",
-                        help="Últimos N meses (ex: 6)")
+    parser.add_argument("--months", type=int, metavar="N", help="Últimos N meses (ex: 6)")
     parser.add_argument("--start", metavar="YYYY-MM-DD", help="Data de início")
     parser.add_argument("--end", metavar="YYYY-MM-DD", help="Data de fim (padrão: hoje)")
-    parser.add_argument("--output", "-o", metavar="FILE",
-                        help="Salvar resultado em JSON (ex: out.json)")
+    parser.add_argument("--output", "-o", metavar="FILE", help="Destino do JSON de saída")
     args = parser.parse_args()
 
     console.print(Panel.fit(
@@ -273,7 +209,9 @@ def main():
         border_style="blue",
     ))
 
-    dates = resolve_date_range(args.months, args.start, args.end)
+    # resolve_date_range retorna None se sem args → usa default de 90 dias do browser
+    dates = resolve_date_range(args.months, args.start, args.end) or \
+            resolve_date_range(months=3, start=None, end=None)
 
     result = run_session(
         org_names=args.receiver,
@@ -294,10 +232,12 @@ def main():
     records = result["data"]
     if records:
         title = f"Consentimentos Únicos — {records[0]['org']}"
-        render_table(records, title=title)
-        output_file = args.output or f"unique_consents_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-        with open(output_file, "w", encoding="utf-8") as f:
-            json.dump(records, f, ensure_ascii=False, indent=2)
+        _render_consents(records, title)
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        output_file = args.output or str(
+            OUTPUT_DIR / f"unique_consents_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        )
+        save_json(records, output_file)
         console.print(f"\n[bold green]✓ {len(records)} registros salvos em {output_file}[/bold green]")
     else:
         console.print("[yellow]Nenhum dado capturado.[/yellow]")
