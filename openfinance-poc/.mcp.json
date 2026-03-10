@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "openfinance": {
+      "command": "python",
+      "args": ["/home/user/Claude_Projects/openfinance-poc/mcp_server.py"]
+    }
+  }
+}
