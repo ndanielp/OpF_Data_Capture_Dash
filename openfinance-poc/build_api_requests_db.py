@@ -283,22 +283,22 @@ def _worker_run(worker_id: int, chunk: list[dict], dates: list[str],
     preview: list[dict] = []
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(
-            headless=True,
-            executable_path=CHROMIUM_BIN,
-            proxy=get_proxy(),
-            args=["--ignore-certificate-errors", "--no-sandbox", "--disable-dev-shm-usage"],
-        )
-        ctx = browser.new_context(
-            ignore_https_errors=True,
-            viewport={"width": 1440, "height": 900},
-            locale="pt-BR",
-        )
-        page = ctx.new_page()
         queue.put(("ready", worker_id, len(chunk)))
 
         for i, receptor in enumerate(chunk, 1):
-            # Reload por receptor: garante estado limpo do React Select
+            # Novo browser por receptor: evita 403 por acúmulo de sessão
+            browser = p.chromium.launch(
+                headless=True,
+                executable_path=CHROMIUM_BIN,
+                proxy=get_proxy(),
+                args=["--ignore-certificate-errors", "--no-sandbox", "--disable-dev-shm-usage"],
+            )
+            ctx = browser.new_context(
+                ignore_https_errors=True,
+                viewport={"width": 1440, "height": 900},
+                locale="pt-BR",
+            )
+            page = ctx.new_page()
             page.goto(PAGE_URL, wait_until="networkidle", timeout=45000)
             page.wait_for_selector(RECEPTOR_DROPDOWN, timeout=15000)
 
@@ -313,6 +313,7 @@ def _worker_run(worker_id: int, chunk: list[dict], dates: list[str],
                 for api_id in APIS:
                     for status in STATUSES:
                         queue.put(("combo", worker_id, api_id, status, "·"))
+                browser.close()
                 continue
 
             # Probe usou click_idx=0; combos começam em call_count=1 → click_idx=1
@@ -329,7 +330,8 @@ def _worker_run(worker_id: int, chunk: list[dict], dates: list[str],
                     if len(preview) < 10:
                         preview.extend([r for r in records if r["total"] > 0][:2])
 
-        browser.close()
+            browser.close()
+
     queue.put(("done", worker_id))
     return all_records, preview
 

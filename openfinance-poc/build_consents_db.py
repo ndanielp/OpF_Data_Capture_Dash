@@ -223,22 +223,22 @@ def _worker_run(worker_id: int, chunk: list[dict], dates: list[str],
     preview: list[dict] = []
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(
-            headless=True,
-            executable_path=CHROMIUM_BIN,
-            proxy=get_proxy(),
-            args=["--ignore-certificate-errors", "--no-sandbox", "--disable-dev-shm-usage"],
-        )
-        ctx = browser.new_context(
-            ignore_https_errors=True,
-            viewport={"width": 1440, "height": 900},
-            locale="pt-BR",
-        )
-        page = ctx.new_page()
         queue.put(("ready", worker_id, len(chunk)))
 
         for i, org in enumerate(chunk, 1):
-            # Reload por org: garante estado limpo do React Select
+            # Novo browser por receptor: evita 403 por acúmulo de sessão
+            browser = p.chromium.launch(
+                headless=True,
+                executable_path=CHROMIUM_BIN,
+                proxy=get_proxy(),
+                args=["--ignore-certificate-errors", "--no-sandbox", "--disable-dev-shm-usage"],
+            )
+            ctx = browser.new_context(
+                ignore_https_errors=True,
+                viewport={"width": 1440, "height": 900},
+                locale="pt-BR",
+            )
+            page = ctx.new_page()
             page.goto(PAGE_URL, wait_until="networkidle", timeout=45000)
             page.wait_for_selector("[class*='-control']", timeout=15000)
             queue.put(("start", worker_id, org["label"], i))
@@ -248,11 +248,10 @@ def _worker_run(worker_id: int, chunk: list[dict], dates: list[str],
             all_records.extend(records)
             nonzero = sum(1 for r in records if r["total"] > 0)
             queue.put(("org_done", worker_id, org["label"], len(records), nonzero))
+            browser.close()
 
             if len(preview) < 10:
                 preview.extend([r for r in records if r["total"] > 0][:2])
-
-        browser.close()
 
     queue.put(("done", worker_id))
     return all_records, preview
