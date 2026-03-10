@@ -62,9 +62,10 @@ STATUSES = [200, 500]
 
 WORKER_COUNT = 5
 
-# Seletores do dropdown "Receptores" — sem classe CSS dinâmica (hash de build)
-RECEPTOR_DROPDOWN = "div:has-text('Receptores') [class*='control']"
-RECEPTOR_OPTIONS  = "div:has-text('Receptores') [class*='option']"
+# Seletores React Select genéricos — qualquer dropdown da página aciona /api/api-requests
+# (o route handler substitui o body inteiro, então não precisamos clicar o dropdown certo)
+RECEPTOR_DROPDOWN = "[class*='-control']"
+RECEPTOR_OPTIONS  = "[class*='-option']"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
