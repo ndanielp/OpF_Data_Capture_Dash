@@ -22,7 +22,7 @@ from pathlib import Path
 from time import perf_counter
 
 from rich.panel  import Panel
-from rich.prompt import Confirm, Prompt
+from rich.prompt import Confirm, IntPrompt, Prompt
 from rich.rule   import Rule
 
 from build_consents_db import open_db, run as run_consents
@@ -85,6 +85,8 @@ def _interactive_setup(db_path_default: Path):
     db_raw  = Prompt.ask(" Banco SQLite", default=str(db_path_default))
     db_path = Path(db_raw)
 
+    workers = IntPrompt.ask(" Número de workers", default=5)
+
     # Resumo
     console.print()
     etapas = " + ".join(filter(None, [
@@ -93,6 +95,7 @@ def _interactive_setup(db_path_default: Path):
     ])) or "[red]nenhuma[/red]"
     console.print(Panel(
         f"  Período : [cyan]{dates[0][:10]} → {dates[-1][:10]}[/cyan]  ({len(dates)} semanas)\n"
+        f"  Workers : {workers}\n"
         f"  Etapas  : {etapas}\n"
         f"  Banco   : [dim]{db_path}[/dim]",
         title="Configuração",
@@ -103,7 +106,7 @@ def _interactive_setup(db_path_default: Path):
         raise SystemExit(0)
 
     console.print()
-    return dates, db_path, skip_consents, skip_api
+    return dates, db_path, skip_consents, skip_api, workers
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -121,6 +124,8 @@ def main():
                         help=f"Caminho do banco SQLite (padrão: {DEFAULT_DB})")
     parser.add_argument("--skip-consents",     action="store_true", help="Pula atualização de consentimentos")
     parser.add_argument("--skip-api-requests", action="store_true", help="Pula atualização de chamadas de API")
+    parser.add_argument("--workers", type=int, default=5, metavar="N",
+                        help="Número de workers paralelos (padrão: 5)")
     args = parser.parse_args()
 
     console.print(Panel.fit(
@@ -134,7 +139,7 @@ def main():
     no_step_args   = not any([args.skip_consents, args.skip_api_requests])
 
     if no_period_args and no_step_args:
-        dates, db_path, skip_consents, skip_api_requests = _interactive_setup(Path(args.db))
+        dates, db_path, skip_consents, skip_api_requests, workers = _interactive_setup(Path(args.db))
     else:
         dates = resolve_date_range(args.months, args.start, args.end) or \
                 resolve_date_range(months=3, start=None, end=None)
@@ -144,6 +149,7 @@ def main():
         db_path           = Path(args.db)
         skip_consents     = args.skip_consents
         skip_api_requests = args.skip_api_requests
+        workers           = args.workers
 
     console.print(f"[dim]Banco  : {db_path.resolve()}[/dim]")
     console.print(f"[dim]Período: {dates[0][:10]} → {dates[-1][:10]} ({len(dates)} semanas)[/dim]\n")
@@ -156,7 +162,7 @@ def main():
     # ── 1. Consentimentos ────────────────────────────────────────────────────
     if not skip_consents:
         console.print(Rule("[bold cyan]Etapa 1/2 — Consentimentos Únicos[/bold cyan]"))
-        n_consents = run_consents(dates, con)
+        n_consents = run_consents(dates, db_path, workers)
         console.print(f"[green]✓[/green] {n_consents} consentimentos inseridos/atualizados\n")
 
     # ── 2. Receptores ativos no período ──────────────────────────────────────
@@ -181,7 +187,7 @@ def main():
             console.print("[yellow]Nenhum receptor ativo — etapa de API requests ignorada.[/yellow]")
         else:
             console.print(Rule("[bold cyan]Etapa 2/2 — Chamadas de API[/bold cyan]"))
-            n_requests = run_api_requests(dates, active_receptors, db_path)
+            n_requests = run_api_requests(dates, active_receptors, db_path, workers=workers)
             console.print(f"[green]✓[/green] {n_requests} api_requests inseridos/atualizados\n")
 
     # ── Resumo ───────────────────────────────────────────────────────────────

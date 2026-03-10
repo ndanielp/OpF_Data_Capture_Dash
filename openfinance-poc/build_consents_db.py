@@ -5,21 +5,31 @@ Coleta consentimentos únicos (CPF + CNPJ) de todos os receptores para um perío
 e persiste os dados em um banco SQLite com upsert — execuções repetidas atualizam
 os registros sem duplicar.
 
+Usa múltiplos workers (ProcessPoolExecutor), cada um com seu próprio browser, para
+paralelizar a coleta. O processo principal escreve no banco após coletar todos os
+resultados (evita "database is locked").
+
 Uso:
   python3 build_consents_db.py --months 3
   python3 build_consents_db.py --start 2025-01-01 --end 2026-03-01
-  python3 build_consents_db.py --start 2025-12-01 --end 2025-12-31
-  python3 build_consents_db.py --db data/outro.db --months 6
+  python3 build_consents_db.py --db data/outro.db --months 6 --workers 3
 """
 
 import argparse
 import json
+import multiprocessing as mp
 import sqlite3
+import time
+from concurrent.futures import ProcessPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 
 from playwright.sync_api import sync_playwright, Route
+from rich import box as rbox
+from rich.live  import Live
 from rich.panel import Panel
+from rich.table import Table
+from rich.text  import Text
 
 from unique_consents import fetch_orgs
 from utils import (
@@ -28,20 +38,21 @@ from utils import (
     render_table,
 )
 
-DEFAULT_DB = Path("data/consents.db")
-API_URL    = f"{BASE_URL}/api/unique-consents"
-PAGE_URL   = f"{BASE_URL}/transactional-data/unique-consents/receivers"
+DEFAULT_DB   = Path("data/consents.db")
+API_URL      = f"{BASE_URL}/api/unique-consents"
+PAGE_URL     = f"{BASE_URL}/transactional-data/unique-consents/receivers"
+
+WORKER_COUNT = 5
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Fetch por org — usa click no dropdown (igual ao unique_consents.py)
+# Fetch por org — reload por org garante estado limpo do React Select
 # ─────────────────────────────────────────────────────────────────────────────
 
 def fetch_consents_for_org(page, org_uuid: str, dates: list[str], click_idx: int = 0) -> list[dict]:
     """
     Dispara POST /api/unique-consents via route interception + click no dropdown.
-    click_idx alterna entre 0 e 1 para garantir que React Select dispara onChange
-    (re-clicar na opção já selecionada não dispara evento).
+    Usa expect_response para aguardar a resposta (até 8s).
     """
     captured: list[dict] = []
 
@@ -54,30 +65,21 @@ def fetch_consents_for_org(page, org_uuid: str, dates: list[str], click_idx: int
         except Exception:
             route.continue_()
 
-    def capture_response(resp):
-        if "/api/unique-consents" in resp.url:
-            try:
-                data = resp.json()
-                if isinstance(data, list):
-                    captured.extend(data)
-            except Exception:
-                pass
-
     page.route(API_URL, route_handler)
-    page.on("response", capture_response)
-
     try:
-        # Abre o dropdown (selector robusto: funciona com ou sem valor selecionado)
-        page.locator("[class*='-control']").first.click()
-        # Aguarda as opções ficarem visíveis antes de clicar (evita timeout por timing)
-        page.wait_for_selector("[class*='-option']", state="visible", timeout=8000)
-        page.locator("[class*='-option']").nth(click_idx).click()
-        page.wait_for_timeout(5000)
+        with page.expect_response(
+            lambda r: "/api/unique-consents" in r.url, timeout=8000
+        ) as resp_info:
+            page.locator("[class*='-control']").first.click()
+            page.wait_for_selector("[class*='-option']", state="visible", timeout=8000)
+            page.locator("[class*='-option']").nth(click_idx).click()
+        data = resp_info.value.json()
+        if isinstance(data, list):
+            captured.extend(data)
     except Exception:
-        console.print("  [yellow]timeout UI[/yellow]", end=" ")
+        pass
     finally:
         page.unroute(API_URL, route_handler)
-        page.remove_listener("response", capture_response)
 
     return captured
 
@@ -147,12 +149,78 @@ def upsert_records(con: sqlite3.Connection, records: list[dict], fetched_at: str
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Sessão
+# Live dashboard
 # ─────────────────────────────────────────────────────────────────────────────
 
-def run(dates: list[str], con: sqlite3.Connection) -> int:
-    fetched_at = datetime.now(timezone.utc).isoformat()
-    total_saved = 0
+def _update_state(states: dict, msg: tuple) -> None:
+    kind, wid = msg[0], msg[1]
+    if kind == "ready":
+        states[wid]["status"]    = "working"
+        states[wid]["rec_total"] = msg[2]
+    elif kind == "start":
+        states[wid]["receptor"] = msg[2]
+        states[wid]["rec_idx"]  = msg[3]
+    elif kind == "org_done":
+        states[wid]["recs_done"] += 1
+        states[wid]["results"].append("✓" if msg[4] > 0 else "·")
+    elif kind == "done":
+        states[wid]["status"] = "done"
+
+
+def _make_table(states: dict, start_time: float) -> Table:
+    n_total = sum(s["rec_total"] for s in states.values())
+    n_done  = sum(s["recs_done"] for s in states.values())
+    wids    = sorted(states)
+
+    table = Table(box=rbox.SIMPLE_HEAVY, expand=False, show_edge=True,
+                  title="Consentimentos Únicos — Workers")
+    table.add_column("Worker",     min_width=8,  style="bold")
+    table.add_column("Receptor",   min_width=30)
+    table.add_column("Prog.",      min_width=8,  justify="right")
+    table.add_column("Resultados", min_width=40)
+
+    for wid in wids:
+        s = states[wid]
+        if s["status"] == "done":
+            worker_cell = f"[green]W{wid} ✓[/green]"
+            receptor    = "[dim]concluído[/dim]"
+            prog        = f"[green]{s['recs_done']}/{s['rec_total']}[/green]"
+        elif s["status"] == "working" and s["receptor"]:
+            worker_cell = f"W{wid}"
+            receptor    = s["receptor"][:30]
+            prog        = f"{s['rec_idx']}/{s['rec_total']}"
+        else:
+            worker_cell = f"[dim]W{wid}[/dim]"
+            receptor    = "[dim]iniciando...[/dim]"
+            prog        = f"0/{s['rec_total']}"
+
+        results = s["results"][-40:]
+        res_text = Text()
+        for sym in results:
+            res_text.append("✓", style="green bold") if sym == "✓" else res_text.append("·", style="dim")
+
+        table.add_row(worker_cell, receptor, prog, res_text)
+
+    mins, secs = divmod(int(time.time() - start_time), 60)
+    table.caption = (
+        f"Tempo: {mins:02d}:{secs:02d}  |  "
+        f"Receptores concluídos: {n_done}/{n_total}"
+    )
+    return table
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Worker (1 browser por processo)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _worker_run(worker_id: int, chunk: list[dict], dates: list[str],
+                fetched_at: str, queue) -> tuple[list[dict], list[dict]]:
+    """
+    Roda em processo separado: apenas fetch via browser, sem escrita em disco.
+    Envia progresso via queue. Retorna (all_records, preview_records).
+    """
+    all_records: list[dict] = []
+    preview: list[dict] = []
 
     with sync_playwright() as p:
         browser = p.chromium.launch(
@@ -167,33 +235,132 @@ def run(dates: list[str], con: sqlite3.Connection) -> int:
             locale="pt-BR",
         )
         page = ctx.new_page()
+        queue.put(("ready", worker_id, len(chunk)))
 
-        orgs = fetch_orgs(page)
-        console.print(f"[green]✓[/green] {len(orgs)} receptores carregados")
-        console.print(f"[dim]Período: {dates[0][:10]} → {dates[-1][:10]} ({len(dates)} semanas)[/dim]\n")
+        for i, org in enumerate(chunk, 1):
+            # Reload por org: garante estado limpo do React Select
+            page.goto(PAGE_URL, wait_until="networkidle", timeout=45000)
+            page.wait_for_selector("[class*='-control']", timeout=15000)
+            queue.put(("start", worker_id, org["label"], i))
 
-        if not orgs:
-            browser.close()
-            return 0
-
-        preview_records: list[dict] = []
-
-        for i, org in enumerate(orgs, 1):
-            console.print(f"  [{i}/{len(orgs)}] {org['label']}", end=" ")
-            raw = fetch_consents_for_org(page, org["value"], dates, click_idx=i % 2)
+            raw     = fetch_consents_for_org(page, org["value"], dates, click_idx=0)
             records = build_records(raw, org)
-            saved = upsert_records(con, records, fetched_at)
-            total_saved += saved
-            if len(preview_records) < 20:
-                preview_records.extend(records)
-            console.print(f"[dim]→ {len(records)} semanas[/dim]")
+            all_records.extend(records)
+            nonzero = sum(1 for r in records if r["total"] > 0)
+            queue.put(("org_done", worker_id, org["label"], len(records), nonzero))
+
+            if len(preview) < 10:
+                preview.extend([r for r in records if r["total"] > 0][:2])
 
         browser.close()
 
-    if preview_records:
+    queue.put(("done", worker_id))
+    return all_records, preview
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Sessão
+# ─────────────────────────────────────────────────────────────────────────────
+
+def run(dates: list[str], db_path: str | Path, workers: int = WORKER_COUNT) -> int:
+    """
+    Coleta consentimentos únicos para todos os receptores e persiste em SQLite.
+    Retorna total de registros inseridos/atualizados.
+    """
+    fetched_at = datetime.now(timezone.utc).isoformat()
+    db_path    = Path(db_path)
+
+    # ── Fetch lista de receptores (processo principal) ─────────────────────────
+    console.print("[dim]Carregando lista de receptores...[/dim]")
+    with sync_playwright() as p:
+        browser = p.chromium.launch(
+            headless=True,
+            executable_path=CHROMIUM_BIN,
+            proxy=get_proxy(),
+            args=["--ignore-certificate-errors", "--no-sandbox", "--disable-dev-shm-usage"],
+        )
+        ctx = browser.new_context(
+            ignore_https_errors=True,
+            viewport={"width": 1440, "height": 900},
+            locale="pt-BR",
+        )
+        page = ctx.new_page()
+        page.goto(PAGE_URL, wait_until="networkidle", timeout=45000)
+        orgs = fetch_orgs(page)
+        browser.close()
+
+    console.print(f"[green]✓[/green] {len(orgs)} receptores carregados")
+    console.print(
+        f"[dim]Período: {dates[0][:10]} → {dates[-1][:10]} "
+        f"({len(dates)} semanas · {len(orgs)} receptores · {workers} workers)[/dim]\n"
+    )
+
+    if not orgs:
+        return 0
+
+    n      = min(workers, len(orgs))
+    chunks = [orgs[i::n] for i in range(n)]  # round-robin para balancear carga
+
+    states = {
+        i + 1: {
+            "status": "init", "receptor": "", "rec_idx": 0,
+            "rec_total": len(chunks[i]), "recs_done": 0, "results": [],
+        }
+        for i in range(n) if chunks[i]
+    }
+    start_time  = time.time()
+    all_records: list[dict] = []
+    all_preview: list[dict] = []
+
+    with mp.Manager() as mgr:
+        queue = mgr.Queue()
+
+        with Live(
+            _make_table(states, start_time),
+            refresh_per_second=4,
+            console=console,
+            transient=False,
+        ) as live:
+            with ProcessPoolExecutor(max_workers=n) as executor:
+                futures = {
+                    executor.submit(_worker_run, i + 1, chunk, dates, fetched_at, queue): i + 1
+                    for i, chunk in enumerate(chunks) if chunk
+                }
+                completed: set[int] = set()
+
+                while len(completed) < len(futures):
+                    while not queue.empty():
+                        _update_state(states, queue.get_nowait())
+                    live.update(_make_table(states, start_time))
+
+                    for future, wid in list(futures.items()):
+                        if future.done() and wid not in completed:
+                            completed.add(wid)
+                            try:
+                                recs, prev = future.result()
+                                all_records.extend(recs)
+                                all_preview.extend(prev)
+                                states[wid]["recs_done"] = states[wid]["rec_total"]
+                            except Exception as e:
+                                console.print(f"[red]W{wid}: {e}[/red]")
+
+                    time.sleep(0.15)
+
+                # Drain final
+                while not queue.empty():
+                    _update_state(states, queue.get_nowait())
+                live.update(_make_table(states, start_time))
+
+    # Escrita única no processo principal — sem concorrência
+    con = sqlite3.connect(str(db_path))
+    con.execute("PRAGMA journal_mode=WAL")
+    total_saved = upsert_records(con, all_records, fetched_at)
+    con.close()
+
+    if all_preview:
         render_table(
-            preview_records[:20],
-            title=f"Consentimentos Únicos (preview {min(20, len(preview_records))} registros)",
+            all_preview[:20],
+            title=f"Consentimentos Únicos (preview {min(20, len(all_preview))} registros)",
             columns=[
                 ("date",     "Data",     "left",  "cyan"),
                 ("receptor", "Receptor", "left",  "white"),
@@ -207,18 +374,20 @@ def run(dates: list[str], con: sqlite3.Connection) -> int:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Main
+# Main (CLI)
 # ─────────────────────────────────────────────────────────────────────────────
 
 def main():
     parser = argparse.ArgumentParser(
         description="Persiste consentimentos únicos (CPF/CNPJ) de todos os receptores em SQLite"
     )
-    parser.add_argument("--months", type=int, metavar="N", help="Últimos N meses (ex: 3)")
-    parser.add_argument("--start", metavar="YYYY-MM-DD", help="Data de início")
-    parser.add_argument("--end",   metavar="YYYY-MM-DD", help="Data de fim (padrão: hoje)")
-    parser.add_argument("--db",    metavar="PATH", default=str(DEFAULT_DB),
+    parser.add_argument("--months",  type=int, metavar="N",    help="Últimos N meses (ex: 3)")
+    parser.add_argument("--start",   metavar="YYYY-MM-DD",     help="Data de início")
+    parser.add_argument("--end",     metavar="YYYY-MM-DD",     help="Data de fim (padrão: hoje)")
+    parser.add_argument("--db",      metavar="PATH",           default=str(DEFAULT_DB),
                         help=f"Caminho do banco SQLite (padrão: {DEFAULT_DB})")
+    parser.add_argument("--workers", type=int, metavar="N",    default=WORKER_COUNT,
+                        help=f"Número de workers paralelos (padrão: {WORKER_COUNT})")
     args = parser.parse_args()
 
     console.print(Panel.fit(
@@ -238,9 +407,13 @@ def main():
     console.print(f"[dim]Banco: {db_path.resolve()}[/dim]")
     console.print(f"[dim]Semanas alvo: {[d[:10] for d in dates]}[/dim]\n")
 
+    # Garante que as tabelas existem
     con = open_db(db_path)
-    total = run(dates, con)
+    con.close()
 
+    total = run(dates, db_path, workers=args.workers)
+
+    con = open_db(db_path)
     row = con.execute(
         "SELECT count(*), min(date), max(date) FROM unique_consents"
     ).fetchone()
