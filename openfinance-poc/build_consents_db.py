@@ -35,7 +35,7 @@ from unique_consents import fetch_orgs
 from utils import (
     BASE_URL, CHROMIUM_BIN,
     console, get_proxy, resolve_date_range, parse_record_date,
-    render_table,
+    render_table, goto_with_retry,
 )
 
 DEFAULT_DB   = Path("data/consents.db")
@@ -239,8 +239,7 @@ def _worker_run(worker_id: int, chunk: list[dict], dates: list[str],
                 locale="pt-BR",
             )
             page = ctx.new_page()
-            page.goto(PAGE_URL, wait_until="networkidle", timeout=45000)
-            page.wait_for_selector("[class*='-control']", timeout=15000)
+            goto_with_retry(page, PAGE_URL, "[class*='-control']")
             queue.put(("start", worker_id, org["label"], i))
 
             raw     = fetch_consents_for_org(page, org["value"], dates, click_idx=0)
@@ -284,7 +283,7 @@ def run(dates: list[str], db_path: str | Path, workers: int = WORKER_COUNT) -> i
             locale="pt-BR",
         )
         page = ctx.new_page()
-        page.goto(PAGE_URL, wait_until="networkidle", timeout=45000)
+        goto_with_retry(page, PAGE_URL, "[class*='-control']")
         orgs = fetch_orgs(page)
         browser.close()
 

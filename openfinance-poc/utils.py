@@ -106,6 +106,26 @@ def parse_record_date(raw: str) -> str:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Navegação com retry
+# ─────────────────────────────────────────────────────────────────────────────
+
+def goto_with_retry(page, url: str, selector: str, max_retries: int = 3) -> None:
+    """
+    Navega para URL e aguarda selector aparecer, com até max_retries tentativas.
+    Usa backoff linear (3s, 6s) entre tentativas para lidar com 403 transitórios.
+    """
+    for attempt in range(max_retries):
+        try:
+            page.goto(url, wait_until="networkidle", timeout=45000)
+            page.wait_for_selector(selector, timeout=15000)
+            return
+        except Exception:
+            if attempt == max_retries - 1:
+                raise
+            page.wait_for_timeout(3000 * (attempt + 1))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Output
 # ─────────────────────────────────────────────────────────────────────────────
 

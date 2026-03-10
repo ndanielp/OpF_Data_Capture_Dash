@@ -34,7 +34,7 @@ from build_consents_db import open_db
 from utils import (
     BASE_URL, CHROMIUM_BIN,
     console, get_proxy, resolve_date_range, parse_record_date,
-    render_table,
+    render_table, goto_with_retry,
 )
 
 PAGE_URL     = f"{BASE_URL}/transactional-data/api-requests/evolution"
@@ -62,9 +62,9 @@ STATUSES = [200, 500]
 
 WORKER_COUNT = 5
 
-# Selector do container do dropdown "Receptores" (mesmo padrão do api_requests.py)
-RECEPTOR_DROPDOWN = "div.css-48dm8r:has-text('Receptores') [class*='control']"
-RECEPTOR_OPTIONS  = "div.css-48dm8r:has-text('Receptores') [class*='option']"
+# Seletores do dropdown "Receptores" — sem classe CSS dinâmica (hash de build)
+RECEPTOR_DROPDOWN = "div:has-text('Receptores') [class*='control']"
+RECEPTOR_OPTIONS  = "div:has-text('Receptores') [class*='option']"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -299,8 +299,7 @@ def _worker_run(worker_id: int, chunk: list[dict], dates: list[str],
                 locale="pt-BR",
             )
             page = ctx.new_page()
-            page.goto(PAGE_URL, wait_until="networkidle", timeout=45000)
-            page.wait_for_selector(RECEPTOR_DROPDOWN, timeout=15000)
+            goto_with_retry(page, PAGE_URL, RECEPTOR_DROPDOWN)
 
             queue.put(("start", worker_id, receptor["label"], i))
 
