@@ -115,6 +115,18 @@ def open_db(path: Path) -> sqlite3.Connection:
             PRIMARY KEY (date, receptor_uuid)
         )
     """)
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS api_requests (
+            date           TEXT NOT NULL,
+            receptor       TEXT NOT NULL,
+            receptor_uuid  TEXT NOT NULL,
+            api            TEXT NOT NULL,
+            status         INTEGER NOT NULL,
+            total          INTEGER NOT NULL DEFAULT 0,
+            fetched_at     TEXT NOT NULL,
+            PRIMARY KEY (date, receptor_uuid, api, status)
+        )
+    """)
     con.commit()
     return con
 
