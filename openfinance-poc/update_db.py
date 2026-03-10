@@ -10,18 +10,20 @@ Fluxo:
   3. Atualiza api_requests (por receptor × API × status)
 
 Uso:
+  python3 update_db.py                          # interface interativa
   python3 update_db.py --start 2025-12-01 --end 2025-12-31
   python3 update_db.py --months 3
   python3 update_db.py --months 1 --db data/consents.db
 """
 
 import argparse
-from datetime import datetime, timezone
+from datetime import date as date_type, datetime
 from pathlib import Path
 from time import perf_counter
 
-from rich.panel import Panel
-from rich.rule import Rule
+from rich.panel  import Panel
+from rich.prompt import Confirm, Prompt
+from rich.rule   import Rule
 
 from build_consents_db import open_db, run as run_consents
 from build_api_requests_db import run as run_api_requests
@@ -29,6 +31,84 @@ from utils import console, resolve_date_range
 
 DEFAULT_DB = Path("data/consents.db")
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Interface interativa de startup
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _interactive_setup(db_path_default: Path):
+    """Prompts interativos para período e etapas. Retorna (dates, db_path, skip_consents, skip_api)."""
+
+    PERIOD_OPTIONS = {
+        "1": ("Último mês",      lambda: resolve_date_range(months=1, start=None, end=None)),
+        "2": ("Últimos 3 meses", lambda: resolve_date_range(months=3, start=None, end=None)),
+        "3": ("Últimos 6 meses", lambda: resolve_date_range(months=6, start=None, end=None)),
+        "4": ("Personalizado",   None),
+    }
+
+    console.print("\n [bold]Período de atualização:[/bold]")
+    for k, (label, _) in PERIOD_OPTIONS.items():
+        console.print(f"   [cyan]{k}[/cyan] · {label}")
+
+    choice = Prompt.ask("\n Opção", choices=list(PERIOD_OPTIONS), default="2")
+
+    if choice == "4":
+        while True:
+            start_raw = Prompt.ask(" Data de início [dim](YYYY-MM-DD)[/dim]")
+            try:
+                datetime.fromisoformat(start_raw)
+                break
+            except ValueError:
+                console.print(" [red]Formato inválido. Use YYYY-MM-DD[/red]")
+
+        today_str = date_type.today().isoformat()
+        while True:
+            end_raw = Prompt.ask(" Data de fim [dim](YYYY-MM-DD)[/dim]", default=today_str)
+            try:
+                datetime.fromisoformat(end_raw)
+                break
+            except ValueError:
+                console.print(" [red]Formato inválido. Use YYYY-MM-DD[/red]")
+
+        dates = resolve_date_range(months=None, start=start_raw, end=end_raw)
+    else:
+        dates = PERIOD_OPTIONS[choice][1]()
+
+    if not dates:
+        console.print("[red]Nenhuma sexta-feira encontrada no período informado.[/red]")
+        raise SystemExit(1)
+
+    console.print()
+    skip_consents = not Confirm.ask(" Atualizar consentimentos?",  default=True)
+    skip_api      = not Confirm.ask(" Atualizar chamadas de API?", default=True)
+
+    db_raw  = Prompt.ask(" Banco SQLite", default=str(db_path_default))
+    db_path = Path(db_raw)
+
+    # Resumo
+    console.print()
+    etapas = " + ".join(filter(None, [
+        None if skip_consents else "consentimentos",
+        None if skip_api      else "API requests",
+    ])) or "[red]nenhuma[/red]"
+    console.print(Panel(
+        f"  Período : [cyan]{dates[0][:10]} → {dates[-1][:10]}[/cyan]  ({len(dates)} semanas)\n"
+        f"  Etapas  : {etapas}\n"
+        f"  Banco   : [dim]{db_path}[/dim]",
+        title="Configuração",
+        border_style="blue",
+    ))
+
+    if not Confirm.ask(" Confirmar e iniciar?", default=True):
+        raise SystemExit(0)
+
+    console.print()
+    return dates, db_path, skip_consents, skip_api
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Main
+# ─────────────────────────────────────────────────────────────────────────────
 
 def main():
     parser = argparse.ArgumentParser(
@@ -39,7 +119,7 @@ def main():
     parser.add_argument("--end",    metavar="YYYY-MM-DD", help="Data de fim (padrão: hoje)")
     parser.add_argument("--db",     metavar="PATH", default=str(DEFAULT_DB),
                         help=f"Caminho do banco SQLite (padrão: {DEFAULT_DB})")
-    parser.add_argument("--skip-consents",    action="store_true", help="Pula atualização de consentimentos")
+    parser.add_argument("--skip-consents",     action="store_true", help="Pula atualização de consentimentos")
     parser.add_argument("--skip-api-requests", action="store_true", help="Pula atualização de chamadas de API")
     args = parser.parse_args()
 
@@ -49,15 +129,23 @@ def main():
         border_style="blue",
     ))
 
-    dates = resolve_date_range(args.months, args.start, args.end) or \
-            resolve_date_range(months=3, start=None, end=None)
+    # Modo interativo quando nenhum arg de período/etapa foi fornecido
+    no_period_args = not any([args.months, args.start, args.end])
+    no_step_args   = not any([args.skip_consents, args.skip_api_requests])
 
-    if not dates:
-        console.print("[red]Nenhuma sexta-feira encontrada no período informado.[/red]")
-        return
+    if no_period_args and no_step_args:
+        dates, db_path, skip_consents, skip_api_requests = _interactive_setup(Path(args.db))
+    else:
+        dates = resolve_date_range(args.months, args.start, args.end) or \
+                resolve_date_range(months=3, start=None, end=None)
+        if not dates:
+            console.print("[red]Nenhuma sexta-feira encontrada no período informado.[/red]")
+            return
+        db_path           = Path(args.db)
+        skip_consents     = args.skip_consents
+        skip_api_requests = args.skip_api_requests
 
-    db_path = Path(args.db)
-    console.print(f"[dim]Banco : {db_path.resolve()}[/dim]")
+    console.print(f"[dim]Banco  : {db_path.resolve()}[/dim]")
     console.print(f"[dim]Período: {dates[0][:10]} → {dates[-1][:10]} ({len(dates)} semanas)[/dim]\n")
 
     con       = open_db(db_path)
@@ -66,7 +154,7 @@ def main():
     n_requests = 0
 
     # ── 1. Consentimentos ────────────────────────────────────────────────────
-    if not args.skip_consents:
+    if not skip_consents:
         console.print(Rule("[bold cyan]Etapa 1/2 — Consentimentos Únicos[/bold cyan]"))
         n_consents = run_consents(dates, con)
         console.print(f"[green]✓[/green] {n_consents} consentimentos inseridos/atualizados\n")
@@ -88,12 +176,12 @@ def main():
     )
 
     # ── 3. Chamadas de API ───────────────────────────────────────────────────
-    if not args.skip_api_requests:
+    if not skip_api_requests:
         if not active_receptors:
             console.print("[yellow]Nenhum receptor ativo — etapa de API requests ignorada.[/yellow]")
         else:
             console.print(Rule("[bold cyan]Etapa 2/2 — Chamadas de API[/bold cyan]"))
-            n_requests = run_api_requests(dates, active_receptors, con)
+            n_requests = run_api_requests(dates, active_receptors, db_path)
             console.print(f"[green]✓[/green] {n_requests} api_requests inseridos/atualizados\n")
 
     # ── Resumo ───────────────────────────────────────────────────────────────
