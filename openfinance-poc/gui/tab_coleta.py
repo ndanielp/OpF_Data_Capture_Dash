@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import (
     QGroupBox, QLabel, QComboBox, QSpinBox, QCheckBox,
     QPushButton, QPlainTextEdit, QDateEdit, QSizePolicy,
 )
-from PyQt6.QtCore import QProcess, QDate, Qt, pyqtSignal
+from PyQt6.QtCore import QProcess, QProcessEnvironment, QDate, Qt, pyqtSignal
 from PyQt6.QtGui import QFont, QTextCursor
 
 BASE_DIR   = Path(__file__).parent.parent   # openfinance-poc/
@@ -179,8 +179,8 @@ class TabColeta(QWidget):
         self._process = QProcess(self)
         self._process.setWorkingDirectory(str(BASE_DIR))
 
-        # Força UTF-8 e desativa cores Rich para output limpo
-        env = self._process.processEnvironment()
+        # Herda todo o ambiente do sistema + força UTF-8 e desativa cores Rich
+        env = QProcessEnvironment.systemEnvironment()
         env.insert("PYTHONIOENCODING", "utf-8")
         env.insert("NO_COLOR", "1")
         self._process.setProcessEnvironment(env)
