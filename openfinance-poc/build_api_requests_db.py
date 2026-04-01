@@ -30,7 +30,14 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text  import Text
 
+from contextlib import contextmanager
+
 from build_consents_db import open_db
+
+
+@contextmanager
+def _nullctx():
+    yield
 from utils import (
     BASE_URL, CHROMIUM_BIN,
     console, get_proxy, resolve_date_range, parse_record_date,
@@ -336,7 +343,8 @@ def _worker_run(worker_id: int, chunk: list[dict], dates: list[str],
 
 def run(dates: list[str], receptors: list[dict],
         db_path: str | Path,
-        workers: int = WORKER_COUNT) -> int:
+        workers: int = WORKER_COUNT,
+        on_state_update=None) -> int:
     """
     receptors: lista de {"label": str, "value": uuid}
     Retorna total de registros inseridos/atualizados.
@@ -363,15 +371,19 @@ def run(dates: list[str], receptors: list[dict],
         f"{len(receptors) * len(APIS) * len(STATUSES)} chamadas · {n} workers)[/dim]\n"
     )
 
+    use_live = on_state_update is None
+
     with mp.Manager() as mgr:
         queue = mgr.Queue()
 
-        with Live(
+        live_ctx = Live(
             _make_table(states, start_time),
             refresh_per_second=4,
             console=console,
             transient=False,
-        ) as live:
+        ) if use_live else None
+
+        with (live_ctx if live_ctx else _nullctx()):
             with ProcessPoolExecutor(max_workers=n) as executor:
                 futures = {
                     executor.submit(_worker_run, i + 1, chunk, dates, fetched_at, queue): i + 1
@@ -383,7 +395,12 @@ def run(dates: list[str], receptors: list[dict],
                     # Drain queue
                     while not queue.empty():
                         _update_state(states, queue.get_nowait())
-                    live.update(_make_table(states, start_time))
+
+                    elapsed = time.time() - start_time
+                    if on_state_update:
+                        on_state_update(dict(states), elapsed)
+                    elif live_ctx:
+                        live_ctx.update(_make_table(states, start_time))
 
                     # Collect finished futures
                     for future, wid in list(futures.items()):
@@ -402,7 +419,11 @@ def run(dates: list[str], receptors: list[dict],
                 # Final drain
                 while not queue.empty():
                     _update_state(states, queue.get_nowait())
-                live.update(_make_table(states, start_time))
+                elapsed = time.time() - start_time
+                if on_state_update:
+                    on_state_update(dict(states), elapsed)
+                elif live_ctx:
+                    live_ctx.update(_make_table(states, start_time))
 
     # Escrita única no processo principal — sem concorrência
     con = sqlite3.connect(str(db_path))

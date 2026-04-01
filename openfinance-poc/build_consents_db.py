@@ -31,6 +31,8 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text  import Text
 
+from contextlib import contextmanager
+
 from unique_consents import fetch_orgs
 from utils import (
     BASE_URL, CHROMIUM_BIN,
@@ -41,6 +43,11 @@ from utils import (
 DEFAULT_DB   = Path("data/consents.db")
 API_URL      = f"{BASE_URL}/api/unique-consents"
 PAGE_URL     = f"{BASE_URL}/transactional-data/unique-consents/receivers"
+
+@contextmanager
+def _nullctx():
+    yield
+
 
 WORKER_COUNT   = 3
 WORKER_STAGGER = 4  # segundos entre o início de cada worker
@@ -254,7 +261,8 @@ def _worker_run(worker_id: int, chunk: list[dict], dates: list[str],
 # Sessão
 # ─────────────────────────────────────────────────────────────────────────────
 
-def run(dates: list[str], db_path: str | Path, workers: int = WORKER_COUNT) -> int:
+def run(dates: list[str], db_path: str | Path, workers: int = WORKER_COUNT,
+        on_state_update=None) -> int:
     """
     Coleta consentimentos únicos para todos os receptores e persiste em SQLite.
     Retorna total de registros inseridos/atualizados.
@@ -294,15 +302,19 @@ def run(dates: list[str], db_path: str | Path, workers: int = WORKER_COUNT) -> i
     all_records: list[dict] = []
     all_preview: list[dict] = []
 
+    use_live = on_state_update is None
+
     with mp.Manager() as mgr:
         queue = mgr.Queue()
 
-        with Live(
+        live_ctx = Live(
             _make_table(states, start_time),
             refresh_per_second=4,
             console=console,
             transient=False,
-        ) as live:
+        ) if use_live else None
+
+        with (live_ctx if live_ctx else _nullctx()):
             with ProcessPoolExecutor(max_workers=n) as executor:
                 futures = {
                     executor.submit(_worker_run, i + 1, chunk, dates, fetched_at, queue): i + 1
@@ -313,7 +325,12 @@ def run(dates: list[str], db_path: str | Path, workers: int = WORKER_COUNT) -> i
                 while len(completed) < len(futures):
                     while not queue.empty():
                         _update_state(states, queue.get_nowait())
-                    live.update(_make_table(states, start_time))
+
+                    elapsed = time.time() - start_time
+                    if on_state_update:
+                        on_state_update(dict(states), elapsed)
+                    elif live_ctx:
+                        live_ctx.update(_make_table(states, start_time))
 
                     for future, wid in list(futures.items()):
                         if future.done() and wid not in completed:
@@ -331,7 +348,11 @@ def run(dates: list[str], db_path: str | Path, workers: int = WORKER_COUNT) -> i
                 # Drain final
                 while not queue.empty():
                     _update_state(states, queue.get_nowait())
-                live.update(_make_table(states, start_time))
+                elapsed = time.time() - start_time
+                if on_state_update:
+                    on_state_update(dict(states), elapsed)
+                elif live_ctx:
+                    live_ctx.update(_make_table(states, start_time))
 
     # Escrita única no processo principal — sem concorrência
     con = sqlite3.connect(str(db_path))
