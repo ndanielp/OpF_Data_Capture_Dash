@@ -38,7 +38,7 @@ from unique_consents import fetch_orgs
 from utils import (
     BASE_URL, CHROMIUM_BIN,
     console, get_proxy, resolve_date_range, parse_record_date,
-    render_table, goto_with_retry, create_browser, create_page,
+    render_table, goto_with_retry, create_browser, create_page, close_browser_clean,
 )
 
 DEFAULT_DB   = Path("data/consents.db")
@@ -249,8 +249,8 @@ def _worker_run(worker_id: int, chunk: list[dict], dates: list[str],
             all_records.extend(records)
             nonzero = sum(1 for r in records if r["total"] > 0)
             queue.put(("org_done", worker_id, org["label"], len(records), nonzero))
-            browser.close()
-            # Pausa aleatória entre receptores: reduz acúmulo de requisições no CloudFront
+            # Limpa cache/cookies, fecha contexto e browser antes do próximo receptor
+            close_browser_clean(browser, page)
             time.sleep(random.uniform(3, 6))
 
             if len(preview) < 10:

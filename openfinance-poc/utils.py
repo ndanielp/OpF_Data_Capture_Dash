@@ -123,7 +123,7 @@ Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3]});
 
 
 def create_browser(p):
-    """Lança Chromium com flags anti-detecção."""
+    """Lança Chromium com flags anti-detecção e sem cache em disco."""
     return p.chromium.launch(
         headless=True,
         executable_path=CHROMIUM_BIN,
@@ -133,6 +133,9 @@ def create_browser(p):
             "--disable-blink-features=AutomationControlled",
             "--disable-infobars",
             "--disable-dev-shm-usage",
+            "--disable-application-cache",
+            "--disable-cache",
+            "--disk-cache-size=0",
         ],
     )
 
@@ -149,6 +152,32 @@ def create_page(browser):
     page = ctx.new_page()
     page.add_init_script(_INIT_SCRIPT)
     return page
+
+
+def close_browser_clean(browser, page) -> None:
+    """
+    Limpa cookies, localStorage/sessionStorage e cache HTTP (via Cache API)
+    do contexto da página, fecha o contexto e depois o browser.
+    Garante estado completamente limpo a cada receptor.
+    """
+    try:
+        ctx = page.context
+        ctx.clear_cookies()
+        try:
+            page.evaluate(
+                "() => { "
+                "  try { localStorage.clear(); } catch(_) {} "
+                "  try { sessionStorage.clear(); } catch(_) {} "
+                "  try { caches.keys().then(ks => ks.forEach(k => caches.delete(k))); } catch(_) {} "
+                "}"
+            )
+        except Exception:
+            pass
+        ctx.close()
+    except Exception:
+        pass
+    finally:
+        browser.close()
 
 
 # ─────────────────────────────────────────────────────────────────────────────

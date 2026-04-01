@@ -42,7 +42,7 @@ def _nullctx():
 from utils import (
     BASE_URL, CHROMIUM_BIN,
     console, get_proxy, resolve_date_range, parse_record_date,
-    render_table, goto_with_retry, create_browser, create_page,
+    render_table, goto_with_retry, create_browser, create_page, close_browser_clean,
 )
 
 PAGE_URL     = f"{BASE_URL}/transactional-data/api-requests/evolution"
@@ -315,7 +315,7 @@ def _worker_run(worker_id: int, chunk: list[dict], dates: list[str],
                 for api_id in APIS:
                     for status in STATUSES:
                         queue.put(("combo", worker_id, api_id, status, "·"))
-                browser.close()
+                close_browser_clean(browser, page)
                 time.sleep(random.uniform(3, 6))
                 continue
 
@@ -333,8 +333,8 @@ def _worker_run(worker_id: int, chunk: list[dict], dates: list[str],
                     if len(preview) < 10:
                         preview.extend([r for r in records if r["total"] > 0][:2])
 
-            browser.close()
-            # Pausa aleatória entre receptores: reduz acúmulo de requisições no CloudFront
+            # Limpa cache/cookies, fecha contexto e browser antes do próximo receptor
+            close_browser_clean(browser, page)
             time.sleep(random.uniform(3, 6))
 
     queue.put(("done", worker_id))
