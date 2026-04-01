@@ -129,8 +129,17 @@ class WorkerCard(QFrame):
         # Badge color
         if status == "done":
             badge_style = f"background: {C_GREEN}; color: #1e1e2e;"
-            self._receptor_lbl.setText("concluído")
-            self._receptor_lbl.setStyleSheet(f"color: {C_GREEN}; font-size: 9pt;")
+            receptors = state.get("receptors", [])
+            if receptors:
+                lines = "\n".join(f"• {r}" for r in receptors)
+                self._receptor_lbl.setText(lines)
+                self._receptor_lbl.setStyleSheet(f"color: {C_SUBTEXT}; font-size: 8pt;")
+                self._receptor_lbl.setWordWrap(True)
+                self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+                self.adjustSize()
+            else:
+                self._receptor_lbl.setText("concluído")
+                self._receptor_lbl.setStyleSheet(f"color: {C_GREEN}; font-size: 9pt;")
         elif status == "working" and receptor:
             badge_style = f"background: {C_BLUE}; color: #1e1e2e;"
             self._receptor_lbl.setText(receptor[:34])

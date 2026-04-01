@@ -220,6 +220,7 @@ def _update_state(states: dict, msg: tuple) -> None:
         states[wid]["receptor"] = msg[2]
         states[wid]["rec_idx"]  = msg[3]
         states[wid]["combos"]   = {(a, s): "" for a in APIS for s in STATUSES}
+        states[wid]["receptors"].append(msg[2])
         if msg[3] > 1:
             states[wid]["recs_done"] += 1
     elif kind == "combo":
@@ -363,6 +364,7 @@ def run(dates: list[str], receptors: list[dict],
         i + 1: {
             "status": "init", "receptor": "", "rec_idx": 0,
             "rec_total": len(chunks[i]), "recs_done": 0, "combos": {},
+            "receptors": [],
         }
         for i in range(n) if chunks[i]
     }

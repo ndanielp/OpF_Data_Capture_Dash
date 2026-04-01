@@ -168,6 +168,7 @@ def _update_state(states: dict, msg: tuple) -> None:
     elif kind == "start":
         states[wid]["receptor"] = msg[2]
         states[wid]["rec_idx"]  = msg[3]
+        states[wid]["receptors"].append(msg[2])
     elif kind == "org_done":
         states[wid]["recs_done"] += 1
         states[wid]["results"].append("✓" if msg[4] > 0 else "·")
@@ -300,6 +301,7 @@ def run(dates: list[str], db_path: str | Path, workers: int = WORKER_COUNT,
         i + 1: {
             "status": "init", "receptor": "", "rec_idx": 0,
             "rec_total": len(chunks[i]), "recs_done": 0, "results": [],
+            "receptors": [],
         }
         for i in range(n) if chunks[i]
     }
