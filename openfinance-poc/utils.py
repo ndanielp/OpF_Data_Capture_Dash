@@ -106,6 +106,52 @@ def parse_record_date(raw: str) -> str:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Browser anti-detecção
+# ─────────────────────────────────────────────────────────────────────────────
+
+_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/131.0.0.0 Safari/537.36"
+)
+
+_INIT_SCRIPT = """
+Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+Object.defineProperty(navigator, 'languages', {get: () => ['pt-BR', 'pt', 'en-US']});
+Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3]});
+"""
+
+
+def create_browser(p):
+    """Lança Chromium com flags anti-detecção."""
+    return p.chromium.launch(
+        headless=True,
+        executable_path=CHROMIUM_BIN,
+        proxy=get_proxy(),
+        args=[
+            "--ignore-certificate-errors",
+            "--disable-blink-features=AutomationControlled",
+            "--disable-infobars",
+            "--disable-dev-shm-usage",
+        ],
+    )
+
+
+def create_page(browser):
+    """Cria página com User-Agent real e webdriver escondido."""
+    ctx = browser.new_context(
+        ignore_https_errors=True,
+        viewport={"width": 1440, "height": 900},
+        locale="pt-BR",
+        user_agent=_USER_AGENT,
+        extra_http_headers={"Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8"},
+    )
+    page = ctx.new_page()
+    page.add_init_script(_INIT_SCRIPT)
+    return page
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Navegação com retry
 # ─────────────────────────────────────────────────────────────────────────────
 

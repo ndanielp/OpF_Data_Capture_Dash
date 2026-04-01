@@ -35,7 +35,7 @@ from unique_consents import fetch_orgs
 from utils import (
     BASE_URL, CHROMIUM_BIN,
     console, get_proxy, resolve_date_range, parse_record_date,
-    render_table, goto_with_retry,
+    render_table, goto_with_retry, create_browser, create_page,
 )
 
 DEFAULT_DB   = Path("data/consents.db")
@@ -227,18 +227,8 @@ def _worker_run(worker_id: int, chunk: list[dict], dates: list[str],
 
         for i, org in enumerate(chunk, 1):
             # Novo browser por receptor: evita 403 por acúmulo de sessão
-            browser = p.chromium.launch(
-                headless=True,
-                executable_path=CHROMIUM_BIN,
-                proxy=get_proxy(),
-                args=["--ignore-certificate-errors", "--no-sandbox", "--disable-dev-shm-usage"],
-            )
-            ctx = browser.new_context(
-                ignore_https_errors=True,
-                viewport={"width": 1440, "height": 900},
-                locale="pt-BR",
-            )
-            page = ctx.new_page()
+            browser = create_browser(p)
+            page    = create_page(browser)
             goto_with_retry(page, PAGE_URL, "[class*='-control']")
             queue.put(("start", worker_id, org["label"], i))
 
@@ -271,18 +261,8 @@ def run(dates: list[str], db_path: str | Path, workers: int = WORKER_COUNT) -> i
     # ── Fetch lista de receptores (processo principal) ─────────────────────────
     console.print("[dim]Carregando lista de receptores...[/dim]")
     with sync_playwright() as p:
-        browser = p.chromium.launch(
-            headless=True,
-            executable_path=CHROMIUM_BIN,
-            proxy=get_proxy(),
-            args=["--ignore-certificate-errors", "--no-sandbox", "--disable-dev-shm-usage"],
-        )
-        ctx = browser.new_context(
-            ignore_https_errors=True,
-            viewport={"width": 1440, "height": 900},
-            locale="pt-BR",
-        )
-        page = ctx.new_page()
+        browser = create_browser(p)
+        page    = create_page(browser)
         goto_with_retry(page, PAGE_URL, "[class*='-control']")
         orgs = fetch_orgs(page)
         browser.close()

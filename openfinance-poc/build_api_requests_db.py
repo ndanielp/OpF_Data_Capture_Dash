@@ -34,7 +34,7 @@ from build_consents_db import open_db
 from utils import (
     BASE_URL, CHROMIUM_BIN,
     console, get_proxy, resolve_date_range, parse_record_date,
-    render_table, goto_with_retry,
+    render_table, goto_with_retry, create_browser, create_page,
 )
 
 PAGE_URL     = f"{BASE_URL}/transactional-data/api-requests/evolution"
@@ -288,18 +288,8 @@ def _worker_run(worker_id: int, chunk: list[dict], dates: list[str],
 
         for i, receptor in enumerate(chunk, 1):
             # Novo browser por receptor: evita 403 por acúmulo de sessão
-            browser = p.chromium.launch(
-                headless=True,
-                executable_path=CHROMIUM_BIN,
-                proxy=get_proxy(),
-                args=["--ignore-certificate-errors", "--no-sandbox", "--disable-dev-shm-usage"],
-            )
-            ctx = browser.new_context(
-                ignore_https_errors=True,
-                viewport={"width": 1440, "height": 900},
-                locale="pt-BR",
-            )
-            page = ctx.new_page()
+            browser = create_browser(p)
+            page    = create_page(browser)
             goto_with_retry(page, PAGE_URL, RECEPTOR_DROPDOWN)
 
             queue.put(("start", worker_id, receptor["label"], i))
