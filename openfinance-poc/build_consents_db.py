@@ -42,7 +42,8 @@ DEFAULT_DB   = Path("data/consents.db")
 API_URL      = f"{BASE_URL}/api/unique-consents"
 PAGE_URL     = f"{BASE_URL}/transactional-data/unique-consents/receivers"
 
-WORKER_COUNT = 5
+WORKER_COUNT   = 3
+WORKER_STAGGER = 4  # segundos entre o início de cada worker
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -221,6 +222,9 @@ def _worker_run(worker_id: int, chunk: list[dict], dates: list[str],
     """
     all_records: list[dict] = []
     preview: list[dict] = []
+
+    # Escalonar início: evita rajada simultânea que aciona rate limit do CloudFront
+    time.sleep((worker_id - 1) * WORKER_STAGGER)
 
     with sync_playwright() as p:
         queue.put(("ready", worker_id, len(chunk)))
