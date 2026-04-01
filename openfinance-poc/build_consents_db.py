@@ -18,7 +18,6 @@ Uso:
 import argparse
 import json
 import multiprocessing as mp
-import random
 import sqlite3
 import time
 from concurrent.futures import ProcessPoolExecutor
@@ -234,6 +233,9 @@ def _worker_run(worker_id: int, chunk: list[dict], dates: list[str],
     # Escalonar início: evita rajada simultânea que aciona rate limit do CloudFront
     time.sleep((worker_id - 1) * WORKER_STAGGER)
 
+    receptor_list = ", ".join(o["label"] for o in chunk)
+    console.print(f"[dim]W{worker_id} receptores ({len(chunk)}): {receptor_list}[/dim]")
+
     with sync_playwright() as p:
         queue.put(("ready", worker_id, len(chunk)))
 
@@ -251,7 +253,7 @@ def _worker_run(worker_id: int, chunk: list[dict], dates: list[str],
             queue.put(("org_done", worker_id, org["label"], len(records), nonzero))
             # Limpa cache/cookies, fecha contexto e browser antes do próximo receptor
             close_browser_clean(browser, page)
-            time.sleep(random.uniform(3, 6))
+            time.sleep(5)
 
             if len(preview) < 10:
                 preview.extend([r for r in records if r["total"] > 0][:2])
