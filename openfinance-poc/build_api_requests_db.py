@@ -17,6 +17,7 @@ Uso direto (debug/teste):
 import argparse
 import json
 import multiprocessing as mp
+import random
 import sqlite3
 import time
 from concurrent.futures import ProcessPoolExecutor
@@ -315,6 +316,7 @@ def _worker_run(worker_id: int, chunk: list[dict], dates: list[str],
                     for status in STATUSES:
                         queue.put(("combo", worker_id, api_id, status, "·"))
                 browser.close()
+                time.sleep(random.uniform(3, 6))
                 continue
 
             # Probe usou click_idx=0; combos começam em call_count=1 → click_idx=1
@@ -332,6 +334,8 @@ def _worker_run(worker_id: int, chunk: list[dict], dates: list[str],
                         preview.extend([r for r in records if r["total"] > 0][:2])
 
             browser.close()
+            # Pausa aleatória entre receptores: reduz acúmulo de requisições no CloudFront
+            time.sleep(random.uniform(3, 6))
 
     queue.put(("done", worker_id))
     return all_records, preview

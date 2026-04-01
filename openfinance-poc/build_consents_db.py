@@ -18,6 +18,7 @@ Uso:
 import argparse
 import json
 import multiprocessing as mp
+import random
 import sqlite3
 import time
 from concurrent.futures import ProcessPoolExecutor
@@ -249,6 +250,8 @@ def _worker_run(worker_id: int, chunk: list[dict], dates: list[str],
             nonzero = sum(1 for r in records if r["total"] > 0)
             queue.put(("org_done", worker_id, org["label"], len(records), nonzero))
             browser.close()
+            # Pausa aleatória entre receptores: reduz acúmulo de requisições no CloudFront
+            time.sleep(random.uniform(3, 6))
 
             if len(preview) < 10:
                 preview.extend([r for r in records if r["total"] > 0][:2])
