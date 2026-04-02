@@ -15,12 +15,20 @@ BASE_DIR     = Path(__file__).parent.parent          # openfinance-poc/
 DEFAULT_DB   = BASE_DIR / "data" / "consents.db"
 
 
+def _ensure_db(path: Path) -> None:
+    """Cria o arquivo e as tabelas se ainda não existirem."""
+    from build_consents_db import open_db
+    con = open_db(path)
+    con.close()
+
+
 class MainWindow(QMainWindow):
     # Sinal emitido quando o usuário troca o caminho do banco
     db_path_changed = pyqtSignal(Path)
 
     def __init__(self) -> None:
         super().__init__()
+        _ensure_db(DEFAULT_DB)
         self._db_path = DEFAULT_DB
 
         self.setWindowTitle("Open Finance Brasil")
@@ -42,7 +50,7 @@ class MainWindow(QMainWindow):
 
         # ── Barra de status ───────────────────────────────────────────────────
         self._status_db_label = QLabel()
-        self._btn_db          = QPushButton("Trocar banco…")
+        self._btn_db          = QPushButton("Trocar / Criar banco…")
         self._btn_db.setFixedHeight(22)
         self._btn_db.clicked.connect(self._choose_db)
 
@@ -69,13 +77,15 @@ class MainWindow(QMainWindow):
     # ── Slots ─────────────────────────────────────────────────────────────────
 
     def _choose_db(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Selecionar banco SQLite",
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Selecionar ou criar banco SQLite",
             str(self._db_path.parent),
             "SQLite (*.db *.sqlite *.sqlite3);;Todos (*)",
         )
         if path:
-            self._db_path = Path(path)
+            new_path = Path(path)
+            _ensure_db(new_path)
+            self._db_path = new_path
             self.db_path_changed.emit(self._db_path)
             self._refresh_status()
 
@@ -96,5 +106,5 @@ class MainWindow(QMainWindow):
             except Exception:
                 info = f"  Banco: {self._db_path.name}  (tabelas ainda não criadas)"
         else:
-            info = f"  Banco: {self._db_path}  (não encontrado)"
+            info = f"  Banco: {self._db_path.name}  (vazio, pronto para coleta)"
         self._status_db_label.setText(info)
