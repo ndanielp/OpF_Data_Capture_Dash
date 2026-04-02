@@ -81,6 +81,7 @@ class MainWindow(QMainWindow):
             self, "Selecionar ou criar banco SQLite",
             str(self._db_path.parent),
             "SQLite (*.db *.sqlite *.sqlite3);;Todos (*)",
+            options=QFileDialog.Option.DontConfirmOverwrite,
         )
         if path:
             new_path = Path(path)
@@ -95,16 +96,12 @@ class MainWindow(QMainWindow):
             self._tab_dashboard.load_data()
 
     def _refresh_status(self) -> None:
-        exists = self._db_path.exists()
-        if exists:
-            try:
-                con  = sqlite3.connect(str(self._db_path))
-                n_c  = con.execute("SELECT count(*) FROM unique_consents").fetchone()[0]
-                n_a  = con.execute("SELECT count(*) FROM api_requests").fetchone()[0]
-                con.close()
-                info = f"  Banco: {self._db_path.name}   consentimentos: {n_c:,}   api_requests: {n_a:,}"
-            except Exception:
-                info = f"  Banco: {self._db_path.name}  (tabelas ainda não criadas)"
-        else:
-            info = f"  Banco: {self._db_path.name}  (vazio, pronto para coleta)"
+        try:
+            con  = sqlite3.connect(str(self._db_path))
+            n_c  = con.execute("SELECT count(*) FROM unique_consents").fetchone()[0]
+            n_a  = con.execute("SELECT count(*) FROM api_requests").fetchone()[0]
+            con.close()
+            info = f"  Banco: {self._db_path.name}   consentimentos: {n_c:,}   api_requests: {n_a:,}"
+        except Exception:
+            info = f"  Banco: {self._db_path.name}  (tabelas ainda não criadas)"
         self._status_db_label.setText(info)

@@ -89,7 +89,7 @@ class _SummaryBar(QFrame):
         """)
         root.addWidget(self._bar)
 
-    def update(self, phase: str, states: dict, elapsed: float) -> None:
+    def refresh(self, phase: str, states: dict, elapsed: float) -> None:
         # Fase
         phase_label = {
             "consents": "Etapa 1 — Consentimentos Únicos",
@@ -327,9 +327,8 @@ class TabColeta(QWidget):
     def _on_state_updated(self, phase: str, states: dict, elapsed: float) -> None:
         # Reconfigura cards se a fase mudou
         if phase == "api":
-            for card in self._worker_grid._cards.values():
-                card.set_mode("api")
-        self._summary.update(phase, states, elapsed)
+            self._worker_grid.set_mode("api")
+        self._summary.refresh(phase, states, elapsed)
         self._worker_grid.update_states(states)
 
     def _on_phase_complete(self, phase: str, n: int) -> None:

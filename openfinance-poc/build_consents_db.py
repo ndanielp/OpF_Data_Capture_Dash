@@ -16,6 +16,7 @@ Uso:
 """
 
 import argparse
+import copy
 import json
 import multiprocessing as mp
 import sqlite3
@@ -174,6 +175,8 @@ def _update_state(states: dict, msg: tuple) -> None:
         states[wid]["results"].append("✓" if msg[4] > 0 else "·")
     elif kind == "done":
         states[wid]["status"] = "done"
+    elif kind == "log":
+        console.print(f"[dim]W{msg[1]} receptores: {msg[2]}[/dim]")
 
 
 def _make_table(states: dict, start_time: float) -> Table:
@@ -235,7 +238,7 @@ def _worker_run(worker_id: int, chunk: list[dict], dates: list[str],
     time.sleep((worker_id - 1) * WORKER_STAGGER)
 
     receptor_list = ", ".join(o["label"] for o in chunk)
-    console.print(f"[dim]W{worker_id} receptores ({len(chunk)}): {receptor_list}[/dim]")
+    queue.put(("log", worker_id, f"W{worker_id} receptores ({len(chunk)}): {receptor_list}"))
 
     with sync_playwright() as p:
         queue.put(("ready", worker_id, len(chunk)))
@@ -335,7 +338,7 @@ def run(dates: list[str], db_path: str | Path, workers: int = WORKER_COUNT,
 
                     elapsed = time.time() - start_time
                     if on_state_update:
-                        on_state_update(dict(states), elapsed)
+                        on_state_update(copy.deepcopy(states), elapsed)
                     elif live_ctx:
                         live_ctx.update(_make_table(states, start_time))
 

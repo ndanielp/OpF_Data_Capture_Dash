@@ -249,6 +249,10 @@ class WorkerGrid(QWidget):
             self._cards[wid] = card
             self._layout.addWidget(card, i // cols, i % cols)
 
+    def set_mode(self, mode: str) -> None:
+        for card in self._cards.values():
+            card.set_mode(mode)
+
     def update_states(self, states: dict) -> None:
         for wid, state in states.items():
             if wid in self._cards:

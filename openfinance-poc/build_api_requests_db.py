@@ -15,6 +15,7 @@ Uso direto (debug/teste):
 """
 
 import argparse
+import copy
 import json
 import multiprocessing as mp
 import sqlite3
@@ -33,16 +34,16 @@ from rich.text  import Text
 from contextlib import contextmanager
 
 from build_consents_db import open_db
-
-
-@contextmanager
-def _nullctx():
-    yield
 from utils import (
     BASE_URL, CHROMIUM_BIN,
     console, get_proxy, resolve_date_range, parse_record_date,
     render_table, goto_with_retry, create_browser, create_page, close_browser_clean,
 )
+
+
+@contextmanager
+def _nullctx():
+    yield
 
 PAGE_URL     = f"{BASE_URL}/transactional-data/api-requests/evolution"
 API_ENDPOINT = f"{BASE_URL}/api/api-requests"
@@ -228,6 +229,8 @@ def _update_state(states: dict, msg: tuple) -> None:
         states[wid]["combos"][(api_id, status)] = "✓" if symbol == "+" else "·"
     elif kind == "done":
         states[wid]["status"] = "done"
+    elif kind == "log":
+        console.print(f"[dim]W{msg[1]} receptores: {msg[2]}[/dim]")
 
 
 def _make_table(states: dict, start_time: float) -> Table:
@@ -296,7 +299,7 @@ def _worker_run(worker_id: int, chunk: list[dict], dates: list[str],
     time.sleep((worker_id - 1) * WORKER_STAGGER)
 
     receptor_list = ", ".join(r["label"] for r in chunk)
-    console.print(f"[dim]W{worker_id} receptores ({len(chunk)}): {receptor_list}[/dim]")
+    queue.put(("log", worker_id, f"W{worker_id} receptores ({len(chunk)}): {receptor_list}"))
 
     with sync_playwright() as p:
         queue.put(("ready", worker_id, len(chunk)))
@@ -406,7 +409,7 @@ def run(dates: list[str], receptors: list[dict],
 
                     elapsed = time.time() - start_time
                     if on_state_update:
-                        on_state_update(dict(states), elapsed)
+                        on_state_update(copy.deepcopy(states), elapsed)
                     elif live_ctx:
                         live_ctx.update(_make_table(states, start_time))
 

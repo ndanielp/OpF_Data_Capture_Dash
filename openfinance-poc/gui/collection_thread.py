@@ -51,7 +51,7 @@ class CollectionThread(QThread):
             self.error_occurred.emit(str(exc))
 
     def _run(self) -> None:
-        from build_consents_db    import run as run_consents, open_db
+        from build_consents_db    import run as run_consents
         from build_api_requests_db import run as run_api_requests
 
         n_consents = 0
