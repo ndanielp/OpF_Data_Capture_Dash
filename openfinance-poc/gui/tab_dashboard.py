@@ -2,7 +2,8 @@
 tab_dashboard.py — Aba de visualização de dados.
 
 Gráfico 1: Consentimentos únicos por receptor ao longo do tempo (linhas).
-Gráfico 2: Volume de chamadas de API — heatmap receptor × API.
+Gráfico 2: Volume de chamadas de API — heatmap receptor × API (agrupado).
+Gráfico 3: Resources — barras horizontais por receptor.
 """
 
 import sqlite3
@@ -18,8 +19,9 @@ from matplotlib.figure import Figure
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGroupBox,
-    QLabel, QComboBox, QPushButton, QSplitter, QSizePolicy,
-    QListWidget, QAbstractItemView,
+    QLabel, QPushButton, QSplitter, QSizePolicy,
+    QListWidget, QAbstractItemView, QRadioButton, QButtonGroup,
+    QCheckBox, QFrame,
 )
 from PyQt6.QtCore import Qt
 
@@ -42,7 +44,43 @@ matplotlib.rcParams.update({
 BG_FIG = "#1e1e2e"
 BG_AX  = "#181825"
 
-# (substring lowercase, hex color, linewidth)
+# ── API grouping ──────────────────────────────────────────────────────────────
+
+API_GROUPS = {
+    "Conta":        ["accounts"],
+    "Cartão":       ["credit-cards-accounts"],
+    "Crédito":      ["loans", "financings", "invoice-financings",
+                     "unarranged-accounts-overdraft"],
+    "Investimento": ["funds", "bank-fixed-incomes", "credit-fixed-incomes",
+                     "variable-incomes", "treasure-titles"],
+    "Câmbio":       ["exchanges"],
+    "Cadastro":     ["customers"],
+}
+RESOURCES_API = "resources"
+EXCLUDED_APIS = {"consents"}
+
+# Ordem canônica das colunas do heatmap
+_ORDERED_APIS: list[str] = [api for apis in API_GROUPS.values() for api in apis]
+
+# Short display names for heatmap column ticks
+_API_SHORT: dict[str, str] = {
+    "accounts":                    "accounts",
+    "credit-cards-accounts":       "credit-cards",
+    "loans":                       "loans",
+    "financings":                  "financings",
+    "invoice-financings":          "invoice-fin.",
+    "unarranged-accounts-overdraft": "overdraft",
+    "funds":                       "funds",
+    "bank-fixed-incomes":          "bank-fixed",
+    "credit-fixed-incomes":        "credit-fixed",
+    "variable-incomes":            "variable",
+    "treasure-titles":             "treasure",
+    "exchanges":                   "exchanges",
+    "customers":                   "customers",
+}
+
+# ── Brand colours ─────────────────────────────────────────────────────────────
+
 _BRAND = [
     ("bradesco",     "#8B0000", 2.5),
     ("nubank",       "#7C3AED", 1.4),
@@ -80,8 +118,17 @@ def _fmt_number(x: float, _=None) -> str:
 class _Canvas(FigureCanvas):
     def __init__(self, fig: Figure) -> None:
         super().__init__(fig)
-        self.setMinimumHeight(260)
+        self.setMinimumHeight(220)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+
+
+# ── Separator line ────────────────────────────────────────────────────────────
+
+def _hline() -> QFrame:
+    line = QFrame()
+    line.setFrameShape(QFrame.Shape.HLine)
+    line.setStyleSheet("color: #45475a;")
+    return line
 
 
 class TabDashboard(QWidget):
@@ -95,77 +142,110 @@ class TabDashboard(QWidget):
     # ── UI ────────────────────────────────────────────────────────────────────
 
     def _setup_ui(self) -> None:
-        root = QVBoxLayout(self)
-        root.setSpacing(8)
-        root.addWidget(self._build_filter_bar())
+        root = QHBoxLayout(self)
+        root.setSpacing(0)
+        root.setContentsMargins(0, 0, 0, 0)
+
+        root.addWidget(self._build_filter_panel())
 
         splitter = QSplitter(Qt.Orientation.Vertical)
-        splitter.addWidget(self._build_chart1_group())
-        splitter.addWidget(self._build_chart2_group())
-        splitter.setStretchFactor(0, 1)
-        splitter.setStretchFactor(1, 1)
+        splitter.addWidget(self._build_chart_group("Consentimentos Únicos por Receptor",
+                                                   "_canvas1", "_fig1"))
+        splitter.addWidget(self._build_chart_group("Chamadas de API por Grupo",
+                                                   "_canvas2", "_fig2"))
+        splitter.addWidget(self._build_chart_group("Resources por Receptor",
+                                                   "_canvas3", "_fig3"))
+        splitter.setStretchFactor(0, 2)
+        splitter.setStretchFactor(1, 3)
+        splitter.setStretchFactor(2, 1)
         root.addWidget(splitter, stretch=1)
 
-    def _build_filter_bar(self) -> QGroupBox:
-        grp = QGroupBox("Filtros")
-        hl  = QHBoxLayout(grp)
-        hl.setSpacing(12)
+    def _build_filter_panel(self) -> QWidget:
+        panel = QWidget()
+        panel.setFixedWidth(220)
+        panel.setStyleSheet("background: #181825; border-right: 1px solid #313244;")
+        vl = QVBoxLayout(panel)
+        vl.setContentsMargins(10, 12, 10, 12)
+        vl.setSpacing(10)
 
-        # Lista de receptores com multi-seleção
-        hl.addWidget(QLabel("Receptores:"))
+        # ── Receptores ────────────────────────────────────────────────────────
+        lbl_r = QLabel("Receptores")
+        lbl_r.setStyleSheet("color: #89b4fa; font-weight: bold; font-size: 9pt;")
+        vl.addWidget(lbl_r)
+
         self._receptor_list = QListWidget()
         self._receptor_list.setSelectionMode(
             QAbstractItemView.SelectionMode.ExtendedSelection
         )
-        self._receptor_list.setFixedHeight(90)
-        self._receptor_list.setMinimumWidth(240)
-        self._receptor_list.setToolTip(
-            "Ctrl+clique para selecionar múltiplos.\n"
-            "'Top 10 receptores' inclui os 10 maiores + Bradesco."
-        )
+        self._receptor_list.setStyleSheet("""
+            QListWidget {
+                background: #1e1e2e; border: 1px solid #45475a;
+                border-radius: 4px; color: #cdd6f4; font-size: 8pt;
+            }
+            QListWidget::item:selected { background: #313244; }
+        """)
+        self._receptor_list.setToolTip("Ctrl+clique para múltiplos.\n'Top 10' inclui Bradesco.")
         self._receptor_list.itemSelectionChanged.connect(self._draw_charts)
-        hl.addWidget(self._receptor_list)
+        vl.addWidget(self._receptor_list, stretch=1)
 
-        # Status (heatmap)
-        hl.addWidget(QLabel("Status (API):"))
-        self._status_combo = QComboBox()
-        self._status_combo.addItems(["200", "500", "Todos"])
-        self._status_combo.currentIndexChanged.connect(self._draw_chart2)
-        hl.addWidget(self._status_combo)
+        vl.addWidget(_hline())
 
-        # Escala do heatmap
-        hl.addWidget(QLabel("Escala (API):"))
-        self._api_scale_combo = QComboBox()
-        self._api_scale_combo.addItems(["Valor absoluto", "Por consentimento único"])
-        self._api_scale_combo.setToolTip(
-            "Por consentimento único: divide o volume de chamadas\n"
-            "pelo total de consentimentos (PF + PJ) do receptor."
+        # ── Status ────────────────────────────────────────────────────────────
+        lbl_s = QLabel("Status (API)")
+        lbl_s.setStyleSheet("color: #89b4fa; font-weight: bold; font-size: 9pt;")
+        vl.addWidget(lbl_s)
+
+        self._status_group = QButtonGroup(self)
+        for i, txt in enumerate(["200", "500", "Todos"]):
+            rb = QRadioButton(txt)
+            rb.setStyleSheet("color: #cdd6f4; font-size: 9pt;")
+            self._status_group.addButton(rb, i)
+            vl.addWidget(rb)
+        self._status_group.button(2).setChecked(True)   # "Todos" default
+        self._status_group.buttonToggled.connect(
+            lambda _btn, checked: self._draw_chart2() or self._draw_chart3() if checked else None
         )
-        self._api_scale_combo.currentIndexChanged.connect(self._draw_chart2)
-        hl.addWidget(self._api_scale_combo)
 
-        hl.addStretch()
+        vl.addWidget(_hline())
 
+        # ── Escala API ────────────────────────────────────────────────────────
+        lbl_e = QLabel("Escala API")
+        lbl_e.setStyleSheet("color: #89b4fa; font-weight: bold; font-size: 9pt;")
+        vl.addWidget(lbl_e)
+
+        self._normalize_chk = QCheckBox("Por consentimento único")
+        self._normalize_chk.setStyleSheet("color: #cdd6f4; font-size: 9pt;")
+        self._normalize_chk.setToolTip(
+            "Divide o volume de chamadas pelo total\n"
+            "de consentimentos (PF + PJ) do receptor."
+        )
+        self._normalize_chk.stateChanged.connect(
+            lambda _: self._draw_chart2() or self._draw_chart3()
+        )
+        vl.addWidget(self._normalize_chk)
+
+        vl.addWidget(_hline())
+
+        # ── Botão ─────────────────────────────────────────────────────────────
         btn = QPushButton("↺  Recarregar dados")
+        btn.setStyleSheet(
+            "QPushButton { background: #313244; color: #cdd6f4; border-radius: 4px;"
+            " padding: 5px; font-size: 9pt; }"
+            "QPushButton:hover { background: #45475a; }"
+        )
         btn.clicked.connect(self.load_data)
-        hl.addWidget(btn)
+        vl.addWidget(btn)
 
-        return grp
+        return panel
 
-    def _build_chart1_group(self) -> QGroupBox:
-        grp = QGroupBox("Consentimentos Únicos por Receptor")
+    def _build_chart_group(self, title: str, canvas_attr: str, fig_attr: str) -> QGroupBox:
+        grp = QGroupBox(title)
         vl  = QVBoxLayout(grp)
-        self._fig1    = Figure(facecolor=BG_FIG, tight_layout=True)
-        self._canvas1 = _Canvas(self._fig1)
-        vl.addWidget(self._canvas1)
-        return grp
-
-    def _build_chart2_group(self) -> QGroupBox:
-        grp = QGroupBox("Volume de Chamadas de API — Receptor × API")
-        vl  = QVBoxLayout(grp)
-        self._fig2    = Figure(facecolor=BG_FIG, tight_layout=True)
-        self._canvas2 = _Canvas(self._fig2)
-        vl.addWidget(self._canvas2)
+        fig = Figure(facecolor=BG_FIG, tight_layout=True)
+        canvas = _Canvas(fig)
+        setattr(self, fig_attr,    fig)
+        setattr(self, canvas_attr, canvas)
+        vl.addWidget(canvas)
         return grp
 
     # ── Dados ─────────────────────────────────────────────────────────────────
@@ -210,7 +290,6 @@ class TabDashboard(QWidget):
             )
             self._receptor_list.addItems(top)
 
-        # Restaura seleção anterior se possível
         restored = False
         if prev_selected:
             for i in range(self._receptor_list.count()):
@@ -223,17 +302,16 @@ class TabDashboard(QWidget):
 
         self._receptor_list.blockSignals(False)
 
-    # ── Helpers de seleção e cores ────────────────────────────────────────────
+    # ── Helpers ───────────────────────────────────────────────────────────────
 
     def _selected_receptors(self) -> list[str] | None:
-        """None = modo Top 10; list = receptores específicos selecionados."""
+        """None = modo Top 10; list = receptores específicos."""
         selected = [it.text() for it in self._receptor_list.selectedItems()]
         if not selected or "Top 10 receptores" in selected:
             return None
         return selected
 
     def _top10_with_bradesco(self, df: pd.DataFrame) -> list[str]:
-        """Top 10 por volume total, com Bradesco forçado se não estiver presente."""
         totals = df.groupby("receptor")["total"].sum().sort_values(ascending=False)
         top10  = totals.nlargest(10).index.tolist()
         for r in totals.index:
@@ -243,7 +321,6 @@ class TabDashboard(QWidget):
         return top10
 
     def _receptor_colors(self, receptors: list[str]) -> dict[str, tuple[str, float]]:
-        """Retorna {receptor: (color, linewidth)}. Cores de marca fixas; demais aleatórias sem repetição."""
         result: dict[str, tuple[str, float]] = {}
         used:   set[str] = set()
         fb_idx = 0
@@ -261,11 +338,25 @@ class TabDashboard(QWidget):
                 result[r] = (color, 1.4)
         return result
 
+    def _status_filter(self) -> int | None:
+        """Returns 200, 500, or None (Todos)."""
+        checked_id = self._status_group.checkedId()
+        return [200, 500, None][checked_id]
+
+    def _normalize(self) -> bool:
+        return self._normalize_chk.isChecked()
+
+    def _consent_totals(self) -> pd.Series:
+        if self._df_consents.empty:
+            return pd.Series(dtype=float)
+        return self._df_consents.groupby("receptor")["total"].sum()
+
     # ── Gráficos ──────────────────────────────────────────────────────────────
 
     def _draw_charts(self) -> None:
         self._draw_chart1()
         self._draw_chart2()
+        self._draw_chart3()
 
     def _draw_chart1(self) -> None:
         self._fig1.clear()
@@ -278,12 +369,9 @@ class TabDashboard(QWidget):
             return
 
         sel = self._selected_receptors()
-        if sel is None:
-            receptors = self._top10_with_bradesco(self._df_consents)
-        else:
-            receptors = sel
-
+        receptors = self._top10_with_bradesco(self._df_consents) if sel is None else sel
         df = self._df_consents[self._df_consents["receptor"].isin(receptors)]
+
         if df.empty:
             ax.text(0.5, 0.5, "Sem dados para os receptores selecionados",
                     ha="center", va="center", transform=ax.transAxes)
@@ -296,13 +384,12 @@ class TabDashboard(QWidget):
             grp = grp.sort_values("date")
             ax.plot(
                 grp["date"], grp["total"],
-                marker="o", markersize=3,
-                linewidth=lw,
-                color=color,
+                marker="o", markersize=3, linewidth=lw, color=color,
                 label=receptor[:35],
                 zorder=3 if lw > 1.4 else 2,
             )
 
+        ax.set_ylim(bottom=0)
         ax.xaxis.set_major_formatter(mdates.DateFormatter("%b/%y"))
         ax.xaxis.set_major_locator(mdates.MonthLocator())
         self._fig1.autofmt_xdate(rotation=30, ha="right")
@@ -322,30 +409,24 @@ class TabDashboard(QWidget):
             self._canvas2.draw()
             return
 
-        # Filtra status
-        status_txt = self._status_combo.currentText()
-        df = self._df_api.copy()
-        if status_txt != "Todos":
-            df = df[df["status"] == int(status_txt)]
+        status = self._status_filter()
+        df = self._df_api[~self._df_api["api"].isin(EXCLUDED_APIS | {RESOURCES_API})].copy()
+        if status is not None:
+            df = df[df["status"] == status]
 
         if df.empty:
-            ax.text(0.5, 0.5, f"Sem dados para status {status_txt}",
+            ax.text(0.5, 0.5, "Sem dados para os filtros selecionados",
                     ha="center", va="center", transform=ax.transAxes)
             self._canvas2.draw()
             return
 
-        # Filtra receptores
         sel = self._selected_receptors()
         if sel is None:
-            top_receptors = (
-                df.groupby("receptor")["total"].sum()
-                .nlargest(15).index.tolist()
+            top_receptors = self._top10_with_bradesco(
+                self._df_consents if not self._df_consents.empty else df
             )
-            # Força Bradesco
-            for r in df["receptor"].unique():
-                if "bradesco" in r.lower() and r not in top_receptors:
-                    top_receptors = top_receptors[:14] + [r]
-                    break
+            # Garante que só inclui receptores com dados de API
+            top_receptors = [r for r in top_receptors if r in df["receptor"].values]
         else:
             top_receptors = sel
 
@@ -356,53 +437,153 @@ class TabDashboard(QWidget):
             self._canvas2.draw()
             return
 
+        # Ordem canônica das colunas (apenas as presentes nos dados)
+        available_apis = set(df["api"].unique())
+        ordered_cols = [a for a in _ORDERED_APIS if a in available_apis]
+
         pivot = (
             df.groupby(["receptor", "api"])["total"]
             .sum().unstack(fill_value=0)
-            .reindex(top_receptors)
+            .reindex(index=top_receptors, columns=ordered_cols)
             .fillna(0)
         )
         data = pivot.values.astype(float)
 
-        # Normalização por consentimentos únicos
-        normalize = self._api_scale_combo.currentText() == "Por consentimento único"
-        if normalize and not self._df_consents.empty:
-            consents_total = self._df_consents.groupby("receptor")["total"].sum()
+        if self._normalize():
+            ct = self._consent_totals()
             for i, rec in enumerate(pivot.index):
-                n = consents_total.get(rec, 0)
+                n = ct.get(rec, 0)
                 if n > 0:
                     data[i] /= n
 
         data_log = np.log1p(data)
         im = ax.imshow(data_log, aspect="auto", cmap="YlOrRd", interpolation="nearest")
 
-        ax.set_xticks(range(len(pivot.columns)))
+        # Tick labels X (nome curto)
+        ax.set_xticks(range(len(ordered_cols)))
         ax.set_xticklabels(
-            [c.replace("-", "\n") for c in pivot.columns],
+            [_API_SHORT.get(c, c).replace("-", "\n") for c in ordered_cols],
             fontsize=7, ha="center",
         )
         ax.set_yticks(range(len(pivot.index)))
         ax.set_yticklabels([r[:28] for r in pivot.index], fontsize=7)
 
+        # Separadores e labels de grupo
+        col_idx = 0
+        for grupo, apis in API_GROUPS.items():
+            cols_in_group = [a for a in apis if a in available_apis]
+            if not cols_in_group:
+                continue
+            start = col_idx
+            span  = len(cols_in_group)
+            center = start + (span - 1) / 2
+            n_rows = len(pivot.index)
+            # Label do grupo acima do heatmap
+            ax.text(center, -1.1, grupo,
+                    ha="center", va="bottom", fontsize=7,
+                    color="#a6adc8", transform=ax.get_xaxis_transform())
+            # Separador antes do grupo (exceto o primeiro)
+            if start > 0:
+                ax.axvline(start - 0.5, color="#45475a", lw=0.8)
+            col_idx += span
+
+        # Anotações de valor nas células
         for i in range(len(pivot.index)):
-            for j in range(len(pivot.columns)):
+            for j in range(len(ordered_cols)):
                 val = data[i, j]
                 if val > 0:
-                    txt = f"{val:.2f}" if normalize else _fmt_number(val)
+                    txt = f"{val:.2f}" if self._normalize() else _fmt_number(val)
                     brightness = data_log[i, j] / (data_log.max() or 1)
                     color = "#1e1e2e" if brightness > 0.55 else "#cdd6f4"
                     ax.text(j, i, txt, ha="center", va="center", fontsize=6, color=color)
 
-        label = "Chamadas / consentimento único (log)" if normalize else "Total (escala log)"
+        cb_label = "Chamadas / consentimento (log)" if self._normalize() else "Total (escala log)"
         cb = self._fig2.colorbar(im, ax=ax, fraction=0.02, pad=0.02)
-        cb.set_label(label, color="#cdd6f4")
+        cb.set_label(cb_label, color="#cdd6f4")
         cb.ax.yaxis.set_tick_params(color="#a6adc8")
         plt.setp(cb.ax.yaxis.get_ticklabels(), color="#a6adc8")
 
         self._canvas2.draw()
 
+    def _draw_chart3(self) -> None:
+        self._fig3.clear()
+        ax = self._fig3.add_subplot(111)
+
+        if self._df_api.empty:
+            ax.text(0.5, 0.5, "Sem dados de resources",
+                    ha="center", va="center", transform=ax.transAxes)
+            self._canvas3.draw()
+            return
+
+        status = self._status_filter()
+        df = self._df_api[self._df_api["api"] == RESOURCES_API].copy()
+        if status is not None:
+            df = df[df["status"] == status]
+
+        if df.empty:
+            ax.text(0.5, 0.5, f"Sem dados de resources para o filtro selecionado",
+                    ha="center", va="center", transform=ax.transAxes)
+            self._canvas3.draw()
+            return
+
+        sel = self._selected_receptors()
+        if sel is None:
+            top_receptors = self._top10_with_bradesco(
+                self._df_consents if not self._df_consents.empty else df
+            )
+            top_receptors = [r for r in top_receptors if r in df["receptor"].values]
+        else:
+            top_receptors = [r for r in sel if r in df["receptor"].values]
+
+        df = df[df["receptor"].isin(top_receptors)]
+        if df.empty:
+            ax.text(0.5, 0.5, "Sem dados de resources para os receptores selecionados",
+                    ha="center", va="center", transform=ax.transAxes)
+            self._canvas3.draw()
+            return
+
+        totals = df.groupby("receptor")["total"].sum().reindex(top_receptors).fillna(0)
+        values = totals.values.astype(float)
+
+        if self._normalize():
+            ct = self._consent_totals()
+            for i, rec in enumerate(totals.index):
+                n = ct.get(rec, 0)
+                if n > 0:
+                    values[i] /= n
+
+        styles = self._receptor_colors(list(totals.index))
+        colors = [styles.get(r, ("#cdd6f4", 1.4))[0] for r in totals.index]
+
+        bars = ax.barh(range(len(totals)), values, color=colors)
+        ax.set_yticks(range(len(totals)))
+        ax.set_yticklabels([r[:30] for r in totals.index], fontsize=7)
+        ax.invert_yaxis()
+
+        fmt = (lambda x, _: f"{x:.2f}") if self._normalize() else _fmt_number
+        ax.xaxis.set_major_formatter(plt.FuncFormatter(fmt))
+        ax.set_xlabel(
+            "Chamadas / consentimento único" if self._normalize() else "Total de chamadas"
+        )
+        ax.grid(True, axis="x", alpha=0.4)
+
+        # Valor à direita de cada barra
+        for bar, val in zip(bars, values):
+            if val > 0:
+                ax.text(
+                    bar.get_width() * 1.01, bar.get_y() + bar.get_height() / 2,
+                    f"{val:.2f}" if self._normalize() else _fmt_number(val),
+                    va="center", fontsize=7, color="#cdd6f4",
+                )
+
+        self._canvas3.draw()
+
     def _show_empty_charts(self, msg: str) -> None:
-        for fig, canvas in ((self._fig1, self._canvas1), (self._fig2, self._canvas2)):
+        for fig, canvas in (
+            (self._fig1, self._canvas1),
+            (self._fig2, self._canvas2),
+            (self._fig3, self._canvas3),
+        ):
             fig.clear()
             ax = fig.add_subplot(111)
             ax.text(0.5, 0.5, msg, ha="center", va="center",

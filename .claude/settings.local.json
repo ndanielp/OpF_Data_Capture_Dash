@@ -7,7 +7,9 @@
       "Bash(pip install rich -q)",
       "Bash(python3 -m playwright show-browser-path chromium)",
       "Read(//c/Users/LENOVO/AppData/Local/ms-playwright/**)",
-      "Bash(PYTHONUTF8=1 PYTHONIOENCODING=utf-8 python3 build_consents_dec25.py)"
+      "Bash(PYTHONUTF8=1 PYTHONIOENCODING=utf-8 python3 build_consents_dec25.py)",
+      "Bash(.venv/Scripts/pip install:*)",
+      "Bash(gh pr create --title 'feat: dashboard visual, correções 403 e melhorias na coleta' --body ':*)"
     ]
   }
 }
