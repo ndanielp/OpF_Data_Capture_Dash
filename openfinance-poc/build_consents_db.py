@@ -18,6 +18,7 @@ Uso:
 import argparse
 import copy
 import json
+import random
 import multiprocessing as mp
 import sqlite3
 import time
@@ -38,7 +39,7 @@ from unique_consents import fetch_orgs
 from utils import (
     BASE_URL, CHROMIUM_BIN,
     console, get_proxy, resolve_date_range, parse_record_date,
-    render_table, goto_with_retry, create_browser, create_page, close_browser_clean,
+    render_table, goto_with_retry, create_browser, create_page,
 )
 
 DEFAULT_DB   = Path("data/consents.db")
@@ -242,11 +243,11 @@ def _worker_run(worker_id: int, chunk: list[dict], dates: list[str],
 
     with sync_playwright() as p:
         queue.put(("ready", worker_id, len(chunk)))
+        # Um browser por worker; novo contexto por receptor (isolamento sem re-download)
+        browser = create_browser(p)
 
         for i, org in enumerate(chunk, 1):
-            # Novo browser por receptor: evita 403 por acúmulo de sessão
-            browser = create_browser(p)
-            page    = create_page(browser)
+            page = create_page(browser)
             goto_with_retry(page, PAGE_URL, "[class*='-control']")
             queue.put(("start", worker_id, org["label"], i))
 
@@ -255,12 +256,14 @@ def _worker_run(worker_id: int, chunk: list[dict], dates: list[str],
             all_records.extend(records)
             nonzero = sum(1 for r in records if r["total"] > 0)
             queue.put(("org_done", worker_id, org["label"], len(records), nonzero))
-            # Limpa cache/cookies, fecha contexto e browser antes do próximo receptor
-            close_browser_clean(browser, page)
-            time.sleep(5)
+            # Fecha o contexto (limpa cookies/storage); browser continua vivo
+            page.context.close()
+            time.sleep(random.uniform(10, 20))
 
             if len(preview) < 10:
                 preview.extend([r for r in records if r["total"] > 0][:2])
+
+        browser.close()
 
     queue.put(("done", worker_id))
     return all_records, preview

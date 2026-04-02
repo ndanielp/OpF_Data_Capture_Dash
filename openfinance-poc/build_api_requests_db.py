@@ -17,6 +17,7 @@ Uso direto (debug/teste):
 import argparse
 import copy
 import json
+import random
 import multiprocessing as mp
 import sqlite3
 import time
@@ -37,7 +38,7 @@ from build_consents_db import open_db
 from utils import (
     BASE_URL, CHROMIUM_BIN,
     console, get_proxy, resolve_date_range, parse_record_date,
-    render_table, goto_with_retry, create_browser, create_page, close_browser_clean,
+    render_table, goto_with_retry, create_browser, create_page,
 )
 
 
@@ -303,17 +304,16 @@ def _worker_run(worker_id: int, chunk: list[dict], dates: list[str],
 
     with sync_playwright() as p:
         queue.put(("ready", worker_id, len(chunk)))
+        # Um browser por worker; novo contexto por receptor (isolamento sem re-download)
+        browser = create_browser(p)
 
         for i, receptor in enumerate(chunk, 1):
-            # Novo browser por receptor: evita 403 por acúmulo de sessão
-            browser = create_browser(p)
-            page    = create_page(browser)
+            page = create_page(browser)
             goto_with_retry(page, PAGE_URL, RECEPTOR_DROPDOWN)
 
             queue.put(("start", worker_id, receptor["label"], i))
 
             # Probe: verifica se receptor tem qualquer chamada (sem "apis")
-            # Usa click_idx=0 (primeira interação após reload)
             has_data = probe_receptor(page, receptor["value"], dates)
 
             if not has_data:
@@ -321,8 +321,8 @@ def _worker_run(worker_id: int, chunk: list[dict], dates: list[str],
                 for api_id in APIS:
                     for status in STATUSES:
                         queue.put(("combo", worker_id, api_id, status, "·"))
-                close_browser_clean(browser, page)
-                time.sleep(5)
+                page.context.close()
+                time.sleep(random.uniform(10, 20))
                 continue
 
             # Probe usou click_idx=0; combos começam em call_count=1 → click_idx=1
@@ -339,9 +339,11 @@ def _worker_run(worker_id: int, chunk: list[dict], dates: list[str],
                     if len(preview) < 10:
                         preview.extend([r for r in records if r["total"] > 0][:2])
 
-            # Limpa cache/cookies, fecha contexto e browser antes do próximo receptor
-            close_browser_clean(browser, page)
-            time.sleep(5)
+            # Fecha contexto (limpa cookies/storage); browser continua vivo
+            page.context.close()
+            time.sleep(random.uniform(10, 20))
+
+        browser.close()
 
     queue.put(("done", worker_id))
     return all_records, preview

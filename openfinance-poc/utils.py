@@ -133,9 +133,6 @@ def create_browser(p):
             "--disable-blink-features=AutomationControlled",
             "--disable-infobars",
             "--disable-dev-shm-usage",
-            "--disable-application-cache",
-            "--disable-cache",
-            "--disk-cache-size=0",
         ],
     )
 
