@@ -1,2 +1,4 @@
 *.html
+!gui/dashboard.html
+!gui/interface.html
 chart_filtered.json
