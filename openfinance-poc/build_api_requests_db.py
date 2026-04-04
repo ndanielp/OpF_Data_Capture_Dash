@@ -306,44 +306,42 @@ def _worker_run(worker_id: int, chunk: list[dict], dates: list[str],
         queue.put(("ready", worker_id, len(chunk)))
         # Um browser por worker; novo contexto por receptor (isolamento sem re-download)
         browser = create_browser(p)
+        try:
+            for i, receptor in enumerate(chunk, 1):
+                page = create_page(browser)
+                try:
+                    goto_with_retry(page, PAGE_URL, RECEPTOR_DROPDOWN)
 
-        for i, receptor in enumerate(chunk, 1):
-            page = create_page(browser)
-            goto_with_retry(page, PAGE_URL, RECEPTOR_DROPDOWN)
+                    queue.put(("start", worker_id, receptor["label"], i))
 
-            queue.put(("start", worker_id, receptor["label"], i))
+                    # Probe: verifica se receptor tem qualquer chamada (sem "apis")
+                    has_data = probe_receptor(page, receptor["value"], dates)
 
-            # Probe: verifica se receptor tem qualquer chamada (sem "apis")
-            has_data = probe_receptor(page, receptor["value"], dates)
-
-            if not has_data:
-                # Receptor sem dados — marca todos os combos como vazio e pula
-                for api_id in APIS:
-                    for status in STATUSES:
-                        queue.put(("combo", worker_id, api_id, status, "·"))
-                page.context.close()
+                    if not has_data:
+                        # Receptor sem dados — marca todos os combos como vazio e pula
+                        for api_id in APIS:
+                            for status in STATUSES:
+                                queue.put(("combo", worker_id, api_id, status, "·"))
+                    else:
+                        # Probe usou click_idx=0; combos começam em call_count=1 → click_idx=1
+                        call_count = 1
+                        for api_id in APIS:
+                            for status in STATUSES:
+                                click_idx  = call_count % 2
+                                call_count += 1
+                                raw     = fetch_combo(page, receptor["value"], api_id, status, dates, click_idx)
+                                records = build_records(raw, receptor, api_id, status, fetched_at)
+                                all_records.extend(records)
+                                nonzero = sum(1 for r in records if r["total"] > 0)
+                                queue.put(("combo", worker_id, api_id, status, "+" if nonzero else "·"))
+                                if len(preview) < 10:
+                                    preview.extend([r for r in records if r["total"] > 0][:2])
+                finally:
+                    # Fecha contexto (limpa cookies/storage); browser continua vivo
+                    page.context.close()
                 time.sleep(random.uniform(10, 20))
-                continue
-
-            # Probe usou click_idx=0; combos começam em call_count=1 → click_idx=1
-            call_count = 1
-            for api_id in APIS:
-                for status in STATUSES:
-                    click_idx  = call_count % 2
-                    call_count += 1
-                    raw     = fetch_combo(page, receptor["value"], api_id, status, dates, click_idx)
-                    records = build_records(raw, receptor, api_id, status, fetched_at)
-                    all_records.extend(records)
-                    nonzero = sum(1 for r in records if r["total"] > 0)
-                    queue.put(("combo", worker_id, api_id, status, "+" if nonzero else "·"))
-                    if len(preview) < 10:
-                        preview.extend([r for r in records if r["total"] > 0][:2])
-
-            # Fecha contexto (limpa cookies/storage); browser continua vivo
-            page.context.close()
-            time.sleep(random.uniform(10, 20))
-
-        browser.close()
+        finally:
+            browser.close()
 
     queue.put(("done", worker_id))
     return all_records, preview
@@ -445,7 +443,7 @@ def run(dates: list[str], receptors: list[dict],
                 executor.shutdown(wait=True)
 
     # Escrita única no processo principal — sem concorrência
-    con = sqlite3.connect(str(db_path))
+    con = sqlite3.connect(str(db_path), timeout=5.0)
     con.execute("PRAGMA journal_mode=WAL")
     total_saved = upsert_records(con, all_records)
     con.close()

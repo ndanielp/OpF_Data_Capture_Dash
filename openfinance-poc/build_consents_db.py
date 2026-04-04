@@ -245,25 +245,27 @@ def _worker_run(worker_id: int, chunk: list[dict], dates: list[str],
         queue.put(("ready", worker_id, len(chunk)))
         # Um browser por worker; novo contexto por receptor (isolamento sem re-download)
         browser = create_browser(p)
+        try:
+            for i, org in enumerate(chunk, 1):
+                page = create_page(browser)
+                try:
+                    goto_with_retry(page, PAGE_URL, "[class*='-control']")
+                    queue.put(("start", worker_id, org["label"], i))
 
-        for i, org in enumerate(chunk, 1):
-            page = create_page(browser)
-            goto_with_retry(page, PAGE_URL, "[class*='-control']")
-            queue.put(("start", worker_id, org["label"], i))
+                    raw     = fetch_consents_for_org(page, org["value"], dates, click_idx=0)
+                    records = build_records(raw, org)
+                    all_records.extend(records)
+                    nonzero = sum(1 for r in records if r["total"] > 0)
+                    queue.put(("org_done", worker_id, org["label"], len(records), nonzero))
+                finally:
+                    # Fecha o contexto (limpa cookies/storage); browser continua vivo
+                    page.context.close()
+                time.sleep(random.uniform(10, 20))
 
-            raw     = fetch_consents_for_org(page, org["value"], dates, click_idx=0)
-            records = build_records(raw, org)
-            all_records.extend(records)
-            nonzero = sum(1 for r in records if r["total"] > 0)
-            queue.put(("org_done", worker_id, org["label"], len(records), nonzero))
-            # Fecha o contexto (limpa cookies/storage); browser continua vivo
-            page.context.close()
-            time.sleep(random.uniform(10, 20))
-
-            if len(preview) < 10:
-                preview.extend([r for r in records if r["total"] > 0][:2])
-
-        browser.close()
+                if len(preview) < 10:
+                    preview.extend([r for r in records if r["total"] > 0][:2])
+        finally:
+            browser.close()
 
     queue.put(("done", worker_id))
     return all_records, preview
@@ -374,7 +376,7 @@ def run(dates: list[str], db_path: str | Path, workers: int = WORKER_COUNT,
                 executor.shutdown(wait=True)
 
     # Escrita única no processo principal — sem concorrência
-    con = sqlite3.connect(str(db_path))
+    con = sqlite3.connect(str(db_path), timeout=5.0)
     con.execute("PRAGMA journal_mode=WAL")
     total_saved = upsert_records(con, all_records, fetched_at)
     con.close()
