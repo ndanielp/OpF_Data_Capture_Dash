@@ -678,8 +678,15 @@ function updateCard(wid, state, phase) {
     fracEl.textContent = `${state.rec_total||0} receptores`;
     barEl.style.width = '100%';
     if (state.receptors && state.receptors.length) {
-      symsEl.innerHTML = state.receptors.map(r=>`<span style="color:var(--text-muted);font-size:10px;">• ${r}</span><br>`).join('');
+      symsEl.innerHTML = '';
       symsEl.className = 'wcard-results';
+      state.receptors.forEach(r => {
+        const span = document.createElement('span');
+        span.style.cssText = 'color:var(--text-muted);font-size:10px;';
+        span.textContent = '• ' + r;
+        symsEl.appendChild(span);
+        symsEl.appendChild(document.createElement('br'));
+      });
     }
     return;
   }
@@ -693,24 +700,31 @@ function updateCard(wid, state, phase) {
   if (phase === 'consents') {
     const results = state.results || [];
     symsEl.className = 'wcard-results';
-    symsEl.innerHTML = results.map(s =>
-      `<span class="${s==='✓'?'sym-ok':'sym-empty'}">${s}</span>`
-    ).join(' ');
+    symsEl.innerHTML = '';
+    results.forEach(s => {
+      const span = document.createElement('span');
+      span.className = s==='✓' ? 'sym-ok' : 'sym-empty';
+      span.textContent = s;
+      symsEl.appendChild(span);
+    });
   } else {
     // api combos: {api:status → symbol}
     const combos = state.combos || {};
     symsEl.className = 'wcard-combos';
     symsEl.style.gridTemplateColumns = `repeat(${APIS_ORDER.length}, 1fr)`;
-    let html = '';
+    symsEl.innerHTML = '';
     for (const api of APIS_ORDER) {
       for (const st of STATUSES) {
         const key = `${api}:${st}`;
         const sym = combos[key];
         const cls = !sym ? 'sym-pending' : sym==='✓'||sym==='+' ? 'sym-ok' : 'sym-empty';
-        html += `<span class="${cls}" title="${api} ${st}">${sym||'○'}</span>`;
+        const span = document.createElement('span');
+        span.className = cls;
+        span.title = api + ' ' + st;
+        span.textContent = sym || '○';
+        symsEl.appendChild(span);
       }
     }
-    symsEl.innerHTML = html;
   }
 }
 
@@ -786,23 +800,20 @@ function handleSSE(msg) {
     case 'all_complete':
       _collecting = false;
       setSummaryDone(msg.n_consents, msg.n_api);
-      document.getElementById('btn-start').disabled = false;
-      document.getElementById('btn-stop').disabled  = true;
+      setCollectingUI(false);
       loadStats();
       if (_sse) { _sse.close(); _sse = null; }
       break;
     case 'error':
       _collecting = false;
       setSummaryMsg('Erro: '+msg.msg, 'var(--error)');
-      document.getElementById('btn-start').disabled = false;
-      document.getElementById('btn-stop').disabled  = true;
+      setCollectingUI(false);
       if (_sse) { _sse.close(); _sse = null; }
       break;
     case 'stopped':
       _collecting = false;
       setSummaryMsg('Coleta interrompida.', 'var(--warning)');
-      document.getElementById('btn-start').disabled = false;
-      document.getElementById('btn-stop').disabled  = true;
+      setCollectingUI(false);
       if (_sse) { _sse.close(); _sse = null; }
       break;
   }
@@ -811,6 +822,17 @@ function handleSSE(msg) {
 /* ============================================================
    COLETA — START / STOP
    ============================================================ */
+const _COLLECT_FIELDS = ['col-period','col-workers','chk-consents','chk-api','col-start','col-end'];
+
+function setCollectingUI(collecting) {
+  document.getElementById('btn-start').disabled = collecting;
+  document.getElementById('btn-stop').disabled  = !collecting;
+  _COLLECT_FIELDS.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.disabled = collecting;
+  });
+}
+
 async function startCollection() {
   const period = document.getElementById('col-period').value;
   const body = {
@@ -842,12 +864,13 @@ async function startCollection() {
     return;
   }
   _collecting = true;
-  document.getElementById('btn-start').disabled = true;
-  document.getElementById('btn-stop').disabled  = false;
+  setCollectingUI(true);
   connectSSE();
 }
 
 async function stopCollection() {
+  document.getElementById('btn-stop').disabled = true;
+  setSummaryMsg('Parando…', 'var(--warning)');
   await fetch('/api/collect/stop', {method:'POST'});
 }
 
@@ -927,8 +950,14 @@ function buildReceptorList(recs) {
     const li = document.createElement('li');
     li.className = 'receptor-item'+(rec.top?'':' inactive');
     li.dataset.label = rec.label; li.title = rec.label;
-    li.innerHTML = `<div class="receptor-dot" style="background:${rec.top?rec.color:''}"></div>
-                    <span class="receptor-name">${rec.label}</span>`;
+    const dot = document.createElement('div');
+    dot.className = 'receptor-dot';
+    if (rec.top && rec.color) dot.style.background = rec.color;
+    const nameEl = document.createElement('span');
+    nameEl.className = 'receptor-name';
+    nameEl.textContent = rec.label;
+    li.appendChild(dot);
+    li.appendChild(nameEl);
     li.addEventListener('click', e => {
       if (!e.ctrlKey && !e.metaKey && !e.shiftKey)
         document.querySelectorAll('.receptor-item.selected').forEach(el=>el.classList.remove('selected'));

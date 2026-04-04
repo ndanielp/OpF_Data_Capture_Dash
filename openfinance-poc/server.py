@@ -28,11 +28,13 @@ import numpy as np
 import pandas as pd
 from flask import Flask, Response, jsonify, request, send_from_directory
 
-# ── Silencia werkzeug ──────────────────────────────────────────────────────────
+# ── Logging ────────────────────────────────────────────────────────────────────
 logging.getLogger("werkzeug").setLevel(logging.ERROR)
+logger = logging.getLogger(__name__)
 
 # ── Estado global ──────────────────────────────────────────────────────────────
 _db_path: Path = Path("data/consents.db")
+_DATA_DIR = (Path(__file__).parent / "data").resolve()
 _runner: "CollectionRunner | None" = None
 _runner_lock = threading.Lock()
 
@@ -123,23 +125,25 @@ def _build_color_map(receptors: list[str]) -> dict[str, str]:
 
 def _load_consents() -> pd.DataFrame:
     try:
-        con = sqlite3.connect(str(_db_path))
+        con = sqlite3.connect(str(_db_path), timeout=5.0)
         df = pd.read_sql("SELECT date, receptor, total FROM unique_consents",
                          con, parse_dates=["date"])
         con.close()
         return df
     except Exception:
+        logger.exception("Erro ao carregar consentimentos do banco")
         return pd.DataFrame()
 
 
 def _load_api() -> pd.DataFrame:
     try:
-        con = sqlite3.connect(str(_db_path))
+        con = sqlite3.connect(str(_db_path), timeout=5.0)
         df = pd.read_sql("SELECT date, receptor, api, status, total FROM api_requests",
                          con, parse_dates=["date"])
         con.close()
         return df
     except Exception:
+        logger.exception("Erro ao carregar api_requests do banco")
         return pd.DataFrame()
 
 
@@ -312,7 +316,7 @@ class CollectionRunner(threading.Thread):
         # ── Receptores ativos ─────────────────────────────────────────────────
         start_date = self.dates[0][:10]
         end_date   = self.dates[-1][:10]
-        con = sqlite3.connect(str(self.db_path))
+        con = sqlite3.connect(str(self.db_path), timeout=5.0)
         rows = con.execute("""
             SELECT DISTINCT receptor, receptor_uuid
             FROM unique_consents
@@ -374,7 +378,12 @@ def set_db_endpoint():
     path = (request.json or {}).get("path", "")
     if not path:
         return jsonify({"error": "path required"}), 400
-    _db_path = Path(path)
+    resolved = Path(path).resolve()
+    if not str(resolved).startswith(str(_DATA_DIR)):
+        return jsonify({"error": "Caminho fora do diretório permitido"}), 400
+    if resolved.suffix.lower() != ".db":
+        return jsonify({"error": "Apenas arquivos .db são aceitos"}), 400
+    _db_path = resolved
     return jsonify({"ok": True, "db": _db_path.name})
 
 
@@ -383,7 +392,7 @@ def set_db_endpoint():
 @app.route("/api/stats")
 def stats_endpoint():
     try:
-        con = sqlite3.connect(str(_db_path))
+        con = sqlite3.connect(str(_db_path), timeout=5.0)
         n_c  = con.execute("SELECT count(*) FROM unique_consents").fetchone()[0]
         n_a  = con.execute("SELECT count(*) FROM api_requests").fetchone()[0]
         last = con.execute("SELECT MAX(date) FROM unique_consents").fetchone()[0] or ""
@@ -391,6 +400,7 @@ def stats_endpoint():
         return jsonify({"db": _db_path.name, "consents": n_c,
                         "api_requests": n_a, "last_updated": last[:10]})
     except Exception:
+        logger.exception("Erro ao consultar stats do banco")
         return jsonify({"db": _db_path.name, "consents": 0,
                         "api_requests": 0, "last_updated": ""})
 
@@ -583,9 +593,26 @@ def collect_start():
     period        = body.get("period", "3m")
     custom_start  = body.get("start")
     custom_end    = body.get("end")
-    workers       = int(body.get("workers", 3))
+
+    # Valida workers: inteiro entre 1 e 10
+    try:
+        workers = int(body.get("workers", 3))
+    except (ValueError, TypeError):
+        return jsonify({"error": "Parâmetro 'workers' inválido"}), 400
+    workers = max(1, min(workers, 10))
+
     skip_consents = bool(body.get("skip_consents", False))
     skip_api      = bool(body.get("skip_api", False))
+
+    # Valida formato das datas customizadas
+    if period == "custom":
+        try:
+            if custom_start:
+                datetime.strptime(custom_start, "%Y-%m-%d")
+            if custom_end:
+                datetime.strptime(custom_end, "%Y-%m-%d")
+        except ValueError:
+            return jsonify({"error": "Formato de data inválido (esperado YYYY-MM-DD)"}), 400
 
     # Resolve datas
     import sys
