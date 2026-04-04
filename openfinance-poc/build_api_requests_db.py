@@ -397,7 +397,8 @@ def run(dates: list[str], receptors: list[dict],
         ) if use_live else None
 
         with (live_ctx if live_ctx else _nullctx()):
-            with ProcessPoolExecutor(max_workers=n) as executor:
+            executor = ProcessPoolExecutor(max_workers=n)
+            try:
                 futures = {
                     executor.submit(_worker_run, i + 1, chunk, dates, fetched_at, queue): i + 1
                     for i, chunk in enumerate(chunks) if chunk
@@ -437,6 +438,11 @@ def run(dates: list[str], receptors: list[dict],
                     on_state_update(dict(states), elapsed)
                 elif live_ctx:
                     live_ctx.update(_make_table(states, start_time))
+            except BaseException:
+                executor.shutdown(wait=False, cancel_futures=True)
+                raise
+            else:
+                executor.shutdown(wait=True)
 
     # Escrita única no processo principal — sem concorrência
     con = sqlite3.connect(str(db_path))

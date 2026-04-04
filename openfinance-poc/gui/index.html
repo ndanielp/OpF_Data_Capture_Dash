@@ -786,23 +786,20 @@ function handleSSE(msg) {
     case 'all_complete':
       _collecting = false;
       setSummaryDone(msg.n_consents, msg.n_api);
-      document.getElementById('btn-start').disabled = false;
-      document.getElementById('btn-stop').disabled  = true;
+      setCollectingUI(false);
       loadStats();
       if (_sse) { _sse.close(); _sse = null; }
       break;
     case 'error':
       _collecting = false;
       setSummaryMsg('Erro: '+msg.msg, 'var(--error)');
-      document.getElementById('btn-start').disabled = false;
-      document.getElementById('btn-stop').disabled  = true;
+      setCollectingUI(false);
       if (_sse) { _sse.close(); _sse = null; }
       break;
     case 'stopped':
       _collecting = false;
       setSummaryMsg('Coleta interrompida.', 'var(--warning)');
-      document.getElementById('btn-start').disabled = false;
-      document.getElementById('btn-stop').disabled  = true;
+      setCollectingUI(false);
       if (_sse) { _sse.close(); _sse = null; }
       break;
   }
@@ -811,6 +808,17 @@ function handleSSE(msg) {
 /* ============================================================
    COLETA — START / STOP
    ============================================================ */
+const _COLLECT_FIELDS = ['col-period','col-workers','chk-consents','chk-api','col-start','col-end'];
+
+function setCollectingUI(collecting) {
+  document.getElementById('btn-start').disabled = collecting;
+  document.getElementById('btn-stop').disabled  = !collecting;
+  _COLLECT_FIELDS.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.disabled = collecting;
+  });
+}
+
 async function startCollection() {
   const period = document.getElementById('col-period').value;
   const body = {
@@ -842,12 +850,13 @@ async function startCollection() {
     return;
   }
   _collecting = true;
-  document.getElementById('btn-start').disabled = true;
-  document.getElementById('btn-stop').disabled  = false;
+  setCollectingUI(true);
   connectSSE();
 }
 
 async function stopCollection() {
+  document.getElementById('btn-stop').disabled = true;
+  setSummaryMsg('Parando…', 'var(--warning)');
   await fetch('/api/collect/stop', {method:'POST'});
 }
 
