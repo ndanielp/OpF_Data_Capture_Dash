@@ -3,3 +3,5 @@
 !gui/interface.html
 !gui/index.html
 chart_filtered.json
+__pycache__/
+*.pyc
