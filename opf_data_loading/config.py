@@ -12,4 +12,4 @@ DATA_DIR    = _BASE_DIR / "data"
 LOG_DIR     = _BASE_DIR / "logs"
 DB_PATH     = DATA_DIR / "consents.db"
 
-DEFAULT_WORKERS = 3
+DEFAULT_WORKERS = 4
