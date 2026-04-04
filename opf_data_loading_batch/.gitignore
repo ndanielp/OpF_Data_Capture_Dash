@@ -1,0 +1,13 @@
+# Credenciais e configuração local
+.env
+credentials/service_account.json
+
+# Dados e logs locais
+data/
+logs/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
