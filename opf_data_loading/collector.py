@@ -1,11 +1,10 @@
 """
-collector.py — Pipeline de coleta + exportação CSV + Drive
-===========================================================
+collector.py — Pipeline de coleta + exportação CSV local
+=========================================================
 Orquestra:
   1. Coleta de consentimentos via scrapers.run_consents()
   2. Coleta de API requests via scrapers.run_api_requests()
-  3. Exportação CSV com upsert (sem duplicatas) para o Google Drive
-  4. Upload de logs por receptor para o Drive
+  3. Exportação CSV com upsert em data/ (sem duplicatas)
 
 Também define RunLogger: um logger por receptor + log global, um arquivo por execução.
 """
@@ -13,13 +12,13 @@ Também define RunLogger: um logger por receptor + log global, um arquivo por ex
 import logging
 import re
 import sqlite3
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pandas as pd
 
 import config
-import drive as drv
 import scrapers
 from browser import fridays_between
 
@@ -31,14 +30,13 @@ from browser import fridays_between
 class RunLogger:
     """
     Gerencia um conjunto de log files para uma execução (run_id = YYYY-MM-DD_HH-MM-SS).
-    - Um log global:      logs/_global/{run_id}.log
+    - Um log global:       logs/_global/{run_id}.log
     - Um log por receptor: logs/{receptor_safe}/{run_id}.log
     """
 
     def __init__(self, run_id: str | None = None):
         self.run_id = run_id or datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         self._loggers: dict[str, logging.Logger] = {}
-        self._log_files: list[Path] = []
 
     def _safe_name(self, name: str) -> str:
         return re.sub(r"[^\w\-]", "_", name)
@@ -64,14 +62,13 @@ class RunLogger:
                                               datefmt="%H:%M:%S"))
             logger.addHandler(sh)
 
-        self._log_files.append(log_path)
         return logger
 
     def global_(self) -> logging.Logger:
         """Logger global da execução (logs/_global/{run_id}.log)."""
         key = "_global"
         if key not in self._loggers:
-            log_path = config.LOCAL_LOG_DIR / "_global" / f"{self.run_id}.log"
+            log_path = config.LOG_DIR / "_global" / f"{self.run_id}.log"
             self._loggers[key] = self._make_logger(key, log_path)
         return self._loggers[key]
 
@@ -79,30 +76,13 @@ class RunLogger:
         """Logger por receptor (logs/{receptor_safe}/{run_id}.log)."""
         key = self._safe_name(receptor_name)
         if key not in self._loggers:
-            log_path = config.LOCAL_LOG_DIR / key / f"{self.run_id}.log"
+            log_path = config.LOG_DIR / key / f"{self.run_id}.log"
             self._loggers[key] = self._make_logger(key, log_path)
         return self._loggers[key]
 
-    def upload_all(self, service, root_folder_id: str) -> None:
-        """Envia todos os arquivos de log desta execução para o Drive."""
-        log = self.global_()
-        for log_path in self._log_files:
-            # Garante que todos os handlers foram flushed
-            for handler in logging.getLogger(f"opf.{self.run_id}.{log_path.parent.name}").handlers:
-                handler.flush()
-            try:
-                # Estrutura no Drive: logs/{pasta_pai}/{arquivo}
-                folder_name = log_path.parent.name  # "_global" ou receptor_safe
-                logs_root = drv.ensure_subfolder(service, root_folder_id, "logs")
-                receptor_folder = drv.ensure_subfolder(service, logs_root, folder_name)
-                drv.upload_local_file(service, receptor_folder, log_path)
-                log.debug(f"Log enviado para Drive: {folder_name}/{log_path.name}")
-            except Exception as exc:
-                log.warning(f"Falha ao enviar log '{log_path}' para Drive: {exc}")
-
 
 # ─────────────────────────────────────────────────────────────────────────────
-# CSV upsert
+# CSV upsert local
 # ─────────────────────────────────────────────────────────────────────────────
 
 def upsert_csv(
@@ -111,50 +91,42 @@ def upsert_csv(
     pk_cols: list[str],
 ) -> tuple[pd.DataFrame, int, int]:
     """
-    Merge sem duplicata usando as colunas pk_cols como chave primária.
+    Merge sem duplicata usando pk_cols como chave primária.
     Retorna (merged_df, n_new, n_updated).
     """
     if existing is None or existing.empty:
         return new.copy(), len(new), 0
 
-    # Identifica linhas novas e atualizadas
-    merged = pd.concat([existing, new], ignore_index=True)
-    # Mantém a última ocorrência por PK (new sobrescreve existing)
-    merged = merged.drop_duplicates(subset=pk_cols, keep="last")
-
-    n_before = len(existing)
-    n_after  = len(merged)
-    n_new     = max(0, n_after - n_before)
+    merged   = pd.concat([existing, new], ignore_index=True)
+    merged   = merged.drop_duplicates(subset=pk_cols, keep="last")
+    n_new    = max(0, len(merged) - len(existing))
     n_updated = len(new) - n_new
-
     return merged, n_new, max(0, n_updated)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Leitura do SQLite
-# ─────────────────────────────────────────────────────────────────────────────
-
-def _read_consents(db_path: Path, dates: list[str]) -> pd.DataFrame:
-    start, end = dates[0][:10], dates[-1][:10]
+def _sync_csv(db_query: str, db_path: Path, csv_path: Path,
+              pk_cols: list[str], log: logging.Logger,
+              params: tuple = ()) -> tuple[int, int]:
+    """Lê SQLite, faz upsert com CSV local (se existir) e salva."""
     con = sqlite3.connect(str(db_path))
-    df = pd.read_sql_query(
-        "SELECT * FROM unique_consents WHERE date BETWEEN ? AND ?",
-        con, params=(start, end)
-    )
+    new_df = pd.read_sql_query(db_query, con, params=params)
     con.close()
-    return df
 
+    existing = pd.read_csv(csv_path) if csv_path.exists() else None
+    merged, n_new, n_upd = upsert_csv(existing, new_df, pk_cols)
 
-def _read_api_requests(db_path: Path, dates: list[str]) -> pd.DataFrame:
-    start, end = dates[0][:10], dates[-1][:10]
-    con = sqlite3.connect(str(db_path))
-    df = pd.read_sql_query(
-        "SELECT * FROM api_requests WHERE date BETWEEN ? AND ?",
-        con, params=(start, end)
+    config.DATA_DIR.mkdir(parents=True, exist_ok=True)
+    merged.to_csv(csv_path, index=False)
+    log.info(
+        f"{csv_path.name}: {n_new} novos + {n_upd} atualizados "
+        f"({len(merged)} total) → {csv_path}"
     )
-    con.close()
-    return df
+    return n_new, n_upd
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Helpers
+# ─────────────────────────────────────────────────────────────────────────────
 
 def _active_receptors(db_path: Path, dates: list[str]) -> list[dict]:
     start, end = dates[0][:10], dates[-1][:10]
@@ -169,12 +141,7 @@ def _active_receptors(db_path: Path, dates: list[str]) -> list[dict]:
     return [{"label": r[0], "value": r[1]} for r in rows]
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Resolução de datas
-# ─────────────────────────────────────────────────────────────────────────────
-
 def _resolve_dates(start_date: str, end_date: str) -> list[str]:
-    """Converte strings de período em lista de sextas-feiras ISO."""
     today = datetime.now(timezone.utc)
 
     if end_date in ("today", "hoje") or not end_date:
@@ -207,117 +174,72 @@ def run_collection(
       2. Coleta consentimentos → SQLite
       3. Busca receptores ativos
       4. Coleta API requests → SQLite
-      5. Para cada CSV: baixa do Drive, upsert, faz upload
-      6. Faz upload dos logs para Drive
+      5. Para cada CSV em data/: lê existente, faz upsert, salva
 
     Retorna dict com estatísticas da execução.
     """
     run_logger = RunLogger()
     log = run_logger.global_()
-
     _workers = workers if workers is not None else config.DEFAULT_WORKERS
 
     log.info(f"=== Execução iniciada: {run_logger.run_id} ===")
     log.info(f"Período: {start_date} → {end_date} | workers={_workers}")
-
-    import time
     t0 = time.time()
 
-    # ── 1. Resolver datas ──────────────────────────────────────────────────────
+    # ── 1. Datas ───────────────────────────────────────────────────────────────
     dates = _resolve_dates(start_date, end_date)
     if not dates:
-        log.error("Nenhuma sexta-feira encontrada no período informado.")
+        log.error("Nenhuma sexta-feira encontrada no período.")
         return {"error": "Nenhuma sexta-feira no período", "run_id": run_logger.run_id}
-
     log.info(f"Sextas-feiras: {dates[0][:10]} → {dates[-1][:10]} ({len(dates)} semanas)")
 
-    # ── 2. Coleta consentimentos ───────────────────────────────────────────────
+    # ── 2. Consentimentos ──────────────────────────────────────────────────────
     log.info("--- Fase 1: Consentimentos ---")
-    n_consents = scrapers.run_consents(
-        dates=dates,
-        db_path=config.DB_PATH,
-        workers=_workers,
-        logger=log,
-    )
+    n_consents = scrapers.run_consents(dates=dates, db_path=config.DB_PATH,
+                                       workers=_workers, logger=log)
 
     # ── 3. Receptores ativos ───────────────────────────────────────────────────
     receptors = _active_receptors(config.DB_PATH, dates)
-    log.info(f"Receptores ativos no período: {len(receptors)}")
+    log.info(f"Receptores ativos: {len(receptors)}")
 
-    # ── 4. Coleta API requests ─────────────────────────────────────────────────
+    # ── 4. API Requests ────────────────────────────────────────────────────────
     n_api = 0
     if receptors:
         log.info("--- Fase 2: API Requests ---")
-        n_api = scrapers.run_api_requests(
-            dates=dates,
-            receptors=receptors,
-            db_path=config.DB_PATH,
-            workers=_workers,
-            logger=log,
-        )
+        n_api = scrapers.run_api_requests(dates=dates, receptors=receptors,
+                                           db_path=config.DB_PATH,
+                                           workers=_workers, logger=log)
     else:
         log.warning("Nenhum receptor ativo — fase 2 pulada.")
 
-    # ── 5. Exportação CSV + Drive ──────────────────────────────────────────────
-    n_new_consents = n_upd_consents = 0
-    n_new_api = n_upd_api = 0
+    # ── 5. Exportação CSV local ────────────────────────────────────────────────
+    log.info("--- Exportação CSV local ---")
+    start_d, end_d = dates[0][:10], dates[-1][:10]
 
-    if config.DRIVE_FOLDER_ID:
-        log.info("--- Exportação CSV → Google Drive ---")
-        try:
-            service = drv.get_service(config.SERVICE_ACCOUNT_FILE)
+    n_new_c, n_upd_c = _sync_csv(
+        "SELECT * FROM unique_consents WHERE date BETWEEN ? AND ?",
+        config.DB_PATH, config.DATA_DIR / "consents.csv",
+        ["date", "receptor_uuid"], log, (start_d, end_d),
+    )
+    n_new_a, n_upd_a = _sync_csv(
+        "SELECT * FROM api_requests WHERE date BETWEEN ? AND ?",
+        config.DB_PATH, config.DATA_DIR / "api_requests.csv",
+        ["date", "receptor_uuid", "api", "status"], log, (start_d, end_d),
+    )
 
-            # Consentimentos
-            new_consents_df  = _read_consents(config.DB_PATH, dates)
-            existing_consents = drv.download_csv(service, config.DRIVE_FOLDER_ID, "consents.csv")
-            merged_consents, n_new_consents, n_upd_consents = upsert_csv(
-                existing_consents, new_consents_df, ["date", "receptor_uuid"]
-            )
-            drv.upload_csv(service, config.DRIVE_FOLDER_ID, "consents.csv", merged_consents)
-            log.info(
-                f"consents.csv: {n_new_consents} novos + {n_upd_consents} atualizados "
-                f"({len(merged_consents)} total)"
-            )
-
-            # API Requests
-            new_api_df  = _read_api_requests(config.DB_PATH, dates)
-            existing_api = drv.download_csv(service, config.DRIVE_FOLDER_ID, "api_requests.csv")
-            merged_api, n_new_api, n_upd_api = upsert_csv(
-                existing_api, new_api_df, ["date", "receptor_uuid", "api", "status"]
-            )
-            drv.upload_csv(service, config.DRIVE_FOLDER_ID, "api_requests.csv", merged_api)
-            log.info(
-                f"api_requests.csv: {n_new_api} novos + {n_upd_api} atualizados "
-                f"({len(merged_api)} total)"
-            )
-
-        except Exception as exc:
-            log.error(f"Falha na exportação para Drive: {exc}")
-    else:
-        log.warning("DRIVE_FOLDER_ID não configurado — exportação para Drive ignorada.")
-
-    # ── 6. Upload de logs ──────────────────────────────────────────────────────
     duration = round(time.time() - t0, 1)
-    log.info(f"=== Execução concluída em {duration}s ===")
-
-    if config.DRIVE_FOLDER_ID:
-        try:
-            service = drv.get_service(config.SERVICE_ACCOUNT_FILE)
-            run_logger.upload_all(service, config.DRIVE_FOLDER_ID)
-        except Exception as exc:
-            log.warning(f"Falha ao enviar logs para Drive: {exc}")
+    log.info(f"=== Concluído em {duration}s ===")
 
     return {
-        "run_id":          run_logger.run_id,
-        "period":          f"{dates[0][:10]} → {dates[-1][:10]}",
-        "weeks":           len(dates),
-        "receptors":       len(receptors),
-        "n_consents_db":   n_consents,
-        "n_api_db":        n_api,
-        "n_new_consents":  n_new_consents,
-        "n_upd_consents":  n_upd_consents,
-        "n_new_api":       n_new_api,
-        "n_upd_api":       n_upd_api,
-        "drive_folder_id": config.DRIVE_FOLDER_ID or "(não configurado)",
-        "duration_s":      duration,
+        "run_id":         run_logger.run_id,
+        "period":         f"{start_d} → {end_d}",
+        "weeks":          len(dates),
+        "receptors":      len(receptors),
+        "n_consents_db":  n_consents,
+        "n_api_db":       n_api,
+        "n_new_consents": n_new_c,
+        "n_upd_consents": n_upd_c,
+        "n_new_api":      n_new_a,
+        "n_upd_api":      n_upd_a,
+        "duration_s":     duration,
     }
