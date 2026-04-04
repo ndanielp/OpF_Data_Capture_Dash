@@ -8,6 +8,6 @@ cd /d "c:\Users\LENOVO\OneDrive\Documentos\Projetos\claude-antigravity\Claude_Pr
 
 :: 2. Executa a tarefa usando o ambiente virtual integrado
 ::    Substitua os parametros abaixo conforme a frequencia de sua preferencia
-call .venv\Scripts\python.exe main.py run --start-date "2026-02-01" --workers 1
+call .venv\Scripts\python.exe main.py run --start-date "2025-06-01" --workers 1
 
 echo Comando Finalizado! %date% %time%

@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+
+# Ignorar dados sensíveis/locais para não irem na imagem base
+data/
+logs/
+credentials/

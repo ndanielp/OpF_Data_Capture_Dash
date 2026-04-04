@@ -129,6 +129,11 @@ def cmd_preview(args):
     except Exception as e:
         print(f"{Fore.RED}Erro exibindo CSV:{Style.RESET_ALL} {str(e)}")
 
+def cmd_dashboard(args):
+    """Lança o servidor do Dashboard via FastAPI e Uvicorn."""
+    import dashboard_server
+    dashboard_server.run_server(port=args.port)
+
 def main():
     parser = argparse.ArgumentParser(
         description="CLI para Extração Lote (Batch) de Dados do Open Finance Brasil.",
@@ -159,6 +164,11 @@ def main():
     parser_preview.add_argument("dataset", choices=["consents", "api_requests"], help="Qual base exibir.")
     parser_preview.add_argument("--rows", "-r", type=int, default=10, help="Número de linhas a exibir do final.")
     parser_preview.set_defaults(func=cmd_preview)
+
+    # Sub-comando: dashboard
+    parser_dashboard = subparsers.add_parser("dashboard", help="Inicia o servidor e o dashboard analítico web.")
+    parser_dashboard.add_argument("--port", "-p", type=int, default=8000, help="Porta para rodar o servidor HTTP do dashboard.")
+    parser_dashboard.set_defaults(func=cmd_dashboard)
 
     args = parser.parse_args()
     args.func(args)

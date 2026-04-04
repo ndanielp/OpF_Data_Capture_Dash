@@ -1,0 +1,27 @@
+services:
+  dashboard:
+    build: .
+    container_name: opf_dashboard
+    ports:
+      - "8000:8000"
+    volumes:
+      # Montar diretórios locais para persistência no Docker
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./credentials:/app/credentials
+    env_file:
+      - .env
+    command: ["python", "main.py", "dashboard", "--port", "8000"]
+    restart: unless-stopped
+
+  batch:
+    build: .
+    container_name: opf_batch
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./credentials:/app/credentials
+    env_file:
+      - .env
+    # Este container roda os coletores e depois é finalizado automaticamente
+    command: ["python", "main.py", "run"]
