@@ -19,12 +19,20 @@ console = Console(legacy_windows=False)
 # Constantes
 # ─────────────────────────────────────────────────────────────────────────────
 
-CHROMIUM_BIN = os.environ.get(
-    "CHROMIUM_BIN",
-    str(Path.home() / "AppData/Local/ms-playwright/chromium-1208/chrome-win64/chrome.exe")
-    if os.name == "nt"
-    else "/root/.cache/ms-playwright/chromium-1194/chrome-linux/chrome",
-)
+def _default_chromium_bin() -> str | None:
+    """Retorna o caminho do Chromium instalado pelo Playwright, ou None para usar o padrão."""
+    if os.name == "nt":
+        # Windows: caminho padrão do Playwright
+        candidates = sorted(
+            (Path.home() / "AppData/Local/ms-playwright").glob("chromium-*/chrome-win64/chrome.exe"),
+            reverse=True,
+        )
+        return str(candidates[0]) if candidates else None
+    # Linux/Mac: deixa o Playwright resolver automaticamente
+    return None
+
+
+CHROMIUM_BIN = os.environ.get("CHROMIUM_BIN") or _default_chromium_bin()
 OUTPUT_DIR = Path("data/exports")
 BASE_URL = "https://dashboard.openfinancebrasil.org.br"
 
@@ -124,17 +132,22 @@ Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3]});
 
 def create_browser(p):
     """Lança Chromium com flags anti-detecção e sem cache em disco."""
-    return p.chromium.launch(
+    kwargs = dict(
         headless=True,
-        executable_path=CHROMIUM_BIN,
         proxy=get_proxy(),
         args=[
             "--ignore-certificate-errors",
             "--disable-blink-features=AutomationControlled",
             "--disable-infobars",
             "--disable-dev-shm-usage",
+            "--disable-application-cache",
+            "--disable-cache",
+            "--disk-cache-size=0",
         ],
     )
+    if CHROMIUM_BIN:
+        kwargs["executable_path"] = CHROMIUM_BIN
+    return p.chromium.launch(**kwargs)
 
 
 def create_page(browser):
