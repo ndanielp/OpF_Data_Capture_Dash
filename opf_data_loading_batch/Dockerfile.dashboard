@@ -1,0 +1,18 @@
+FROM python:3.11-alpine
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+# Instala somente o necessário para o dashboard (sem Playwright/Chromium)
+RUN pip install --no-cache-dir \
+    "pandas>=2.0.0" \
+    "fastapi>=0.100.0" \
+    "uvicorn>=0.22.0" \
+    "colorama>=0.4.6"
+
+COPY . .
+RUN mkdir -p data logs credentials
+
+CMD ["python", "main.py", "dashboard", "--port", "8000"]

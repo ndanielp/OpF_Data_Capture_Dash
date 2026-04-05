@@ -1,6 +1,8 @@
 services:
   dashboard:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile.dashboard
     container_name: opf_dashboard
     ports:
       - "8000:8000"
