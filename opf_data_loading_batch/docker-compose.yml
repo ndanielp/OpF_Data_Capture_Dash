@@ -5,10 +5,10 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      # Montar diretórios locais para persistência no Docker
-      - ./data:/app/data
-      - ./logs:/app/logs
-      - ./credentials:/app/credentials
+      # Montar diretórios locais para persistência — :z necessário para SELinux no Linux
+      - ./data:/app/data:z
+      - ./logs:/app/logs:z
+      - ./credentials:/app/credentials:z
     env_file:
       - .env
     command: ["python", "main.py", "dashboard", "--port", "8000"]
@@ -18,9 +18,9 @@ services:
     build: .
     container_name: opf_batch
     volumes:
-      - ./data:/app/data
-      - ./logs:/app/logs
-      - ./credentials:/app/credentials
+      - ./data:/app/data:z
+      - ./logs:/app/logs:z
+      - ./credentials:/app/credentials:z
     env_file:
       - .env
     # Este container roda os coletores e depois é finalizado automaticamente

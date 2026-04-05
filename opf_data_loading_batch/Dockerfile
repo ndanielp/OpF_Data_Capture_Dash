@@ -5,7 +5,6 @@ FROM python:3.11-slim
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
-# Instala dependências de sistema auxiliares se necessário
 RUN apt-get update && apt-get install -y \
     wget \
     gnupg \
@@ -17,9 +16,6 @@ WORKDIR /app
 # Instala as bibliotecas de Python primeiro (aproveita o cache do docker)
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-
-# Esta é a etapa mágica para o Playwright não dar erro no Linux/Docker
-RUN playwright install --with-deps chromium
 
 # Copia o código da aplicação
 COPY . .
