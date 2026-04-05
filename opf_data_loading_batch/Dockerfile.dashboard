@@ -6,10 +6,11 @@ ENV PYTHONUNBUFFERED=1
 # Usa pacotes pré-compilados do Alpine — sem pip, build mais rápido
 RUN apk add --no-cache \
     python3 \
+    py3-pip \
     py3-pandas \
     py3-fastapi \
-    py3-uvicorn \
-    py3-colorama
+    py3-colorama \
+    && pip3 install --no-cache-dir --break-system-packages "uvicorn>=0.22.0"
 
 WORKDIR /app
 
