@@ -22,13 +22,13 @@ if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
 import config
-from collector import run_collection
 
 # Inicializa o colorama para cores no terminal Windows/Linux
 init(autoreset=True)
 
 def cmd_run(args):
     """Executa a coleta."""
+    from collector import run_collection  # import lazy — evita carregar playwright no modo dashboard
     print(f"{Fore.CYAN}Iniciando coleta de dados Open Finance: {args.start_date} até {args.end_date}{Style.RESET_ALL}\n")
     try:
         result = run_collection(
