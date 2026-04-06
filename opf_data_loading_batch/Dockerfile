@@ -1,11 +1,15 @@
 # Usa Python 3.11 light como base
 FROM python:3.11-slim
 
-# Evitar a geração de arquivos .pyc e não fazer buffer de logs do python (para visualizar fácil no docker logs)
+# Evitar a geração de arquivos .pyc e não fazer buffer de logs do python
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
-# Instala dependências de sistema auxiliares se necessário
+# Bucket GCS de onde o dashboard baixa os dados (definido via --set-env-vars no deploy)
+ENV GCS_BUCKET=""
+ENV GCS_PREFIX="data/"
+
+# Instala dependências de sistema
 RUN apt-get update && apt-get install -y \
     wget \
     gnupg \
@@ -18,15 +22,18 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Esta é a etapa mágica para o Playwright não dar erro no Linux/Docker
-RUN playwright install --with-deps chromium
+# Playwright só é necessário para o batch (local) — não instalar para o dashboard no Cloud Run
+# RUN playwright install --with-deps chromium
 
 # Copia o código da aplicação
 COPY . .
 
-# Cria os diretórios necessários caso não existam (já que foram ignorados)
+# Cria os diretórios necessários
 RUN mkdir -p data logs credentials
 
-# Comando base padrão se nenhum for passado (exemplo: roda o dashboard)
-# Se rodar via docker-compose, estes comandos podem ser sobrescritos
+# Script de entrypoint: baixa dados do GCS e depois inicia o servidor
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]
 CMD ["python", "main.py", "dashboard", "--port", "8000"]

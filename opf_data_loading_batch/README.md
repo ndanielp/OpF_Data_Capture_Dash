@@ -1,65 +1,144 @@
 # Open Finance Data Loading & Dashboard
 
-Este projeto gerencia a automação de coleta de dados do Open Finance e disponibiliza um **Dashboard Analítico** para acompanhar em tempo real as informações, volume de requisições, instituições e performance estrutural processada. Tudo de forma embutida e isolada baseada em Docker.
+Coleta automatizada de dados do Open Finance Brasil com **Dashboard Analítico** publicado no Google Cloud Run.
+
+- **Coleta (Batch)**: roda localmente com Playwright, salva em `data/consents.db`
+- **Dashboard**: publicado no Google Cloud Run, lê dados do GCS
+
+🌐 **Dashboard ao vivo:** https://opf-dashboard-904097901801.us-central1.run.app
 
 ---
 
-## 🛠 Pré-requisitos
+## Arquitetura
 
-- **[Docker Desktop](https://www.docker.com/products/docker-desktop/)** (Para subir as imagens do sistema independente do seu Windows).
-- **[Ngrok](https://download.ngrok.com/)** *(Opcional)* - Necessário apenas caso você deseje gerar um link público para acessar o sistema de fora da sua rede.
-
----
-
-## 🚀 Como Executar o Sistema Web (Dashboard)
-
-A configuração está construída para economizar tempo usando os atalhos em batch (`.bat`) do Windows.
-
-### Passo 1: Revisores de Ambiente
-Basta garantir que o arquivo `.env` conste na pasta principal (você pode copiar o `.env.example` para `.env`). Ele controla como a aplicação se comporta localmente (onde salvar logs e referenciar o banco SQLite).
-
-### Passo 2: Iniciar a Aplicação Base
-Dê **dois cliques** no arquivo:
-> `start_docker_dashboard.bat`
-
-Ele vai lidar com tudo para você. Se for a primeira vez que você roda na máquina, o Docker vai construir as imagens. Caso contrário, subirá instantaneamente.
-
-### Passo 3: Utilizando a Interface
-Com a tela preta funcionando em aberto, você pode acessar seu sistema pelo navegador:
-👉 **[http://localhost:8000](http://localhost:8000)**
+```
+[Local] python main.py run  →  data/consents.db
+                ↓
+        python sync_to_gcs.py  →  gs://opf-data-bucket/data/consents.db
+                                            ↓
+                                [Cloud Run: Dashboard FastAPI]
+```
 
 ---
 
-## 🌐 Como Expor seu Dashboard na Internet (Ngrok)
+## Pré-requisitos
 
-Caso tenha necessidade de mostrar essa plataforma num computador externo ou celular remotamente:
-
-1. Certifique-se de que o **Dashboard está rodando perfeitamente** na Etapa Anterior.
-2. Dê **dois cliques** no arquivo:
-   > `start_ngrok.bat`
-3. O terminal especial revelará um endereço temporário público e seguro *(ex: `https://abcd-xyz.ngrok-free.app`)* redirecionando para a sua máquina.
+| Ferramenta | Para quê |
+|---|---|
+| [Docker Desktop](https://www.docker.com/products/docker-desktop/) | Rodar localmente ou fazer deploy |
+| [Google Cloud SDK (gcloud)](https://cloud.google.com/sdk/docs/install) | Deploy no Cloud Run |
+| Python 3.11+ | Coleta local e sync |
 
 ---
 
-## ⚙️ Rodando a Coleta em Fundo (Modo Batch)
+## Coleta de Dados (Local)
 
-O serviço conta com um módulo de contêiner autônomo (não-web). Se a sua intenção é somente acordar as máquinas em modo oculto e varrer os dados periodicamente:
+### Via Python direto
 
-Abra o seu terminal na pasta do projeto e use:
+```bash
+# Instalar dependências
+pip install -r requirements.txt
+playwright install chromium
+
+# Executar coleta (padrão: últimas 4 semanas)
+python main.py run
+
+# Outros comandos disponíveis
+python main.py status          # resumo dos dados coletados
+python main.py last-run        # último log de execução
+python main.py preview consents --rows 20
+```
+
+### Via Docker
+
 ```bash
 docker compose up batch
 ```
-Desta vez as automações e coletores de dados vão arrancar, fazer a coleta e se autodestruir sozinhos quando a tarefa terminar de popular a sua base analítica.
 
-**Período de Coleta Padrão:**
-Por padrão, este comando extrai os dados das **últimas 4 semanas** (até a data de hoje). 
-Caso deseje alterar este período definitivo no Docker, edite o arquivo `docker-compose.yml`, localizando a seção `batch:` e alterando a instrução `command:` para o formato:
-`command: ["python", "main.py", "run", "--start-date", "2024-01-01", "--end-date", "2024-12-31"]`
+Coleta os dados e encerra automaticamente. Para customizar o período:
+
+```yaml
+# docker-compose.yml → seção batch:
+command: ["python", "main.py", "run", "--start-date", "2024-01-01", "--end-date", "2024-12-31"]
+```
 
 ---
 
-### Encerrando o Serviços
-Se não for mais usar o sistema e quiser parar tudo com segurança para liberar a porta do computador, rode no terminal:
+## Dashboard Local
+
 ```bash
-docker compose down
+# Via Python
+python main.py dashboard --port 8000
+
+# Via Docker
+docker compose up dashboard
 ```
+
+Acesse: **http://localhost:8000**
+
+---
+
+## Publicar no Google Cloud Run
+
+### 1. Sincronizar dados após cada coleta
+
+```powershell
+python sync_to_gcs.py
+```
+
+Sobe `data/consents.db` para `gs://opf-data-bucket/data/consents.db`.
+
+> Requer autenticação: `gcloud auth application-default login`
+
+### 2. Deploy após alterações de código
+
+```powershell
+# Deploy completo (sync + build + push + deploy)
+.\deploy.ps1
+
+# Só sincronizar dados (sem rebuild)
+.\deploy.ps1 -SyncOnly
+
+# Só rebuild + deploy (sem sync de dados)
+.\deploy.ps1 -SkipSync
+```
+
+---
+
+## Estrutura do Projeto
+
+```
+opf_data_loading_batch/
+├── main.py               # CLI principal (run, status, dashboard, ...)
+├── collector.py          # Orquestrador da coleta
+├── scrapers.py           # Scrapers Playwright
+├── browser.py            # Gerenciamento de browsers
+├── dashboard_server.py   # Backend FastAPI do dashboard
+├── config.py             # Caminhos e configurações
+│
+├── gcs_sync.py           # Módulo de sync bidirecional com GCS
+├── sync_to_gcs.py        # Script: sobe consents.db para o GCS
+├── deploy.ps1            # Script: rebuild + deploy no Cloud Run
+├── entrypoint.sh         # Startup do container (baixa DB do GCS)
+│
+├── Dockerfile            # Imagem para o Cloud Run (dashboard only)
+├── docker-compose.yml    # Uso local (dashboard + batch)
+│
+├── gui/                  # Frontend HTML/JS do dashboard
+├── data/                 # banco SQLite (ignorado pelo git)
+└── logs/                 # logs das coletas (ignorado pelo git)
+```
+
+---
+
+## Variáveis de Ambiente (.env)
+
+Copie `.env.example` para `.env` e ajuste:
+
+```env
+LOCAL_LOG_DIR=logs
+DB_PATH=data/consents.db
+DEFAULT_WORKERS=4
+```
+
+Para o Cloud Run, as variáveis `GCS_BUCKET` e `GOOGLE_CLOUD_PROJECT` são definidas automaticamente pelo `deploy.ps1`.
