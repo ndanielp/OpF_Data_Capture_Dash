@@ -9,12 +9,6 @@ ENV PYTHONUNBUFFERED=1
 ENV GCS_BUCKET=""
 ENV GCS_PREFIX="data/"
 
-# Instala dependências de sistema
-RUN apt-get update && apt-get install -y \
-    wget \
-    gnupg \
-    && rm -rf /var/lib/apt/lists/*
-
 # Define o diretório principal do container
 WORKDIR /app
 
@@ -22,18 +16,14 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Playwright só é necessário para o batch (local) — não instalar para o dashboard no Cloud Run
-# RUN playwright install --with-deps chromium
-
 # Copia o código da aplicação
 COPY . .
 
 # Cria os diretórios necessários
 RUN mkdir -p data logs credentials
 
-# Script de entrypoint: baixa dados do GCS e depois inicia o servidor
+# Script de entrypoint: garante LF (sem CRLF), torna executável e copia para raiz
 COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+RUN sed -i 's/\r$//' /entrypoint.sh && chmod +x /entrypoint.sh
 
 ENTRYPOINT ["/entrypoint.sh"]
-CMD ["python", "main.py", "dashboard", "--port", "8000"]

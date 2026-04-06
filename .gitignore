@@ -1,0 +1,15 @@
+# Credenciais
+.env
+credentials/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+
+# Dados e logs (ambas as partes)
+data-loader/data/
+data-loader/logs/
+dashboard/data/
+dashboard/logs/

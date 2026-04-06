@@ -63,7 +63,7 @@ if ($SkipSync -and -not $SyncOnly) {
     Write-Step "Sincronizando dados locais -> GCS (gs://$GCS_BUCKET/data/)..."
     $env:GCS_BUCKET = $GCS_BUCKET
     $env:GOOGLE_CLOUD_PROJECT = $PROJECT_ID
-    python sync_to_gcs.py
+    python ..\data-loader\sync_to_gcs.py
     if ($LASTEXITCODE -ne 0) {
         Write-Warn "Falha no sync de dados - continuando com os dados existentes no bucket."
     } else {
