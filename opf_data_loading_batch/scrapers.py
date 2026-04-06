@@ -333,7 +333,7 @@ def run_consents(
 
 def probe_receptor(page, receptor_uuid: str, dates: list[str]) -> bool:
     """
-    Verifica se receptor tem qualquer chamada no período.
+    Verifica se receptor tem qualquer chamada no período (qualquer status).
     Retorna True se há dados, False se vazio. Em caso de erro retorna True.
     """
     body = {
@@ -341,7 +341,6 @@ def probe_receptor(page, receptor_uuid: str, dates: list[str]) -> bool:
         "phase":     "transactional-data",
         "receivers": [receptor_uuid],
         "dates":     dates,
-        "status":    200,
     }
 
     def route_handler(route: Route):
@@ -390,6 +389,7 @@ def fetch_api_combo(
         except Exception:
             route.continue_()
 
+    _log = logging.getLogger(__name__)
     page.route(_API_REQUESTS_ENDPOINT, route_handler)
     try:
         with page.expect_response(
@@ -401,8 +401,22 @@ def fetch_api_combo(
         data = resp_info.value.json()
         if isinstance(data, list):
             captured.extend(data)
-    except Exception:
-        pass
+            if not captured:
+                _log.debug(
+                    "fetch_api_combo: resposta vazia (lista vazia) para "
+                    "api=%s status=%s receptor=%s", api_id, status, receptor_uuid
+                )
+        else:
+            _log.warning(
+                "fetch_api_combo: resposta inesperada (nao-lista) para "
+                "api=%s status=%s receptor=%s — tipo=%s",
+                api_id, status, receptor_uuid, type(data).__name__
+            )
+    except Exception as exc:
+        _log.warning(
+            "fetch_api_combo FALHOU: api=%s status=%s receptor=%s — %s: %s",
+            api_id, status, receptor_uuid, type(exc).__name__, exc
+        )
     finally:
         page.unroute(_API_REQUESTS_ENDPOINT, route_handler)
 
@@ -430,7 +444,7 @@ def build_api_records(
 
 
 def _worker_run_api_requests(
-    worker_id: int, chunk: list[dict], dates: list[str], fetched_at: str, queue, delay_min: float, delay_max: float, fetched_apis: set
+    worker_id: int, chunk: list[dict], dates: list[str], fetched_at: str, queue, delay_min: float, delay_max: float
 ) -> list[dict]:
     """
     Roda em processo separado: fetch via browser, sem escrita em disco.
@@ -459,9 +473,6 @@ def _worker_run_api_requests(
             call_count = 1
             for api_id in APIS:
                 for status in STATUSES:
-                    if (receptor["value"], api_id, status) in fetched_apis:
-                        continue
-
                     click_idx = call_count % 2
                     call_count += 1
                     raw = fetch_api_combo(
@@ -498,21 +509,6 @@ def run_api_requests(
     fetched_at = datetime.now(timezone.utc).isoformat()
     db_path = Path(db_path)
 
-    today_str = fetched_at[:10]
-    try:
-        con = sqlite3.connect(str(db_path))
-        rows = con.execute(
-            "SELECT DISTINCT receptor_uuid, api, status FROM api_requests WHERE fetched_at LIKE ?",
-            (f"{today_str}%",)
-        ).fetchall()
-        con.close()
-        fetched_apis = {(r[0], r[1], r[2]) for r in rows}
-    except Exception:
-        fetched_apis = set()
-
-    if len(fetched_apis) > 0:
-        log.info(f"API Requests: {len(fetched_apis)} requisições (receptor/api/status) já consultadas hoje e serão ignoradas.")
-
     log.info(
         f"API Requests: {len(receptors)} receptores · {len(APIS)} APIs · "
         f"{len(STATUSES)} statuses · {workers} workers"
@@ -530,7 +526,7 @@ def run_api_requests(
         with ProcessPoolExecutor(max_workers=n) as executor:
             futures = {
                 executor.submit(
-                    _worker_run_api_requests, i + 1, chunk, dates, fetched_at, queue, delay_min, delay_max, fetched_apis
+                    _worker_run_api_requests, i + 1, chunk, dates, fetched_at, queue, delay_min, delay_max
                 ): i + 1
                 for i, chunk in enumerate(chunks) if chunk
             }

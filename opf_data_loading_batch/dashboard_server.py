@@ -309,7 +309,10 @@ def get_api_requests(start: str = None, end: str = None, receptors: str = None, 
         ct = df_cons.groupby("receptor")["total"].sum() if not df_cons.empty else pd.Series(dtype=float)
         for i, rec in enumerate(pivot.index):
             n = float(ct.get(rec, 0))
-            if n > 0: data[i] /= n
+            if n > 0:
+                # Converte de "Semanal" para "Mensal (30 dias)"
+                # Cálculo: (Somatório Chamadas / Somatório Consentimentos) / 7 * 30
+                data[i] = (data[i] / n) / 7 * 30
 
     groups_info = []
     col_idx = 0
@@ -365,7 +368,9 @@ def get_resources(start: str = None, end: str = None, receptors: str = None, sta
         ct = df_cons.groupby("receptor")["total"].sum() if not df_cons.empty else pd.Series(dtype=float)
         for i, rec in enumerate(totals.index):
             n = float(ct.get(rec, 0))
-            if n > 0: values[i] /= n
+            if n > 0:
+                # Converte de Semanal para Mensal (30 dias)
+                values[i] = (values[i] / n) / 7 * 30
 
     colors_map = _build_color_map(list(totals.index))
     colors = [colors_map.get(r, "#4A9EFF") for r in totals.index]
