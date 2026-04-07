@@ -64,6 +64,27 @@ _WORKER_STAGGER = 4  # segundos entre o início de cada worker
 _RECEPTOR_DROPDOWN = "[class*='-control']"
 _RECEPTOR_OPTIONS  = "[class*='-option']"
 
+_DROPDOWN_TIMEOUT = 4_000   # ms — timeout por tentativa de abrir o dropdown
+_RESPONSE_TIMEOUT = 6_000   # ms — timeout para a resposta da API chegar
+
+
+def _click_dropdown_option(page, click_idx: int, max_retries: int = 2) -> None:
+    """Abre o dropdown de receptor e clica na opção click_idx.
+    Se o dropdown não abrir (estado inconsistente pós-combo), pressiona Escape
+    e retenta uma vez antes de propagar o erro.
+    """
+    for attempt in range(max_retries):
+        try:
+            page.locator(_RECEPTOR_DROPDOWN).first.click()
+            page.wait_for_selector(_RECEPTOR_OPTIONS, state="visible", timeout=_DROPDOWN_TIMEOUT)
+            page.locator(_RECEPTOR_OPTIONS).nth(click_idx).click()
+            return
+        except Exception:
+            if attempt == max_retries - 1:
+                raise
+            page.keyboard.press("Escape")
+            page.wait_for_timeout(500)
+
 
 # ── Banco de dados ─────────────────────────────────────────────────────────────
 
@@ -172,11 +193,9 @@ def fetch_consents_for_org(
     page.route(_CONSENTS_API_URL, route_handler)
     try:
         with page.expect_response(
-            lambda r: "/api/unique-consents" in r.url, timeout=8000
+            lambda r: "/api/unique-consents" in r.url, timeout=_RESPONSE_TIMEOUT
         ) as resp_info:
-            page.locator("[class*='-control']").first.click()
-            page.wait_for_selector("[class*='-option']", state="visible", timeout=8000)
-            page.locator("[class*='-option']").nth(click_idx).click()
+            _click_dropdown_option(page, click_idx)
         data = resp_info.value.json()
         if isinstance(data, list):
             captured.extend(data)
@@ -216,6 +235,7 @@ def _worker_run_consents(
         browser = create_browser(p)
 
         for i, org in enumerate(chunk, 1):
+            t0 = time.time()
             page = create_page(browser)
             goto_with_retry(page, _CONSENTS_PAGE_URL, "[class*='-control']")
             queue.put(("start", worker_id, org["label"], i))
@@ -226,6 +246,8 @@ def _worker_run_consents(
             queue.put(("org_done", worker_id, org["label"], len(records), nonzero, records))
 
             page.context.close()
+            elapsed = time.time() - t0
+            queue.put(("timing", worker_id, org["label"], elapsed))
             time.sleep(random.uniform(delay_min, delay_max))
 
         browser.close()
@@ -352,11 +374,9 @@ def probe_receptor(page, receptor_uuid: str, dates: list[str]) -> bool:
     page.route(_API_REQUESTS_ENDPOINT, route_handler)
     try:
         with page.expect_response(
-            lambda r: "/api/api-requests" in r.url, timeout=8000
+            lambda r: "/api/api-requests" in r.url, timeout=_RESPONSE_TIMEOUT
         ) as resp_info:
-            page.locator(_RECEPTOR_DROPDOWN).first.click()
-            page.wait_for_selector(_RECEPTOR_OPTIONS, state="visible", timeout=8000)
-            page.locator(_RECEPTOR_OPTIONS).nth(0).click()
+            _click_dropdown_option(page, 0)
         data = resp_info.value.json()
         return isinstance(data, list) and any(d.get("total", 0) > 0 for d in data)
     except Exception:
@@ -393,11 +413,9 @@ def fetch_api_combo(
     page.route(_API_REQUESTS_ENDPOINT, route_handler)
     try:
         with page.expect_response(
-            lambda r: "/api/api-requests" in r.url, timeout=8000
+            lambda r: "/api/api-requests" in r.url, timeout=_RESPONSE_TIMEOUT
         ) as resp_info:
-            page.locator(_RECEPTOR_DROPDOWN).first.click()
-            page.wait_for_selector(_RECEPTOR_OPTIONS, state="visible", timeout=8000)
-            page.locator(_RECEPTOR_OPTIONS).nth(click_idx).click()
+            _click_dropdown_option(page, click_idx)
         data = resp_info.value.json()
         if isinstance(data, list):
             captured.extend(data)
@@ -459,6 +477,7 @@ def _worker_run_api_requests(
         browser = create_browser(p)
 
         for i, receptor in enumerate(chunk, 1):
+            t0 = time.time()
             page = create_page(browser)
             goto_with_retry(page, _API_REQUESTS_PAGE_URL, _RECEPTOR_DROPDOWN)
             queue.put(("start", worker_id, receptor["label"], i))
@@ -467,6 +486,8 @@ def _worker_run_api_requests(
             if not has_data:
                 queue.put(("skipped", worker_id, receptor["label"]))
                 page.context.close()
+                elapsed = time.time() - t0
+                queue.put(("timing", worker_id, receptor["label"], elapsed))
                 time.sleep(random.uniform(delay_min, delay_max))
                 continue
 
@@ -483,6 +504,8 @@ def _worker_run_api_requests(
                     queue.put(("combo", worker_id, api_id, status, nonzero, records))
 
             page.context.close()
+            elapsed = time.time() - t0
+            queue.put(("timing", worker_id, receptor["label"], elapsed))
             time.sleep(random.uniform(delay_min, delay_max))
 
         browser.close()
@@ -583,5 +606,7 @@ def _handle_queue_msg(msg: tuple, log: logging.Logger, prefix: str) -> None:
     elif kind == "combo":
         if msg[4] > 0:
             log.debug(f"{prefix} W{wid}: {msg[2]} status={msg[3]} → {msg[4]} registros")
+    elif kind == "timing":
+        log.debug(f"{prefix} W{wid}: '{msg[2]}' — {msg[3]:.1f}s")
     elif kind == "done":
         log.info(f"{prefix} W{wid}: concluído")
