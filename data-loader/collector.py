@@ -208,11 +208,23 @@ def run_collection(
     # ── 4. API Requests ────────────────────────────────────────────────────────
     n_api = 0
     if receptors:
+        # Busca lista de transmissores antes da coleta granular
         log.info("--- Fase 2: API Requests ---")
+        log.info("Buscando lista de transmissores...")
+        from playwright.sync_api import sync_playwright
+        from browser import create_browser, create_page
+        with sync_playwright() as _p:
+            _b = create_browser(_p)
+            _pg = create_page(_b)
+            transmitters = scrapers.fetch_transmitters(_pg)
+            _b.close()
+        log.info(f"Transmissores: {len(transmitters)}")
+
         n_api = scrapers.run_api_requests(dates=dates, receptors=receptors,
                                            db_path=config.DB_PATH,
                                            workers=_workers, logger=log,
-                                           delay_min=delay_min, delay_max=delay_max)
+                                           delay_min=delay_min, delay_max=delay_max,
+                                           transmitters=transmitters)
     else:
         log.warning("Nenhum receptor ativo — fase 2 pulada.")
 
@@ -228,7 +240,7 @@ def run_collection(
     n_new_a, n_upd_a = _sync_csv(
         "SELECT * FROM api_requests WHERE date BETWEEN ? AND ?",
         config.DB_PATH, config.DATA_DIR / "api_requests.csv",
-        ["date", "receptor_uuid", "api", "status"], log, (start_d, end_d),
+        ["date", "receptor_uuid", "transmitter_uuid", "api", "endpoint_id", "status"], log, (start_d, end_d),
     )
 
     duration = round(time.time() - t0, 1)

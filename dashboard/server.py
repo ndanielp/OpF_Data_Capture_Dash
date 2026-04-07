@@ -111,7 +111,14 @@ def _load_consents() -> pd.DataFrame:
 def _load_api() -> pd.DataFrame:
     try:
         con = sqlite3.connect(str(config.DB_PATH))
-        df = pd.read_sql("SELECT date, receptor, api, status, total FROM api_requests", con, parse_dates=["date"])
+        df = pd.read_sql(
+            """
+            SELECT date, receptor, api, status, SUM(total) AS total
+            FROM api_requests
+            GROUP BY date, receptor, api, status
+            """,
+            con, parse_dates=["date"]
+        )
         con.close()
         return df
     except Exception:

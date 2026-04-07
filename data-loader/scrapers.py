@@ -1,7 +1,7 @@
 """
 scrapers.py — Coleta de dados do Open Finance Brasil
 =====================================================
-Scraping de consentimentos únicos e chamadas de API por receptor.
+Scraping de consentimentos únicos e chamadas de API por receptor × transmissor × endpoint.
 
 Derivado de openfinance-poc/build_consents_db.py + build_api_requests_db.py.
 Sem dependências Rich — usa logging Python padrão.
@@ -58,6 +58,115 @@ APIS = [
 
 STATUSES = [200, 500]
 
+# Mapeamento de endpoints por API: cada entrada é {"label": str, "id": int}
+# IDs extraídos via interceptação de POST body em 2026-04-07.
+ENDPOINTS: dict[str, list[dict]] = {
+    "credit-cards-accounts": [
+        {"label": "Fatura de Cartão de Crédito", "id": 35},
+        {"label": "Identificação de cartão de crédito", "id": 31},
+        {"label": "Limites de cartão de crédito", "id": 32},
+        {"label": "Lista de cartões de crédito", "id": 30},
+        {"label": "Transações de cartão de crédito", "id": 33},
+        {"label": "Transações de cartão de crédito por fatura", "id": 36},
+        {"label": "Transações recentes de cartão de crédito", "id": 34},
+    ],
+    "consents": [
+        {"label": "Criar novo pedido de consentimento", "id": 21},
+        {"label": "Deletar / Revogar o consentimento identificado por consentId", "id": 80},
+        {"label": "Obter detalhes de extensões feitas no consentimento", "id": 111},
+        {"label": "Obter detalhes do consentimento identificado por consentId", "id": 22},
+        {"label": "Renovar consentimento", "id": 112},
+    ],
+    "accounts": [
+        {"label": "Identificação da Conta", "id": 38},
+        {"label": "Limites da Conta", "id": 42},
+        {"label": "Lista de Contas", "id": 37},
+        {"label": "Saldos da Conta", "id": 39},
+        {"label": "Transações da Conta", "id": 40},
+        {"label": "Transações recentes da Conta", "id": 41},
+    ],
+    "exchanges": [
+        {"label": "Eventos", "id": 110},
+        {"label": "Identificação do produto", "id": 109},
+        {"label": "Lista de produtos", "id": 108},
+    ],
+    "customers": [
+        {"label": "Identificação pessoa jurídica", "id": 25},
+        {"label": "Identificação pessoa natural", "id": 24},
+        {"label": "Qualificação pessoa jurídica", "id": 27},
+        {"label": "Qualificação pessoa natural", "id": 26},
+        {"label": "Relacionamento pessoa jurídica", "id": 29},
+        {"label": "Relacionamento pessoa natural", "id": 28},
+    ],
+    "funds": [
+        {"label": "Identificação do Investimento", "id": 104},
+        {"label": "Lista de Investimentos", "id": 103},
+        {"label": "Saldos", "id": 105},
+        {"label": "Transações", "id": 106},
+        {"label": "Transações recentes", "id": 107},
+    ],
+    "unarranged-accounts-overdraft": [
+        {"label": "Adiantamento a Depositantes", "id": 53},
+        {"label": "Contrato", "id": 54},
+        {"label": "Garantias do Contrato", "id": 55},
+        {"label": "Pagamentos do Contrato", "id": 56},
+        {"label": "Parcelas do Contrato", "id": 57},
+    ],
+    "invoice-financings": [
+        {"label": "Garantias do Contrato", "id": 60},
+        {"label": "Identificação do Contrato", "id": 59},
+        {"label": "Lista de Contratos", "id": 58},
+        {"label": "Pagamentos do Contrato", "id": 61},
+        {"label": "Parcelas do Contrato", "id": 62},
+    ],
+    "loans": [
+        {"label": "Empréstimos", "id": 43},
+        {"label": "Garantias do Contrato", "id": 45},
+        {"label": "Identificação do Contrato", "id": 44},
+        {"label": "Pagamentos do Contrato", "id": 46},
+        {"label": "Parcelas do Contrato", "id": 47},
+    ],
+    "financings": [
+        {"label": "Garantias do Contrato", "id": 50},
+        {"label": "Identificação do Contrato", "id": 49},
+        {"label": "Lista de financiamentos", "id": 48},
+        {"label": "Pagamentos do Contrato", "id": 51},
+        {"label": "Parcelas do Contrato", "id": 52},
+    ],
+    "resources": [
+        {"label": "Obtém a lista de recursos consentidos pelo cliente", "id": 23},
+    ],
+    "bank-fixed-incomes": [
+        {"label": "Identificação do Investimento", "id": 88},
+        {"label": "Lista de Investimentos", "id": 87},
+        {"label": "Saldos", "id": 89},
+        {"label": "Transações", "id": 90},
+        {"label": "Transações recentes", "id": 91},
+    ],
+    "credit-fixed-incomes": [
+        {"label": "Identificação do Investimento", "id": 83},
+        {"label": "Lista de Investimentos", "id": 82},
+        {"label": "Saldos", "id": 84},
+        {"label": "Transações", "id": 85},
+        {"label": "Transações recentes", "id": 86},
+    ],
+    "variable-incomes": [
+        {"label": "Detalhes da nota de negociação", "id": 97},
+        {"label": "Identificação do Investimento", "id": 93},
+        {"label": "Lista de Investimentos", "id": 92},
+        {"label": "Saldos", "id": 94},
+        {"label": "Transações", "id": 95},
+        {"label": "Transações recentes", "id": 96},
+    ],
+    "treasure-titles": [
+        {"label": "Identificação do Investimento", "id": 99},
+        {"label": "Lista de Investimentos", "id": 98},
+        {"label": "Saldos", "id": 100},
+        {"label": "Transações", "id": 101},
+        {"label": "Transações recentes", "id": 102},
+    ],
+}
+
 _WORKER_COUNT   = 3
 _WORKER_STAGGER = 4  # segundos entre o início de cada worker
 
@@ -89,7 +198,7 @@ def _click_dropdown_option(page, click_idx: int, max_retries: int = 2) -> None:
 # ── Banco de dados ─────────────────────────────────────────────────────────────
 
 def open_db(path: Path) -> sqlite3.Connection:
-    """Abre/cria banco SQLite com as duas tabelas de dados."""
+    """Abre/cria banco SQLite com as tabelas de dados e migra schema se necessário."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(str(path))
@@ -105,18 +214,74 @@ def open_db(path: Path) -> sqlite3.Connection:
             PRIMARY KEY (date, receptor_uuid)
         )
     """)
+
+    # Cria tabela api_requests com schema completo (nova instalação)
     con.execute("""
         CREATE TABLE IF NOT EXISTS api_requests (
-            date           TEXT NOT NULL,
-            receptor       TEXT NOT NULL,
-            receptor_uuid  TEXT NOT NULL,
-            api            TEXT NOT NULL,
-            status         INTEGER NOT NULL,
-            total          INTEGER NOT NULL DEFAULT 0,
-            fetched_at     TEXT NOT NULL,
-            PRIMARY KEY (date, receptor_uuid, api, status)
+            date              TEXT NOT NULL,
+            receptor          TEXT NOT NULL,
+            receptor_uuid     TEXT NOT NULL,
+            transmitter       TEXT NOT NULL DEFAULT '',
+            transmitter_uuid  TEXT NOT NULL DEFAULT '',
+            api               TEXT NOT NULL,
+            endpoint          TEXT NOT NULL DEFAULT '',
+            endpoint_id       INTEGER NOT NULL DEFAULT 0,
+            status            INTEGER NOT NULL,
+            total             INTEGER NOT NULL DEFAULT 0,
+            fetched_at        TEXT NOT NULL,
+            PRIMARY KEY (date, receptor_uuid, transmitter_uuid, api, endpoint_id, status)
         )
     """)
+
+    # Migração idempotente: adiciona colunas ausentes em bancos antigos
+    existing_cols = {row[1] for row in con.execute("PRAGMA table_info(api_requests)").fetchall()}
+    migrations = [
+        ("transmitter",      "TEXT NOT NULL DEFAULT ''"),
+        ("transmitter_uuid", "TEXT NOT NULL DEFAULT ''"),
+        ("endpoint",         "TEXT NOT NULL DEFAULT ''"),
+        ("endpoint_id",      "INTEGER NOT NULL DEFAULT 0"),
+    ]
+    for col, definition in migrations:
+        if col not in existing_cols:
+            con.execute(f"ALTER TABLE api_requests ADD COLUMN {col} {definition}")
+
+    # Recria tabela se a PRIMARY KEY não inclui transmitter_uuid/endpoint_id
+    # (detectado pela ausência de 'transmitter_uuid' nas colunas da PK)
+    pk_cols = {
+        row[1] for row in con.execute("PRAGMA table_info(api_requests)").fetchall()
+        if row[5] > 0  # pk position > 0 means part of PK
+    }
+    if "transmitter_uuid" not in pk_cols or "endpoint_id" not in pk_cols:
+        con.executescript("""
+            BEGIN;
+            CREATE TABLE IF NOT EXISTS api_requests_new (
+                date              TEXT NOT NULL,
+                receptor          TEXT NOT NULL,
+                receptor_uuid     TEXT NOT NULL,
+                transmitter       TEXT NOT NULL DEFAULT '',
+                transmitter_uuid  TEXT NOT NULL DEFAULT '',
+                api               TEXT NOT NULL,
+                endpoint          TEXT NOT NULL DEFAULT '',
+                endpoint_id       INTEGER NOT NULL DEFAULT 0,
+                status            INTEGER NOT NULL,
+                total             INTEGER NOT NULL DEFAULT 0,
+                fetched_at        TEXT NOT NULL,
+                PRIMARY KEY (date, receptor_uuid, transmitter_uuid, api, endpoint_id, status)
+            );
+            INSERT OR IGNORE INTO api_requests_new
+                (date, receptor, receptor_uuid, transmitter, transmitter_uuid,
+                 api, endpoint, endpoint_id, status, total, fetched_at)
+            SELECT date, receptor, receptor_uuid,
+                   COALESCE(transmitter, ''), COALESCE(transmitter_uuid, ''),
+                   api,
+                   COALESCE(endpoint, ''), COALESCE(endpoint_id, 0),
+                   status, total, fetched_at
+            FROM api_requests;
+            DROP TABLE api_requests;
+            ALTER TABLE api_requests_new RENAME TO api_requests;
+            COMMIT;
+        """)
+
     con.commit()
     return con
 
@@ -139,13 +304,16 @@ def upsert_consents(con: sqlite3.Connection, records: list[dict], fetched_at: st
 def upsert_api_requests(con: sqlite3.Connection, records: list[dict]) -> int:
     rows = [
         (r["date"], r["receptor"], r["receptor_uuid"],
-         r["api"], r["status"], r["total"], r["fetched_at"])
+         r["transmitter"], r["transmitter_uuid"],
+         r["api"], r["endpoint"], r["endpoint_id"],
+         r["status"], r["total"], r["fetched_at"])
         for r in records
     ]
     con.executemany("""
         INSERT OR REPLACE INTO api_requests
-            (date, receptor, receptor_uuid, api, status, total, fetched_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+            (date, receptor, receptor_uuid, transmitter, transmitter_uuid,
+             api, endpoint, endpoint_id, status, total, fetched_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, rows)
     con.commit()
     return len(rows)
@@ -177,7 +345,7 @@ def fetch_consents_for_org(
 ) -> list[dict]:
     """
     Dispara POST /api/unique-consents via route interception + click no dropdown.
-    Usa expect_response para aguardar a resposta (até 8s).
+    Usa expect_response para aguardar a resposta (até _RESPONSE_TIMEOUT ms).
     """
     captured: list[dict] = []
 
@@ -283,7 +451,7 @@ def run_consents(
     try:
         con = sqlite3.connect(str(db_path))
         rows = con.execute(
-            "SELECT DISTINCT receptor_uuid FROM unique_consents WHERE fetched_at LIKE ?", 
+            "SELECT DISTINCT receptor_uuid FROM unique_consents WHERE fetched_at LIKE ?",
             (f"{today_str}%",)
         ).fetchall()
         con.close()
@@ -292,7 +460,7 @@ def run_consents(
         fetched_uuids = set()
 
     orgs_to_fetch = [org for org in orgs if org["value"] not in fetched_uuids]
-    
+
     if len(fetched_uuids) > 0:
         log.info(f"Consentimentos: {len(fetched_uuids)} receptores já consultados hoje. Restam {len(orgs_to_fetch)}.")
 
@@ -353,6 +521,37 @@ def run_consents(
 # API REQUESTS
 # ─────────────────────────────────────────────────────────────────────────────
 
+def fetch_transmitters(page) -> list[dict]:
+    """
+    Navega para a página de api-requests e captura a lista de transmissores
+    interceptando as chamadas a /api/organisations.
+    Retorna lista de {"label": str, "value": uuid}.
+    """
+    captured: list[list] = []
+
+    def _on_response(resp):
+        if "/api/organisations" in resp.url:
+            try:
+                data = resp.json()
+                if isinstance(data, list):
+                    captured.append(data)
+            except Exception:
+                pass
+
+    page.on("response", _on_response)
+    page.goto(_API_REQUESTS_PAGE_URL, wait_until="networkidle", timeout=45000)
+    page.wait_for_timeout(1500)
+    page.remove_listener("response", _on_response)
+
+    # /api/organisations é chamado duas vezes: primeira = receptores, segunda = transmissores
+    # Usa a segunda captura como transmissores (se houver duas); caso contrário usa a única.
+    if len(captured) >= 2:
+        return captured[1]
+    elif len(captured) == 1:
+        return captured[0]
+    return []
+
+
 def probe_receptor(page, receptor_uuid: str, dates: list[str]) -> bool:
     """
     Verifica se receptor tem qualquer chamada no período (qualquer status).
@@ -386,15 +585,25 @@ def probe_receptor(page, receptor_uuid: str, dates: list[str]) -> bool:
 
 
 def fetch_api_combo(
-    page, receptor_uuid: str, api_id: str, status: int, dates: list[str], click_idx: int
+    page,
+    receptor_uuid: str,
+    api_id: str,
+    status: int,
+    dates: list[str],
+    click_idx: int,
+    transmitter_uuid: str = "",
+    endpoint_id: int = 0,
 ) -> list[dict]:
     """
-    Dispara POST /api/api-requests para uma combinação (receptor, api, status)
-    via route interception + click no dropdown.
+    Dispara POST /api/api-requests para uma combinação
+    (receptor, transmissor, api, endpoint, status) via route interception + click.
+
+    Todos os parâmetros são injetados no POST body.
+    O click no dropdown é apenas para disparar a request.
     """
     captured: list[dict] = []
 
-    body_override = {
+    body_override: dict = {
         "axis":      "date",
         "phase":     "transactional-data",
         "apis":      [api_id],
@@ -402,6 +611,10 @@ def fetch_api_combo(
         "dates":     dates,
         "status":    status,
     }
+    if transmitter_uuid:
+        body_override["transmitters"] = [transmitter_uuid]
+    if endpoint_id:
+        body_override["endpoints"] = [endpoint_id]
 
     def route_handler(route: Route):
         try:
@@ -421,8 +634,9 @@ def fetch_api_combo(
             captured.extend(data)
             if not captured:
                 _log.debug(
-                    "fetch_api_combo: resposta vazia (lista vazia) para "
-                    "api=%s status=%s receptor=%s", api_id, status, receptor_uuid
+                    "fetch_api_combo: resposta vazia para "
+                    "api=%s status=%s endpoint_id=%s receptor=%s",
+                    api_id, status, endpoint_id, receptor_uuid
                 )
         else:
             _log.warning(
@@ -432,8 +646,8 @@ def fetch_api_combo(
             )
     except Exception as exc:
         _log.warning(
-            "fetch_api_combo FALHOU: api=%s status=%s receptor=%s — %s: %s",
-            api_id, status, receptor_uuid, type(exc).__name__, exc
+            "fetch_api_combo FALHOU: api=%s status=%s endpoint_id=%s receptor=%s — %s: %s",
+            api_id, status, endpoint_id, receptor_uuid, type(exc).__name__, exc
         )
     finally:
         page.unroute(_API_REQUESTS_ENDPOINT, route_handler)
@@ -442,33 +656,55 @@ def fetch_api_combo(
 
 
 def build_api_records(
-    raw: list[dict], receptor: dict, api_id: str, status: int, fetched_at: str
+    raw: list[dict],
+    receptor: dict,
+    api_id: str,
+    status: int,
+    fetched_at: str,
+    transmitter: dict | None = None,
+    endpoint: dict | None = None,
 ) -> list[dict]:
+    t_label = transmitter["label"] if transmitter else ""
+    t_uuid  = transmitter["value"] if transmitter else ""
+    ep_label = endpoint["label"] if endpoint else ""
+    ep_id    = endpoint["id"]    if endpoint else 0
+
     records = []
     for item in raw:
         raw_date = str(item.get("date") or item.get("_id") or "")
         if not raw_date:
             continue
         records.append({
-            "date":          parse_record_date(raw_date),
-            "receptor":      receptor["label"],
-            "receptor_uuid": receptor["value"],
-            "api":           api_id,
-            "status":        status,
-            "total":         item.get("total", 0),
-            "fetched_at":    fetched_at,
+            "date":             parse_record_date(raw_date),
+            "receptor":         receptor["label"],
+            "receptor_uuid":    receptor["value"],
+            "transmitter":      t_label,
+            "transmitter_uuid": t_uuid,
+            "api":              api_id,
+            "endpoint":         ep_label,
+            "endpoint_id":      ep_id,
+            "status":           status,
+            "total":            item.get("total", 0),
+            "fetched_at":       fetched_at,
         })
     return records
 
 
 def _worker_run_api_requests(
-    worker_id: int, chunk: list[dict], dates: list[str], fetched_at: str, queue, delay_min: float, delay_max: float
+    worker_id: int,
+    chunk: list[dict],
+    dates: list[str],
+    fetched_at: str,
+    queue,
+    delay_min: float,
+    delay_max: float,
+    transmitters: list[dict],
 ) -> list[dict]:
     """
     Roda em processo separado: fetch via browser, sem escrita em disco.
-    Envia progresso via queue. Retorna lista de registros coletados.
+    Loop: receptor × transmissor × api × endpoint × status.
+    Envia progresso via queue.
     """
-
     time.sleep((worker_id - 1) * _WORKER_STAGGER)
     queue.put(("log", worker_id, f"W{worker_id}: {len(chunk)} receptores"))
 
@@ -492,16 +728,36 @@ def _worker_run_api_requests(
                 continue
 
             call_count = 1
-            for api_id in APIS:
-                for status in STATUSES:
-                    click_idx = call_count % 2
-                    call_count += 1
-                    raw = fetch_api_combo(
-                        page, receptor["value"], api_id, status, dates, click_idx
-                    )
-                    records = build_api_records(raw, receptor, api_id, status, fetched_at)
-                    nonzero = sum(1 for r in records if r["total"] > 0)
-                    queue.put(("combo", worker_id, api_id, status, nonzero, records))
+            # transmitters=[] significa "sem filtro de transmissor" → usa sentinela None
+            transmitter_iter = transmitters if transmitters else [None]
+
+            for transmitter in transmitter_iter:
+                for api_id in APIS:
+                    ep_list = ENDPOINTS.get(api_id, [])
+                    # Inclui sempre a opção "sem filtro de endpoint" (endpoint_id=0)
+                    endpoints_iter = [None] + ep_list
+
+                    for endpoint in endpoints_iter:
+                        for status in STATUSES:
+                            click_idx = call_count % 2
+                            call_count += 1
+                            raw = fetch_api_combo(
+                                page,
+                                receptor["value"],
+                                api_id,
+                                status,
+                                dates,
+                                click_idx,
+                                transmitter_uuid=transmitter["value"] if transmitter else "",
+                                endpoint_id=endpoint["id"] if endpoint else 0,
+                            )
+                            records = build_api_records(
+                                raw, receptor, api_id, status, fetched_at,
+                                transmitter=transmitter,
+                                endpoint=endpoint,
+                            )
+                            nonzero = sum(1 for r in records if r["total"] > 0)
+                            queue.put(("combo", worker_id, api_id, status, nonzero, records))
 
             page.context.close()
             elapsed = time.time() - t0
@@ -522,18 +778,24 @@ def run_api_requests(
     logger=None,
     delay_min: float = 3.0,
     delay_max: float = 8.0,
+    transmitters: list[dict] | None = None,
 ) -> int:
     """
-    Coleta chamadas de API por receptor × API × status e persiste em SQLite.
-    receptors: lista de {"label": str, "value": uuid}
-    Retorna total de registros inseridos/atualizados.
+    Coleta chamadas de API por receptor × transmissor × api × endpoint × status.
+    Persiste em SQLite e retorna total de registros inseridos/atualizados.
+
+    transmitters: lista de {"label": str, "value": uuid}.
+                  Se None ou [], coleta sem filtro de transmissor.
     """
     log = logger or logging.getLogger(__name__)
     fetched_at = datetime.now(timezone.utc).isoformat()
     db_path = Path(db_path)
+    transmitters = transmitters or []
 
+    total_eps = sum(len(v) + 1 for v in ENDPOINTS.values())  # +1 = sem filtro
     log.info(
-        f"API Requests: {len(receptors)} receptores · {len(APIS)} APIs · "
+        f"API Requests: {len(receptors)} receptores · {len(transmitters)} transmissores · "
+        f"{len(APIS)} APIs · ~{total_eps} endpoints · "
         f"{len(STATUSES)} statuses · {workers} workers"
     )
 
@@ -549,7 +811,8 @@ def run_api_requests(
         with ProcessPoolExecutor(max_workers=n) as executor:
             futures = {
                 executor.submit(
-                    _worker_run_api_requests, i + 1, chunk, dates, fetched_at, queue, delay_min, delay_max
+                    _worker_run_api_requests,
+                    i + 1, chunk, dates, fetched_at, queue, delay_min, delay_max, transmitters
                 ): i + 1
                 for i, chunk in enumerate(chunks) if chunk
             }
