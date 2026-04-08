@@ -176,6 +176,9 @@ _RECEPTOR_OPTIONS  = "[class*='-option']"
 _DROPDOWN_TIMEOUT = 4_000   # ms — timeout por tentativa de abrir o dropdown
 _RESPONSE_TIMEOUT = 6_000   # ms — timeout para a resposta da API chegar
 
+# Número de falhas consecutivas antes de recarregar a página
+_MAX_CONSECUTIVE_FAILURES = 3
+
 
 def _click_dropdown_option(page, click_idx: int, max_retries: int = 2) -> None:
     """Abre o dropdown de receptor e clica na opção click_idx.
@@ -624,6 +627,7 @@ def fetch_api_combo(
 
     _log = logging.getLogger(__name__)
     page.route(_API_REQUESTS_ENDPOINT, route_handler)
+    failed = False
     try:
         with page.expect_response(
             lambda r: "/api/api-requests" in r.url, timeout=_RESPONSE_TIMEOUT
@@ -645,6 +649,7 @@ def fetch_api_combo(
                 api_id, status, receptor_uuid, type(data).__name__
             )
     except Exception as exc:
+        failed = True
         _log.warning(
             "fetch_api_combo FALHOU: api=%s status=%s endpoint_id=%s receptor=%s — %s: %s",
             api_id, status, endpoint_id, receptor_uuid, type(exc).__name__, exc
@@ -652,7 +657,7 @@ def fetch_api_combo(
     finally:
         page.unroute(_API_REQUESTS_ENDPOINT, route_handler)
 
-    return captured
+    return captured, failed
 
 
 def build_api_records(
@@ -728,6 +733,7 @@ def _worker_run_api_requests(
                 continue
 
             call_count = 1
+            consecutive_failures = 0
             # transmitters=[] significa "sem filtro de transmissor" → usa sentinela None
             transmitter_iter = transmitters if transmitters else [None]
 
@@ -741,7 +747,18 @@ def _worker_run_api_requests(
                         for status in STATUSES:
                             click_idx = call_count % 2
                             call_count += 1
-                            raw = fetch_api_combo(
+
+                            # Recarrega página se há falhas consecutivas demais
+                            if consecutive_failures >= _MAX_CONSECUTIVE_FAILURES:
+                                try:
+                                    page.context.close()
+                                except Exception:
+                                    pass
+                                page = create_page(browser)
+                                goto_with_retry(page, _API_REQUESTS_PAGE_URL, _RECEPTOR_DROPDOWN)
+                                consecutive_failures = 0
+
+                            raw, failed = fetch_api_combo(
                                 page,
                                 receptor["value"],
                                 api_id,
@@ -751,6 +768,12 @@ def _worker_run_api_requests(
                                 transmitter_uuid=transmitter["value"] if transmitter else "",
                                 endpoint_id=endpoint["id"] if endpoint else 0,
                             )
+
+                            if failed:
+                                consecutive_failures += 1
+                            else:
+                                consecutive_failures = 0
+
                             records = build_api_records(
                                 raw, receptor, api_id, status, fetched_at,
                                 transmitter=transmitter,
