@@ -128,6 +128,46 @@ def _sync_csv(db_query: str, db_path: Path, csv_path: Path,
 # Helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _persist_endpoint_history(
+    db_path: Path,
+    endpoints_map: dict,
+    source: str,
+    log: logging.Logger,
+) -> None:
+    """Grava snapshot do mapa {api: [endpoints]} em endpoint_history.
+
+    Idempotente por (fetched_at, api, endpoint_id) — fetched_at é UTC ISO.
+    Nunca quebra a coleta: erros apenas geram warning.
+    """
+    try:
+        fetched_at = datetime.now(timezone.utc).isoformat()
+        rows = []
+        for api_id, eps in (endpoints_map or {}).items():
+            for ep in eps:
+                rows.append((
+                    fetched_at, api_id,
+                    int(ep.get("id", 0)), str(ep.get("label", "")),
+                    source,
+                ))
+        if not rows:
+            return
+        con = sqlite3.connect(str(db_path))
+        try:
+            con.executemany("""
+                INSERT OR IGNORE INTO endpoint_history
+                    (fetched_at, api, endpoint_id, endpoint_label, source)
+                VALUES (?, ?, ?, ?, ?)
+            """, rows)
+            con.commit()
+        finally:
+            con.close()
+        log.debug(
+            f"endpoint_history: {len(rows)} registros gravados (source={source})"
+        )
+    except Exception as e:
+        log.warning(f"endpoint_history: falha ao persistir snapshot: {e}")
+
+
 def _active_receptors(db_path: Path, dates: list[str]) -> list[dict]:
     start, end = dates[0][:10], dates[-1][:10]
     con = sqlite3.connect(str(db_path))
@@ -182,24 +222,31 @@ def run_collection(
     """
     run_logger = RunLogger()
     log = run_logger.global_()
+    run_id = run_logger.run_id
     _workers = workers if workers is not None else config.DEFAULT_WORKERS
 
-    log.info(f"=== Execução iniciada: {run_logger.run_id} ===")
+    log.info(f"=== Execução iniciada: {run_id} ===")
     log.info(f"Período: {start_date} → {end_date} | workers={_workers}")
     t0 = time.time()
+
+    # Garante que as tabelas de telemetria existam antes de start_run.
+    from telemetry import start_run, finalize_run
+    scrapers.open_db(config.DB_PATH).close()
+    start_run(config.DB_PATH, run_id)
 
     # ── 1. Datas ───────────────────────────────────────────────────────────────
     dates = _resolve_dates(start_date, end_date)
     if not dates:
         log.error("Nenhuma sexta-feira encontrada no período.")
-        return {"error": "Nenhuma sexta-feira no período", "run_id": run_logger.run_id}
+        return {"error": "Nenhuma sexta-feira no período", "run_id": run_id}
     log.info(f"Sextas-feiras: {dates[0][:10]} → {dates[-1][:10]} ({len(dates)} semanas)")
 
     # ── 2. Consentimentos ──────────────────────────────────────────────────────
     log.info("--- Fase 1: Consentimentos ---")
     n_consents = scrapers.run_consents(dates=dates, db_path=config.DB_PATH,
                                        workers=_workers, logger=log,
-                                       delay_min=delay_min, delay_max=delay_max)
+                                       delay_min=delay_min, delay_max=delay_max,
+                                       run_id=run_id)
 
     # ── 3. Receptores ativos ───────────────────────────────────────────────────
     receptors = _active_receptors(config.DB_PATH, dates)
@@ -208,23 +255,64 @@ def run_collection(
     # ── 4. API Requests ────────────────────────────────────────────────────────
     n_api = 0
     if receptors:
-        # Busca lista de transmissores antes da coleta granular
+        # Busca lista de transmissores + discovery de APIs/endpoints antes da
+        # coleta granular (uma única sessão reaproveitada para ambos).
         log.info("--- Fase 2: API Requests ---")
-        log.info("Buscando lista de transmissores...")
+        log.info("Buscando lista de transmissores e metadata de APIs...")
         from playwright.sync_api import sync_playwright
-        from browser import create_browser, create_page
+        from session import OpFSession
         with sync_playwright() as _p:
-            _b = create_browser(_p)
-            _pg = create_page(_b)
-            transmitters = scrapers.fetch_transmitters(_pg)
-            _b.close()
+            with OpFSession(_p, logger=log) as _session:
+                transmitters = scrapers.fetch_transmitters(_session)
+                meta = _session.discover_apis_and_endpoints(
+                    cache_path=config.META_CACHE_PATH,
+                    cache_ttl=config.META_CACHE_TTL,
+                )
         log.info(f"Transmissores: {len(transmitters)}")
+
+        # Decide entre metadata descoberto e fallback hardcoded.
+        apis_arg = None
+        endpoints_arg = None
+        if meta:
+            discovered_apis = meta.get("apis") or []
+            discovered_eps = meta.get("endpoints") or {}
+            total_eps = sum(len(v) for v in discovered_eps.values())
+            # Piso mínimo: só usa discovery se estiver coerente com o que
+            # sabemos do domínio. Caso contrário, mantém hardcoded.
+            if len(discovered_apis) >= 10 and total_eps >= 50:
+                apis_arg = discovered_apis
+                endpoints_arg = discovered_eps
+                log.info(
+                    f"Discovery: usando {len(discovered_apis)} APIs e "
+                    f"{total_eps} endpoints ({meta.get('source', 'live')})"
+                )
+                _persist_endpoint_history(
+                    config.DB_PATH, discovered_eps,
+                    source=meta.get("source", "live"), log=log,
+                )
+            else:
+                log.warning(
+                    f"Discovery: resultado abaixo do piso mínimo "
+                    f"({len(discovered_apis)} APIs / {total_eps} endpoints) — "
+                    f"caindo para fallback hardcoded."
+                )
+        else:
+            log.info("Discovery: sem metadata, usando fallback hardcoded.")
+
+        # Persiste também o fallback como snapshot, para rastreio de drift.
+        if apis_arg is None:
+            _persist_endpoint_history(
+                config.DB_PATH, scrapers.ENDPOINTS, source="fallback", log=log,
+            )
 
         n_api = scrapers.run_api_requests(dates=dates, receptors=receptors,
                                            db_path=config.DB_PATH,
                                            workers=_workers, logger=log,
                                            delay_min=delay_min, delay_max=delay_max,
-                                           transmitters=transmitters)
+                                           transmitters=transmitters,
+                                           run_id=run_id,
+                                           apis=apis_arg,
+                                           endpoints_map=endpoints_arg)
     else:
         log.warning("Nenhum receptor ativo — fase 2 pulada.")
 
@@ -244,10 +332,27 @@ def run_collection(
     )
 
     duration = round(time.time() - t0, 1)
+
+    # Finaliza run_summary e loga resumo de saúde.
+    summary = finalize_run(
+        config.DB_PATH, run_id,
+        total_upserted=(n_new_c + n_upd_c + n_new_a + n_upd_a),
+    )
+    api_total = summary.get("phase_api_ok", 0) + summary.get("phase_api_failed", 0)
+    api_fail_pct = (
+        100 * summary.get("phase_api_failed", 0) / api_total
+        if api_total > 0 else 0.0
+    )
+    log.info(
+        f"Saúde da coleta: consents ok/fail = "
+        f"{summary.get('phase_consents_ok', 0)}/{summary.get('phase_consents_failed', 0)} | "
+        f"api ok/fail = {summary.get('phase_api_ok', 0)}/{summary.get('phase_api_failed', 0)} "
+        f"({api_fail_pct:.1f}% falha)"
+    )
     log.info(f"=== Concluído em {duration}s ===")
 
     return {
-        "run_id":         run_logger.run_id,
+        "run_id":         run_id,
         "period":         f"{start_d} → {end_d}",
         "weeks":          len(dates),
         "receptors":      len(receptors),
@@ -258,4 +363,6 @@ def run_collection(
         "n_new_api":      n_new_a,
         "n_upd_api":      n_upd_a,
         "duration_s":     duration,
+        "api_ok":         summary.get("phase_api_ok", 0),
+        "api_failed":     summary.get("phase_api_failed", 0),
     }
