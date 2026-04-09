@@ -8,26 +8,37 @@ Sem dependências Rich — usa logging Python padrão.
 Workers recebem logger via queue de progresso; main process faz o logging.
 """
 
-import copy
-import json
 import logging
 import multiprocessing as mp
 import random
 import sqlite3
 import time
 from concurrent.futures import ProcessPoolExecutor
-from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-from playwright.sync_api import Route, sync_playwright
+from playwright.sync_api import sync_playwright
+from tenacity import (
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
 
-from browser import (
-    BASE_URL,
-    create_browser,
-    create_page,
-    goto_with_retry,
-    parse_record_date,
+from browser import BASE_URL, parse_record_date
+from session import OpFError, OpFSession, OpFTransientError
+
+
+# Política de retry para chamadas HTTP ao dashboard OpF:
+# - 3 tentativas com backoff exponencial (1s, 3s, 8s)
+# - Retenta apenas OpFTransientError (5xx, timeout, 401/403 pós-refresh)
+# - OpFFatalError aborta imediatamente sem retry
+# - reraise=True: propaga a última exceção em vez de embrulhar em RetryError
+_RETRY_POLICY = retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=1, max=8),
+    retry=retry_if_exception_type(OpFTransientError),
+    reraise=True,
 )
 
 # ── Constantes ─────────────────────────────────────────────────────────────────
@@ -170,33 +181,6 @@ ENDPOINTS: dict[str, list[dict]] = {
 _WORKER_COUNT   = 3
 _WORKER_STAGGER = 4  # segundos entre o início de cada worker
 
-_RECEPTOR_DROPDOWN = "[class*='-control']"
-_RECEPTOR_OPTIONS  = "[class*='-option']"
-
-_DROPDOWN_TIMEOUT = 4_000   # ms — timeout por tentativa de abrir o dropdown
-_RESPONSE_TIMEOUT = 6_000   # ms — timeout para a resposta da API chegar
-
-# Número de falhas consecutivas antes de recarregar a página
-_MAX_CONSECUTIVE_FAILURES = 3
-
-
-def _click_dropdown_option(page, click_idx: int, max_retries: int = 2) -> None:
-    """Abre o dropdown de receptor e clica na opção click_idx.
-    Se o dropdown não abrir (estado inconsistente pós-combo), pressiona Escape
-    e retenta uma vez antes de propagar o erro.
-    """
-    for attempt in range(max_retries):
-        try:
-            page.locator(_RECEPTOR_DROPDOWN).first.click()
-            page.wait_for_selector(_RECEPTOR_OPTIONS, state="visible", timeout=_DROPDOWN_TIMEOUT)
-            page.locator(_RECEPTOR_OPTIONS).nth(click_idx).click()
-            return
-        except Exception:
-            if attempt == max_retries - 1:
-                raise
-            page.keyboard.press("Escape")
-            page.wait_for_timeout(500)
-
 
 # ── Banco de dados ─────────────────────────────────────────────────────────────
 
@@ -285,6 +269,22 @@ def open_db(path: Path) -> sqlite3.Connection:
             COMMIT;
         """)
 
+    # Tabelas de telemetria (F3).
+    from telemetry import ensure_tables
+    ensure_tables(con)
+
+    # Snapshot diário de metadata (F2): permite detectar drift de IDs.
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS endpoint_history (
+            fetched_at     TEXT NOT NULL,
+            api            TEXT NOT NULL,
+            endpoint_id    INTEGER NOT NULL,
+            endpoint_label TEXT NOT NULL DEFAULT '',
+            source         TEXT NOT NULL DEFAULT 'fallback',
+            PRIMARY KEY (fetched_at, api, endpoint_id)
+        )
+    """)
+
     con.commit()
     return con
 
@@ -326,56 +326,59 @@ def upsert_api_requests(con: sqlite3.Connection, records: list[dict]) -> int:
 # CONSENTIMENTOS
 # ─────────────────────────────────────────────────────────────────────────────
 
-def fetch_orgs(page) -> list[dict]:
-    """Navega para a página de consentimentos e captura a lista de receptores."""
-    orgs: list[dict] = []
+def fetch_orgs(session: OpFSession) -> list[dict]:
+    """Captura a lista de receptores via navegação na página de consentimentos.
+
+    Navega na page interna da OpFSession e intercepta `/api/organisations`.
+    Usamos navegação (em vez de HTTP direto) porque o front-end é quem determina
+    quais query params distinguem receptores de transmissores, e replicar isso
+    sem acesso ao DevTools seria especulação frágil. Como a chamada ocorre
+    apenas 1x por execução, não há impacto no gargalo de performance.
+
+    Retorna lista de {"label": str, "value": uuid}. Deduplica por uuid.
+    """
+    page = session._page
+    orgs_by_uuid: dict[str, dict] = {}
 
     def _capture(resp):
         if "/api/organisations" in resp.url:
             try:
-                orgs.extend(resp.json())
+                data = resp.json()
             except Exception:
-                pass
+                return
+            if isinstance(data, list):
+                for item in data:
+                    uuid = item.get("value")
+                    if uuid and uuid not in orgs_by_uuid:
+                        orgs_by_uuid[uuid] = item
 
     page.on("response", _capture)
-    page.goto(_CONSENTS_PAGE_URL, wait_until="networkidle", timeout=45000)
-    page.wait_for_timeout(1000)
-    return orgs
-
-
-def fetch_consents_for_org(
-    page, org_uuid: str, dates: list[str], click_idx: int = 0
-) -> list[dict]:
-    """
-    Dispara POST /api/unique-consents via route interception + click no dropdown.
-    Usa expect_response para aguardar a resposta (até _RESPONSE_TIMEOUT ms).
-    """
-    captured: list[dict] = []
-
-    def route_handler(route: Route):
-        try:
-            body = json.loads(route.request.post_data or "{}")
-            body["dates"] = dates
-            body["orgs"]  = [org_uuid]
-            route.continue_(post_data=json.dumps(body))
-        except Exception:
-            route.continue_()
-
-    page.route(_CONSENTS_API_URL, route_handler)
     try:
-        with page.expect_response(
-            lambda r: "/api/unique-consents" in r.url, timeout=_RESPONSE_TIMEOUT
-        ) as resp_info:
-            _click_dropdown_option(page, click_idx)
-        data = resp_info.value.json()
-        if isinstance(data, list):
-            captured.extend(data)
-    except Exception:
-        pass
+        page.goto(_CONSENTS_PAGE_URL, wait_until="networkidle", timeout=45000)
+        page.wait_for_timeout(1000)
     finally:
-        page.unroute(_CONSENTS_API_URL, route_handler)
+        page.remove_listener("response", _capture)
 
-    return captured
+    return list(orgs_by_uuid.values())
+
+
+@_RETRY_POLICY
+def fetch_consents_for_org(
+    session: OpFSession, org_uuid: str, dates: list[str]
+) -> list[dict]:
+    """POST /api/unique-consents direto via OpFSession, com retry em erros
+    transientes (até 3 tentativas, backoff 1s/3s/8s).
+
+    Propaga OpFTransientError (após 3 tentativas) ou OpFFatalError
+    (imediato). Caller classifica como 'failed' em telemetria.
+    """
+    data = session.post("/api/unique-consents", {
+        "dates": dates,
+        "orgs":  [org_uuid],
+    })
+    if isinstance(data, list):
+        return data
+    return []
 
 
 def build_consent_records(raw: list[dict], org: dict) -> list[dict]:
@@ -393,42 +396,67 @@ def build_consent_records(raw: list[dict], org: dict) -> list[dict]:
 
 
 def _worker_run_consents(
-    worker_id: int, chunk: list[dict], dates: list[str], fetched_at: str, queue, delay_min: float, delay_max: float
+    worker_id: int, chunk: list[dict], dates: list[str], fetched_at: str, queue,
+    delay_min: float, delay_max: float, db_path: str, run_id: str,
 ) -> list[dict]:
     """
-    Roda em processo separado: fetch via browser, sem escrita em disco.
-    Envia progresso via queue. Retorna lista de registros coletados.
+    Roda em processo separado: abre 1 OpFSession reutilizável e faz POST
+    /api/unique-consents por receptor. Envia progresso via queue e
+    registra cada tentativa em fetch_attempts (F3).
     """
+    from telemetry import consents_target, log_attempt
+
+    date_first, date_last = dates[0][:10], dates[-1][:10]
     queue.put(("log", worker_id, f"W{worker_id}: {len(chunk)} receptores"))
 
     with sync_playwright() as p:
         queue.put(("ready", worker_id, len(chunk)))
-        browser = create_browser(p)
+        with OpFSession(p) as session:
+            for i, org in enumerate(chunk, 1):
+                t0 = time.time()
+                started_iso = datetime.now(timezone.utc).isoformat()
+                target = consents_target(org["value"], date_first, date_last)
+                queue.put(("start", worker_id, org["label"], i))
 
-        for i, org in enumerate(chunk, 1):
-            t0 = time.time()
-            page = create_page(browser)
-            goto_with_retry(page, _CONSENTS_PAGE_URL, "[class*='-control']")
-            queue.put(("start", worker_id, org["label"], i))
+                records: list[dict] = []
+                status_label = "ok"
+                err_class = None
+                err_msg = None
+                try:
+                    raw = fetch_consents_for_org(session, org["value"], dates)
+                    records = build_consent_records(raw, org)
+                    if not records:
+                        status_label = "empty"
+                except OpFError as exc:
+                    status_label = "failed"
+                    err_class = type(exc).__name__
+                    err_msg = str(exc)[:500]
+                    queue.put(("log", worker_id,
+                               f"consents FALHOU para '{org['label']}': "
+                               f"{err_class}: {exc}"))
 
-            raw     = fetch_consents_for_org(page, org["value"], dates, click_idx=0)
-            records = build_consent_records(raw, org)
-            nonzero = sum(1 for r in records if r["total"] > 0)
-            queue.put(("org_done", worker_id, org["label"], len(records), nonzero, records))
+                duration_ms = int((time.time() - t0) * 1000)
+                log_attempt(
+                    db_path, run_id, "consents", target,
+                    started_iso, duration_ms, status_label,
+                    error_class=err_class, error_msg=err_msg,
+                    records_count=len(records),
+                )
 
-            page.context.close()
-            elapsed = time.time() - t0
-            queue.put(("timing", worker_id, org["label"], elapsed))
-            time.sleep(random.uniform(delay_min, delay_max))
+                nonzero = sum(1 for r in records if r["total"] > 0)
+                queue.put(("org_done", worker_id, org["label"], len(records), nonzero, records))
 
-        browser.close()
+                queue.put(("timing", worker_id, org["label"], duration_ms / 1000.0))
+                time.sleep(random.uniform(delay_min, delay_max))
 
     queue.put(("done", worker_id))
     return []
 
 
 def run_consents(
-    dates: list[str], db_path: str | Path, workers: int = _WORKER_COUNT, logger=None, delay_min: float = 3.0, delay_max: float = 8.0
+    dates: list[str], db_path: str | Path, workers: int = _WORKER_COUNT,
+    logger=None, delay_min: float = 3.0, delay_max: float = 8.0,
+    run_id: str = "",
 ) -> int:
     """
     Coleta consentimentos únicos para todos os receptores e persiste em SQLite.
@@ -440,11 +468,8 @@ def run_consents(
 
     log.info("Consentimentos: carregando lista de receptores...")
     with sync_playwright() as p:
-        browser = create_browser(p)
-        page = create_page(browser)
-        goto_with_retry(page, _CONSENTS_PAGE_URL, "[class*='-control']", logger=log)
-        orgs = fetch_orgs(page)
-        browser.close()
+        with OpFSession(p, logger=log) as session:
+            orgs = fetch_orgs(session)
 
     log.info(f"Consentimentos: {len(orgs)} receptores encontrados")
     if not orgs:
@@ -486,7 +511,10 @@ def run_consents(
         queue = mgr.Queue()
         with ProcessPoolExecutor(max_workers=n) as executor:
             futures = {
-                executor.submit(_worker_run_consents, i + 1, chunk, dates, fetched_at, queue, delay_min, delay_max): i + 1
+                executor.submit(
+                    _worker_run_consents, i + 1, chunk, dates, fetched_at,
+                    queue, delay_min, delay_max, str(db_path), run_id,
+                ): i + 1
                 for i, chunk in enumerate(chunks) if chunk
             }
             completed: set[int] = set()
@@ -524,30 +552,35 @@ def run_consents(
 # API REQUESTS
 # ─────────────────────────────────────────────────────────────────────────────
 
-def fetch_transmitters(page) -> list[dict]:
+def fetch_transmitters(session: OpFSession) -> list[dict]:
+    """Captura a lista de transmissores navegando na página de api-requests.
+
+    Intercepta `/api/organisations` via page.on("response"). A página chama
+    o endpoint 2x — primeira captura = receptores, segunda = transmissores.
+
+    Igual a fetch_orgs, evitamos especular sobre o endpoint real e
+    mantemos a navegação única por execução.
     """
-    Navega para a página de api-requests e captura a lista de transmissores
-    interceptando as chamadas a /api/organisations.
-    Retorna lista de {"label": str, "value": uuid}.
-    """
+    page = session._page
     captured: list[list] = []
 
     def _on_response(resp):
         if "/api/organisations" in resp.url:
             try:
                 data = resp.json()
-                if isinstance(data, list):
-                    captured.append(data)
             except Exception:
-                pass
+                return
+            if isinstance(data, list):
+                captured.append(data)
 
     page.on("response", _on_response)
-    page.goto(_API_REQUESTS_PAGE_URL, wait_until="networkidle", timeout=45000)
-    page.wait_for_timeout(1500)
-    page.remove_listener("response", _on_response)
+    try:
+        page.goto(_API_REQUESTS_PAGE_URL, wait_until="networkidle", timeout=45000)
+        page.wait_for_timeout(1500)
+    finally:
+        page.remove_listener("response", _on_response)
 
-    # /api/organisations é chamado duas vezes: primeira = receptores, segunda = transmissores
-    # Usa a segunda captura como transmissores (se houver duas); caso contrário usa a única.
+    # A segunda captura costuma ser a lista de transmissores.
     if len(captured) >= 2:
         return captured[1]
     elif len(captured) == 1:
@@ -555,10 +588,17 @@ def fetch_transmitters(page) -> list[dict]:
     return []
 
 
-def probe_receptor(page, receptor_uuid: str, dates: list[str]) -> bool:
-    """
-    Verifica se receptor tem qualquer chamada no período (qualquer status).
-    Retorna True se há dados, False se vazio. Em caso de erro retorna True.
+@_RETRY_POLICY
+def _probe_post(session: OpFSession, body: dict) -> object:
+    return session.post("/api/api-requests", body)
+
+
+def probe_receptor(session: OpFSession, receptor_uuid: str, dates: list[str]) -> bool:
+    """POST /api/api-requests sem filtros para verificar se o receptor tem
+    chamadas no período.
+
+    Retorna True se há dados, False se vazio. Em caso de erro transiente,
+    retorna True (conservador — prefere coletar e descobrir vazio a pular).
     """
     body = {
         "axis":      "date",
@@ -566,47 +606,30 @@ def probe_receptor(page, receptor_uuid: str, dates: list[str]) -> bool:
         "receivers": [receptor_uuid],
         "dates":     dates,
     }
-
-    def route_handler(route: Route):
-        try:
-            route.continue_(post_data=json.dumps(body))
-        except Exception:
-            route.continue_()
-
-    page.route(_API_REQUESTS_ENDPOINT, route_handler)
     try:
-        with page.expect_response(
-            lambda r: "/api/api-requests" in r.url, timeout=_RESPONSE_TIMEOUT
-        ) as resp_info:
-            _click_dropdown_option(page, 0)
-        data = resp_info.value.json()
-        return isinstance(data, list) and any(d.get("total", 0) > 0 for d in data)
-    except Exception:
-        return True
-    finally:
-        page.unroute(_API_REQUESTS_ENDPOINT, route_handler)
+        data = _probe_post(session, body)
+    except OpFError:
+        return True  # conservador
+    return isinstance(data, list) and any(d.get("total", 0) > 0 for d in data)
 
 
+@_RETRY_POLICY
 def fetch_api_combo(
-    page,
+    session: OpFSession,
     receptor_uuid: str,
     api_id: str,
     status: int,
     dates: list[str],
-    click_idx: int,
     transmitter_uuid: str = "",
     endpoint_id: int = 0,
 ) -> list[dict]:
-    """
-    Dispara POST /api/api-requests para uma combinação
-    (receptor, transmissor, api, endpoint, status) via route interception + click.
+    """POST /api/api-requests para uma combinação
+    (receptor, transmissor, api, endpoint, status) via OpFSession,
+    com retry em erros transientes (até 3 tentativas, backoff 1s/3s/8s).
 
-    Todos os parâmetros são injetados no POST body.
-    O click no dropdown é apenas para disparar a request.
+    Propaga OpFTransientError (após 3 tentativas) ou OpFFatalError.
     """
-    captured: list[dict] = []
-
-    body_override: dict = {
+    body: dict = {
         "axis":      "date",
         "phase":     "transactional-data",
         "apis":      [api_id],
@@ -615,49 +638,20 @@ def fetch_api_combo(
         "status":    status,
     }
     if transmitter_uuid:
-        body_override["transmitters"] = [transmitter_uuid]
+        body["transmitters"] = [transmitter_uuid]
     if endpoint_id:
-        body_override["endpoints"] = [endpoint_id]
+        body["endpoints"] = [endpoint_id]
 
-    def route_handler(route: Route):
-        try:
-            route.continue_(post_data=json.dumps(body_override))
-        except Exception:
-            route.continue_()
-
-    _log = logging.getLogger(__name__)
-    page.route(_API_REQUESTS_ENDPOINT, route_handler)
-    failed = False
-    try:
-        with page.expect_response(
-            lambda r: "/api/api-requests" in r.url, timeout=_RESPONSE_TIMEOUT
-        ) as resp_info:
-            _click_dropdown_option(page, click_idx)
-        data = resp_info.value.json()
-        if isinstance(data, list):
-            captured.extend(data)
-            if not captured:
-                _log.debug(
-                    "fetch_api_combo: resposta vazia para "
-                    "api=%s status=%s endpoint_id=%s receptor=%s",
-                    api_id, status, endpoint_id, receptor_uuid
-                )
-        else:
-            _log.warning(
-                "fetch_api_combo: resposta inesperada (nao-lista) para "
-                "api=%s status=%s receptor=%s — tipo=%s",
-                api_id, status, receptor_uuid, type(data).__name__
-            )
-    except Exception as exc:
-        failed = True
-        _log.warning(
-            "fetch_api_combo FALHOU: api=%s status=%s endpoint_id=%s receptor=%s — %s: %s",
-            api_id, status, endpoint_id, receptor_uuid, type(exc).__name__, exc
-        )
-    finally:
-        page.unroute(_API_REQUESTS_ENDPOINT, route_handler)
-
-    return captured, failed
+    data = session.post("/api/api-requests", body)
+    if isinstance(data, list):
+        return data
+    # Response não-lista é tratada como resposta vazia — não é erro fatal
+    # mas merece registro (ficará em fetch_attempts com status=empty em F3).
+    logging.getLogger(__name__).warning(
+        "fetch_api_combo: resposta não-lista para api=%s status=%s receptor=%s",
+        api_id, status, receptor_uuid,
+    )
+    return []
 
 
 def build_api_records(
@@ -704,90 +698,108 @@ def _worker_run_api_requests(
     delay_min: float,
     delay_max: float,
     transmitters: list[dict],
+    db_path: str,
+    run_id: str,
+    apis: list[str],
+    endpoints_map: dict[str, list[dict]],
 ) -> list[dict]:
     """
-    Roda em processo separado: fetch via browser, sem escrita em disco.
-    Loop: receptor × transmissor × api × endpoint × status.
-    Envia progresso via queue.
+    Roda em processo separado: abre 1 OpFSession e itera combinações
+    receptor × transmissor × api × endpoint × status via POST direto.
+    Cada combo é checkpointed em fetch_attempts (skip se já ok/empty hoje)
+    e registra seu resultado (ok/empty/failed) ao final.
     """
+    from telemetry import already_done, api_target, log_attempt
+
+    date_first, date_last = dates[0][:10], dates[-1][:10]
+
     time.sleep((worker_id - 1) * _WORKER_STAGGER)
     queue.put(("log", worker_id, f"W{worker_id}: {len(chunk)} receptores"))
 
     with sync_playwright() as p:
         queue.put(("ready", worker_id, len(chunk)))
-        browser = create_browser(p)
+        with OpFSession(p) as session:
+            for i, receptor in enumerate(chunk, 1):
+                t0 = time.time()
+                queue.put(("start", worker_id, receptor["label"], i))
 
-        for i, receptor in enumerate(chunk, 1):
-            t0 = time.time()
-            page = create_page(browser)
-            goto_with_retry(page, _API_REQUESTS_PAGE_URL, _RECEPTOR_DROPDOWN)
-            queue.put(("start", worker_id, receptor["label"], i))
+                has_data = probe_receptor(session, receptor["value"], dates)
+                if not has_data:
+                    queue.put(("skipped", worker_id, receptor["label"]))
+                    elapsed = time.time() - t0
+                    queue.put(("timing", worker_id, receptor["label"], elapsed))
+                    time.sleep(random.uniform(delay_min, delay_max))
+                    continue
 
-            has_data = probe_receptor(page, receptor["value"], dates)
-            if not has_data:
-                queue.put(("skipped", worker_id, receptor["label"]))
-                page.context.close()
+                # transmitters=[] significa "sem filtro de transmissor" → usa sentinela None
+                transmitter_iter = transmitters if transmitters else [None]
+
+                for transmitter in transmitter_iter:
+                    for api_id in apis:
+                        ep_list = endpoints_map.get(api_id, [])
+                        # Inclui sempre a opção "sem filtro de endpoint" (endpoint_id=0)
+                        endpoints_iter = [None] + ep_list
+
+                        for endpoint in endpoints_iter:
+                            for status in STATUSES:
+                                t_uuid = transmitter["value"] if transmitter else ""
+                                ep_id  = endpoint["id"] if endpoint else 0
+                                target = api_target(
+                                    api_id, ep_id, status,
+                                    receptor["value"], t_uuid,
+                                    date_first, date_last,
+                                )
+
+                                # Checkpoint: pula se já coletado hoje com sucesso.
+                                if already_done(db_path, target, run_id=None):
+                                    continue
+
+                                combo_t0 = time.time()
+                                started_iso = datetime.now(timezone.utc).isoformat()
+
+                                raw: list[dict] = []
+                                status_label = "ok"
+                                err_class = None
+                                err_msg = None
+                                try:
+                                    raw = fetch_api_combo(
+                                        session,
+                                        receptor["value"],
+                                        api_id,
+                                        status,
+                                        dates,
+                                        transmitter_uuid=t_uuid,
+                                        endpoint_id=ep_id,
+                                    )
+                                    if not raw:
+                                        status_label = "empty"
+                                except OpFError as exc:
+                                    status_label = "failed"
+                                    err_class = type(exc).__name__
+                                    err_msg = str(exc)[:500]
+                                    queue.put(("log", worker_id,
+                                               f"combo FALHOU api={api_id} status={status} "
+                                               f"endpoint_id={ep_id}: {err_class}: {exc}"))
+
+                                records = build_api_records(
+                                    raw, receptor, api_id, status, fetched_at,
+                                    transmitter=transmitter,
+                                    endpoint=endpoint,
+                                )
+                                combo_duration_ms = int((time.time() - combo_t0) * 1000)
+                                log_attempt(
+                                    db_path, run_id, "api_requests", target,
+                                    started_iso, combo_duration_ms, status_label,
+                                    error_class=err_class, error_msg=err_msg,
+                                    records_count=len(records),
+                                )
+
+                                nonzero = sum(1 for r in records if r["total"] > 0)
+                                queue.put(("combo", worker_id, api_id, status, nonzero, records))
+
                 elapsed = time.time() - t0
                 queue.put(("timing", worker_id, receptor["label"], elapsed))
                 time.sleep(random.uniform(delay_min, delay_max))
-                continue
-
-            call_count = 1
-            consecutive_failures = 0
-            # transmitters=[] significa "sem filtro de transmissor" → usa sentinela None
-            transmitter_iter = transmitters if transmitters else [None]
-
-            for transmitter in transmitter_iter:
-                for api_id in APIS:
-                    ep_list = ENDPOINTS.get(api_id, [])
-                    # Inclui sempre a opção "sem filtro de endpoint" (endpoint_id=0)
-                    endpoints_iter = [None] + ep_list
-
-                    for endpoint in endpoints_iter:
-                        for status in STATUSES:
-                            click_idx = call_count % 2
-                            call_count += 1
-
-                            # Recarrega página se há falhas consecutivas demais
-                            if consecutive_failures >= _MAX_CONSECUTIVE_FAILURES:
-                                try:
-                                    page.context.close()
-                                except Exception:
-                                    pass
-                                page = create_page(browser)
-                                goto_with_retry(page, _API_REQUESTS_PAGE_URL, _RECEPTOR_DROPDOWN)
-                                consecutive_failures = 0
-
-                            raw, failed = fetch_api_combo(
-                                page,
-                                receptor["value"],
-                                api_id,
-                                status,
-                                dates,
-                                click_idx,
-                                transmitter_uuid=transmitter["value"] if transmitter else "",
-                                endpoint_id=endpoint["id"] if endpoint else 0,
-                            )
-
-                            if failed:
-                                consecutive_failures += 1
-                            else:
-                                consecutive_failures = 0
-
-                            records = build_api_records(
-                                raw, receptor, api_id, status, fetched_at,
-                                transmitter=transmitter,
-                                endpoint=endpoint,
-                            )
-                            nonzero = sum(1 for r in records if r["total"] > 0)
-                            queue.put(("combo", worker_id, api_id, status, nonzero, records))
-
-            page.context.close()
-            elapsed = time.time() - t0
-            queue.put(("timing", worker_id, receptor["label"], elapsed))
-            time.sleep(random.uniform(delay_min, delay_max))
-
-        browser.close()
 
     queue.put(("done", worker_id))
     return []
@@ -802,6 +814,9 @@ def run_api_requests(
     delay_min: float = 3.0,
     delay_max: float = 8.0,
     transmitters: list[dict] | None = None,
+    run_id: str = "",
+    apis: list[str] | None = None,
+    endpoints_map: dict[str, list[dict]] | None = None,
 ) -> int:
     """
     Coleta chamadas de API por receptor × transmissor × api × endpoint × status.
@@ -809,16 +824,20 @@ def run_api_requests(
 
     transmitters: lista de {"label": str, "value": uuid}.
                   Se None ou [], coleta sem filtro de transmissor.
+    apis/endpoints_map: se None, usa fallback hardcoded APIS/ENDPOINTS.
+                       Caller pode passar valores de discovery dinâmico (F2).
     """
     log = logger or logging.getLogger(__name__)
     fetched_at = datetime.now(timezone.utc).isoformat()
     db_path = Path(db_path)
     transmitters = transmitters or []
+    apis = apis if apis else APIS
+    endpoints_map = endpoints_map if endpoints_map else ENDPOINTS
 
-    total_eps = sum(len(v) + 1 for v in ENDPOINTS.values())  # +1 = sem filtro
+    total_eps = sum(len(endpoints_map.get(a, [])) + 1 for a in apis)
     log.info(
         f"API Requests: {len(receptors)} receptores · {len(transmitters)} transmissores · "
-        f"{len(APIS)} APIs · ~{total_eps} endpoints · "
+        f"{len(apis)} APIs · ~{total_eps} endpoints · "
         f"{len(STATUSES)} statuses · {workers} workers"
     )
 
@@ -835,7 +854,9 @@ def run_api_requests(
             futures = {
                 executor.submit(
                     _worker_run_api_requests,
-                    i + 1, chunk, dates, fetched_at, queue, delay_min, delay_max, transmitters
+                    i + 1, chunk, dates, fetched_at, queue, delay_min, delay_max,
+                    transmitters, str(db_path), run_id,
+                    apis, endpoints_map,
                 ): i + 1
                 for i, chunk in enumerate(chunks) if chunk
             }
