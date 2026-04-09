@@ -56,6 +56,7 @@ CREATE TABLE IF NOT EXISTS run_summary (
     phase_consents_failed INTEGER NOT NULL DEFAULT 0,
     phase_api_ok          INTEGER NOT NULL DEFAULT 0,
     phase_api_failed      INTEGER NOT NULL DEFAULT 0,
+    phase_api_skipped     INTEGER NOT NULL DEFAULT 0,
     total_upserted        INTEGER NOT NULL DEFAULT 0
 );
 """
@@ -65,6 +66,12 @@ def ensure_tables(con: sqlite3.Connection) -> None:
     """Cria tabelas de telemetria se não existirem. Idempotente."""
     con.executescript(TELEMETRY_DDL)
     con.commit()
+    # Migração: adiciona colunas novas em DBs existentes.
+    try:
+        con.execute("ALTER TABLE run_summary ADD COLUMN phase_api_skipped INTEGER NOT NULL DEFAULT 0")
+        con.commit()
+    except sqlite3.OperationalError:
+        pass  # coluna já existe
 
 
 # ── Target canônico ───────────────────────────────────────────────────────────
@@ -86,6 +93,18 @@ def api_target(
         f"api_requests|{api}|{endpoint_id}|{status}|"
         f"{receptor_uuid}|{transmitter_uuid}|{date_first}_{date_last}"
     )
+
+
+def probe_transmitter_target(
+    receptor_uuid: str, transmitter_uuid: str, date_first: str, date_last: str
+) -> str:
+    return f"probe_transmitter|{receptor_uuid}|{transmitter_uuid}|{date_first}_{date_last}"
+
+
+def probe_api_target(
+    api: str, receptor_uuid: str, transmitter_uuid: str, date_first: str, date_last: str
+) -> str:
+    return f"probe_api|{api}|{receptor_uuid}|{transmitter_uuid}|{date_first}_{date_last}"
 
 
 # ── Writers ───────────────────────────────────────────────────────────────────
@@ -208,13 +227,14 @@ def finalize_run(
                     SUM(CASE WHEN phase='consents' AND status IN ('ok','empty') THEN 1 ELSE 0 END),
                     SUM(CASE WHEN phase='consents' AND status='failed' THEN 1 ELSE 0 END),
                     SUM(CASE WHEN phase='api_requests' AND status IN ('ok','empty') THEN 1 ELSE 0 END),
-                    SUM(CASE WHEN phase='api_requests' AND status='failed' THEN 1 ELSE 0 END)
+                    SUM(CASE WHEN phase='api_requests' AND status='failed' THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN phase='api_requests' AND status='skipped' THEN 1 ELSE 0 END)
                 FROM fetch_attempts
                 WHERE run_id = ?
                 """,
                 (run_id,),
             ).fetchone()
-            cons_ok, cons_fail, api_ok, api_fail = [x or 0 for x in stats]
+            cons_ok, cons_fail, api_ok, api_fail, api_skipped = [x or 0 for x in stats]
 
             con.execute(
                 """
@@ -224,10 +244,11 @@ def finalize_run(
                     phase_consents_failed = ?,
                     phase_api_ok = ?,
                     phase_api_failed = ?,
+                    phase_api_skipped = ?,
                     total_upserted = ?
                 WHERE run_id = ?
                 """,
-                (ended, cons_ok, cons_fail, api_ok, api_fail,
+                (ended, cons_ok, cons_fail, api_ok, api_fail, api_skipped,
                  total_upserted, run_id),
             )
             con.commit()
@@ -239,6 +260,7 @@ def finalize_run(
                 "phase_consents_failed": cons_fail,
                 "phase_api_ok": api_ok,
                 "phase_api_failed": api_fail,
+                "phase_api_skipped": api_skipped,
                 "total_upserted": total_upserted,
             }
         finally:

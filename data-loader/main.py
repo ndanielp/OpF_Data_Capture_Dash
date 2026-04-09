@@ -32,13 +32,16 @@ init(autoreset=True)
 def cmd_run(args):
     """Executa a coleta."""
     print(f"{Fore.CYAN}Iniciando coleta de dados Open Finance: {args.start_date} até {args.end_date}{Style.RESET_ALL}\n")
+    if args.receptor_filter:
+        print(f"{Fore.YELLOW}Filtro de receptores: {args.receptor_filter}{Style.RESET_ALL}\n")
     try:
         result = run_collection(
-            start_date=args.start_date, 
-            end_date=args.end_date, 
+            start_date=args.start_date,
+            end_date=args.end_date,
             workers=args.workers,
             delay_min=args.delay_min,
-            delay_max=args.delay_max
+            delay_max=args.delay_max,
+            receptor_filter=args.receptor_filter,
         )
         
         if "error" in result:
@@ -145,6 +148,14 @@ def main():
     parser_run.add_argument("--workers", "-w", type=int, default=1, help="Qtd de workers para processamento em paralelo.")
     parser_run.add_argument("--delay-min", type=float, default=3.0, help="Espera mínima aleatória entre bancos (s).")
     parser_run.add_argument("--delay-max", type=float, default=8.0, help="Espera máxima aleatória entre bancos (s).")
+    parser_run.add_argument(
+        "--receptor", "-r",
+        dest="receptor_filter",
+        nargs="+",
+        metavar="NAME",
+        default=None,
+        help="Filtra receptores por nome (substring, case-insensitive). Ex: -r Bradesco Itau",
+    )
     parser_run.set_defaults(func=cmd_run)
 
     # Sub-comando: status

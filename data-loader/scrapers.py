@@ -375,6 +375,7 @@ def fetch_consents_for_org(
     data = session.post("/api/unique-consents", {
         "dates": dates,
         "orgs":  [org_uuid],
+        "role":  "client",
     })
     if isinstance(data, list):
         return data
@@ -457,6 +458,7 @@ def run_consents(
     dates: list[str], db_path: str | Path, workers: int = _WORKER_COUNT,
     logger=None, delay_min: float = 3.0, delay_max: float = 8.0,
     run_id: str = "",
+    receptor_filter: list[str] | None = None,
 ) -> int:
     """
     Coleta consentimentos únicos para todos os receptores e persiste em SQLite.
@@ -470,6 +472,10 @@ def run_consents(
     with sync_playwright() as p:
         with OpFSession(p, logger=log) as session:
             orgs = fetch_orgs(session)
+
+    if receptor_filter:
+        lower = [n.lower() for n in receptor_filter]
+        orgs = [o for o in orgs if any(n in o["label"].lower() for n in lower)]
 
     log.info(f"Consentimentos: {len(orgs)} receptores encontrados")
     if not orgs:
@@ -613,6 +619,46 @@ def probe_receptor(session: OpFSession, receptor_uuid: str, dates: list[str]) ->
     return isinstance(data, list) and any(d.get("total", 0) > 0 for d in data)
 
 
+def probe_transmitter(
+    session: OpFSession, receptor_uuid: str, transmitter_uuid: str, dates: list[str]
+) -> bool:
+    """Probe L1: receptor + transmitter, sem api/endpoint/status.
+    Retorna True se tem dados, False se vazio. Conservador em erros."""
+    body = {
+        "axis":         "date",
+        "phase":        "transactional-data",
+        "receivers":    [receptor_uuid],
+        "transmitters": [transmitter_uuid],
+        "dates":        dates,
+    }
+    try:
+        data = _probe_post(session, body)
+    except OpFError:
+        return True
+    return isinstance(data, list) and any(d.get("total", 0) > 0 for d in data)
+
+
+def probe_api(
+    session: OpFSession, receptor_uuid: str, transmitter_uuid: str,
+    api_id: str, dates: list[str]
+) -> bool:
+    """Probe L2: receptor + transmitter + api, sem endpoint/status.
+    Retorna True se tem dados, False se vazio. Conservador em erros."""
+    body = {
+        "axis":         "date",
+        "phase":        "transactional-data",
+        "receivers":    [receptor_uuid],
+        "transmitters": [transmitter_uuid],
+        "apis":         [api_id],
+        "dates":        dates,
+    }
+    try:
+        data = _probe_post(session, body)
+    except OpFError:
+        return True
+    return isinstance(data, list) and any(d.get("total", 0) > 0 for d in data)
+
+
 @_RETRY_POLICY
 def fetch_api_combo(
     session: OpFSession,
@@ -709,7 +755,10 @@ def _worker_run_api_requests(
     Cada combo é checkpointed em fetch_attempts (skip se já ok/empty hoje)
     e registra seu resultado (ok/empty/failed) ao final.
     """
-    from telemetry import already_done, api_target, log_attempt
+    from telemetry import (
+        already_done, api_target, log_attempt,
+        probe_transmitter_target, probe_api_target,
+    )
 
     date_first, date_last = dates[0][:10], dates[-1][:10]
 
@@ -735,18 +784,58 @@ def _worker_run_api_requests(
                 transmitter_iter = transmitters if transmitters else [None]
 
                 for transmitter in transmitter_iter:
+                    t_uuid  = transmitter["value"] if transmitter else None
+                    t_label = transmitter["label"] if transmitter else ""
+
+                    # ── L1: probe receptor + transmitter ──────────────────────
+                    if t_uuid:
+                        p_started = datetime.now(timezone.utc).isoformat()
+                        p_t0 = time.time()
+                        has_t = probe_transmitter(session, receptor["value"], t_uuid, dates)
+                        p_ms = int((time.time() - p_t0) * 1000)
+                        if not has_t:
+                            log_attempt(
+                                db_path, run_id, "api_requests",
+                                probe_transmitter_target(
+                                    receptor["value"], t_uuid, date_first, date_last
+                                ),
+                                p_started, p_ms, "skipped",
+                            )
+                            queue.put(("skipped_transmitter", worker_id, t_label))
+                            continue
+
                     for api_id in apis:
+                        # ── L2: probe receptor + transmitter + api ─────────────
+                        if t_uuid:
+                            p_started = datetime.now(timezone.utc).isoformat()
+                            p_t0 = time.time()
+                            has_a = probe_api(
+                                session, receptor["value"], t_uuid, api_id, dates
+                            )
+                            p_ms = int((time.time() - p_t0) * 1000)
+                            if not has_a:
+                                log_attempt(
+                                    db_path, run_id, "api_requests",
+                                    probe_api_target(
+                                        api_id, receptor["value"], t_uuid,
+                                        date_first, date_last
+                                    ),
+                                    p_started, p_ms, "skipped",
+                                )
+                                queue.put(("skipped_api", worker_id, api_id, t_label))
+                                continue
+
                         ep_list = endpoints_map.get(api_id, [])
                         # Inclui sempre a opção "sem filtro de endpoint" (endpoint_id=0)
                         endpoints_iter = [None] + ep_list
 
                         for endpoint in endpoints_iter:
                             for status in STATUSES:
-                                t_uuid = transmitter["value"] if transmitter else ""
                                 ep_id  = endpoint["id"] if endpoint else 0
+                                t_uuid_str = t_uuid or ""
                                 target = api_target(
                                     api_id, ep_id, status,
-                                    receptor["value"], t_uuid,
+                                    receptor["value"], t_uuid_str,
                                     date_first, date_last,
                                 )
 
@@ -768,7 +857,7 @@ def _worker_run_api_requests(
                                         api_id,
                                         status,
                                         dates,
-                                        transmitter_uuid=t_uuid,
+                                        transmitter_uuid=t_uuid_str,
                                         endpoint_id=ep_id,
                                     )
                                     if not raw:
@@ -910,6 +999,10 @@ def _handle_queue_msg(msg: tuple, log: logging.Logger, prefix: str) -> None:
         )
     elif kind == "skipped":
         log.info(f"{prefix} W{wid}: '{msg[2]}' sem dados, pulado")
+    elif kind == "skipped_transmitter":
+        log.debug(f"{prefix} W{wid}: transmissor '{msg[2]}' sem dados — pulado (L1)")
+    elif kind == "skipped_api":
+        log.debug(f"{prefix} W{wid}: api '{msg[2]}' sem dados para '{msg[3]}' — pulada (L2)")
     elif kind == "combo":
         if msg[4] > 0:
             log.debug(f"{prefix} W{wid}: {msg[2]} status={msg[3]} → {msg[4]} registros")

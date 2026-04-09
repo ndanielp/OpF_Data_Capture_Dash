@@ -168,6 +168,13 @@ def _persist_endpoint_history(
         log.warning(f"endpoint_history: falha ao persistir snapshot: {e}")
 
 
+def _filter_receptors(receptor_list: list[dict], names: list[str] | None) -> list[dict]:
+    if not names:
+        return receptor_list
+    lower = [n.lower() for n in names]
+    return [r for r in receptor_list if any(n in r["label"].lower() for n in lower)]
+
+
 def _active_receptors(db_path: Path, dates: list[str]) -> list[dict]:
     start, end = dates[0][:10], dates[-1][:10]
     con = sqlite3.connect(str(db_path))
@@ -209,6 +216,7 @@ def run_collection(
     workers: int | None = None,
     delay_min: float = 3.0,
     delay_max: float = 8.0,
+    receptor_filter: list[str] | None = None,
 ) -> dict:
     """
     Pipeline completo:
@@ -246,10 +254,12 @@ def run_collection(
     n_consents = scrapers.run_consents(dates=dates, db_path=config.DB_PATH,
                                        workers=_workers, logger=log,
                                        delay_min=delay_min, delay_max=delay_max,
-                                       run_id=run_id)
+                                       run_id=run_id,
+                                       receptor_filter=receptor_filter)
 
     # ── 3. Receptores ativos ───────────────────────────────────────────────────
     receptors = _active_receptors(config.DB_PATH, dates)
+    receptors = _filter_receptors(receptors, receptor_filter)
     log.info(f"Receptores ativos: {len(receptors)}")
 
     # ── 4. API Requests ────────────────────────────────────────────────────────
