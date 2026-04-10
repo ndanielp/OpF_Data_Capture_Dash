@@ -2091,8 +2091,22 @@
       }));
       _lineChartApi.update();
 
+      const yAxis = _lineChartApi.options.scales.y;
+      yAxis.title.text = data.normalize ? 'Chamadas / consentimento (semana)' : 'Chamadas';
+      yAxis.ticks.callback = data.normalize
+        ? v => v.toFixed(2)
+        : v => fmtVal(v, false);
+      _lineChartApi.options.plugins.tooltip.callbacks = {
+        label: ctx => {
+          const v = ctx.parsed.y;
+          const fmt = data.normalize ? v.toFixed(2) : fmtVal(v, false);
+          return `${ctx.dataset.label}: ${fmt}`;
+        }
+      };
+      _lineChartApi.update();
+
       document.getElementById('api-time-subtitle').textContent =
-        data.filter_label || (data.normalize ? 'Chamadas mensais / consentimento' : 'Total de chamadas');
+        data.filter_label || (data.normalize ? 'Chamadas por consentimento · semana' : 'Total de chamadas');
     }
 
     /* ============================================================

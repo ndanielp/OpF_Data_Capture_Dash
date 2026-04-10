@@ -526,26 +526,22 @@ def get_api_requests_timeseries(
     all_dates = sorted(agg["date_str"].unique())
 
     if norm:
-        # Determina denominador: se o filtro é exclusivamente PF ou PJ, usa cpf/cnpj
+        # Normalização semana a semana: chamadas / consentimentos naquela semana
+        # Denominador: consentimentos do receptor na mesma data (semana)
         apis_in_filter = set(df["api"].unique())
         use_cpf  = apis_in_filter <= _NORM_CPF_APIS
         use_cnpj = apis_in_filter <= _NORM_CNPJ_APIS
+        cons_col = "cpf" if use_cpf else ("cnpj" if use_cnpj else "total")
         df_cons = _filter_by_date(_load_consents(), dt_start, dt_end)
         if not df_cons.empty:
-            ct_total = df_cons.groupby("receptor")["total"].sum()
-            ct_cpf   = df_cons.groupby("receptor")["cpf"].sum()
-            ct_cnpj  = df_cons.groupby("receptor")["cnpj"].sum()
-        else:
-            ct_total = ct_cpf = ct_cnpj = pd.Series(dtype=float)
-        def _norm_val(row):
-            if use_cpf:
-                n = float(ct_cpf.get(row["receptor"], 0))
-            elif use_cnpj:
-                n = float(ct_cnpj.get(row["receptor"], 0))
-            else:
-                n = float(ct_total.get(row["receptor"], 0))
-            return (row["total"] / n) / 7 * 30 if n > 0 else 0.0
-        agg["total"] = agg.apply(_norm_val, axis=1)
+            cons_weekly = (
+                df_cons.groupby(["date", "receptor"])[cons_col]
+                .sum().reset_index()
+                .rename(columns={cons_col: "_cons"})
+            )
+            agg = agg.merge(cons_weekly, on=["date", "receptor"], how="left")
+            agg["total"] = (agg["total"] / agg["_cons"].replace(0, float("nan"))).fillna(0.0)
+            agg = agg.drop(columns=["_cons"])
 
     colors_map = _build_color_map(sel)
     series = []
