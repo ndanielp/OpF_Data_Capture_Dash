@@ -115,6 +115,7 @@ def _load_api() -> pd.DataFrame:
             """
             SELECT date, receptor, api, status, SUM(total) AS total
             FROM api_requests
+            WHERE endpoint_id <> 0
             GROUP BY date, receptor, api, status
             """,
             con, parse_dates=["date"]
@@ -215,19 +216,30 @@ def get_consents(start: str = None, end: str = None, receptors: str = None):
     base_pf = dict(zip(base_data["receptor"], base_data["cpf"])) if not base_data.empty else {}
     base_pj = dict(zip(base_data["receptor"], base_data["cnpj"])) if not base_data.empty else {}
 
+    # Calcula diferença de dias para variação diária
+    try:
+        d_last = datetime.strptime(last_week, "%Y-%m-%d")
+        d_base = datetime.strptime(base_week, "%Y-%m-%d")
+        days_diff = (d_last - d_base).days
+    except:
+        days_diff = 1
+    days_diff = max(1, days_diff)
+
     ranking_pf = []
     for _, row in latest_data.sort_values(by="cpf", ascending=False).iterrows():
         rec, val = row["receptor"], row["cpf"]
         base = base_pf.get(rec, 0)
         gw = round(((val - base) / base) * 100, 1) if base > 0 else (round(float(val * 100), 1) if val > 0 else 0.0)
-        ranking_pf.append({"receptor": rec, "cpf": val, "growth": gw})
+        daily = round((val - base) / days_diff, 1)
+        ranking_pf.append({"receptor": rec, "cpf": val, "growth": gw, "daily_delta": daily})
 
     ranking_pj = []
     for _, row in latest_data.sort_values(by="cnpj", ascending=False).iterrows():
         rec, val = row["receptor"], row["cnpj"]
         base = base_pj.get(rec, 0)
         gw = round(((val - base) / base) * 100, 1) if base > 0 else (round(float(val * 100), 1) if val > 0 else 0.0)
-        ranking_pj.append({"receptor": rec, "cnpj": val, "growth": gw})
+        daily = round((val - base) / days_diff, 1)
+        ranking_pj.append({"receptor": rec, "cnpj": val, "growth": gw, "daily_delta": daily})
 
     def calc_growth(arr):
         if not arr: return 0.0
@@ -380,12 +392,17 @@ def get_resources(start: str = None, end: str = None, receptors: str = None, sta
                 values[i] = (values[i] / n) / 7 * 30
 
     colors_map = _build_color_map(list(totals.index))
-    colors = [colors_map.get(r, "#4A9EFF") for r in totals.index]
+    
+    # Organiza do maior para o menor
+    combined = sorted(zip(list(totals.index), values.tolist()), key=lambda x: x[1], reverse=True)
+    sorted_receptors = [c[0] for c in combined]
+    sorted_values = [c[1] for c in combined]
+    sorted_colors = [colors_map.get(r, "#4A9EFF") for r in sorted_receptors]
 
     return JSONResponse({
-        "receptors": list(totals.index),
-        "values":    values.tolist(),
-        "colors":    colors,
+        "receptors": sorted_receptors,
+        "values":    sorted_values,
+        "colors":    sorted_colors,
         "normalize": norm,
     })
 

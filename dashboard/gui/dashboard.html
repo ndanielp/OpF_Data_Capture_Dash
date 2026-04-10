@@ -1034,8 +1034,9 @@
           <div style="display:flex; justify-content:space-between; font-size:10px; color:var(--text-muted); padding-bottom: 4px; border-bottom: 1px solid var(--border-default); margin-top: var(--s2); flex-shrink: 0;">
             <div>Instituição</div>
             <div style="display:flex; gap:6px;">
-              <div style="width:35px; text-align:right;">Volume</div>
-              <div style="width:30px; text-align:right;">Δ 8s*</div>
+              <div style="width:35px; text-align:right;" title="Volume atual">Volume</div>
+              <div style="width:35px; text-align:right; color:var(--text-accent)" title="Média diária (8 semanas)">Δ Diário</div>
+              <div style="width:30px; text-align:right;" title="Variação percentual (8 semanas)">Δ 8s*</div>
             </div>
           </div>
           <ul class="ranking-list" id="ranking-pf-list" style="margin-top: 4px; flex: 1;"></ul>
@@ -1055,8 +1056,9 @@
           <div style="display:flex; justify-content:space-between; font-size:10px; color:var(--text-muted); padding-bottom: 4px; border-bottom: 1px solid var(--border-default); margin-top: var(--s2); flex-shrink: 0;">
             <div>Instituição</div>
             <div style="display:flex; gap:6px;">
-              <div style="width:35px; text-align:right;">Volume</div>
-              <div style="width:30px; text-align:right;">Δ 8s*</div>
+              <div style="width:35px; text-align:right;" title="Volume atual">Volume</div>
+              <div style="width:35px; text-align:right; color:var(--text-accent)" title="Média diária (8 semanas)">Δ Diário</div>
+              <div style="width:30px; text-align:right;" title="Variação percentual (8 semanas)">Δ 8s*</div>
             </div>
           </div>
           <ul class="ranking-list" id="ranking-pj-list" style="margin-top: 4px; flex: 1;"></ul>
@@ -1117,7 +1119,9 @@
           </div>
         </div>
         <div id="chart3-empty" class="chart-empty" style="display:none">Sem dados de resources</div>
-        <canvas id="barChart" height="160"></canvas>
+        <div style="position: relative; height: 180px; width: 100%;">
+          <canvas id="barChart"></canvas>
+        </div>
       </div>
 
     </main>
@@ -1233,10 +1237,11 @@
        ============================================================ */
     function fmtVal(v, normalize) {
       if (normalize) return v.toFixed(2);
-      if (v >= 1e9) return (v / 1e9).toFixed(1) + 'B';
-      if (v >= 1e6) return (v / 1e6).toFixed(1) + 'M';
-      if (v >= 1e3) return (v / 1e3).toFixed(0) + 'k';
-      return String(Math.round(v));
+      const absV = Math.abs(v);
+      if (absV >= 1e9) return (v / 1e9).toFixed(1) + 'B';
+      if (absV >= 1e6) return (v / 1e6).toFixed(1) + 'M';
+      if (absV >= 1e3) return (v / 1e3).toFixed(1) + 'k';
+      return v.toFixed(1);
     }
 
     function heatColor(val, maxVal) {
@@ -1460,11 +1465,15 @@
         const c = _allReceptors.find(x => x.label === r.receptor)?.color || '#4A9EFF';
         const sign = r.growth > 0 ? '+' : '';
         const clr = r.growth > 0 ? 'var(--success)' : (r.growth < 0 ? 'var(--error)' : 'var(--text-muted)');
+        const d_sign = r.daily_delta > 0 ? '+' : '';
+        const d_clr = r.daily_delta > 0 ? 'var(--success)' : (r.daily_delta < 0 ? 'var(--error)' : 'var(--text-muted)');
+        
         rPf.innerHTML += `<li class="ranking-item">
       <div class="ranking-label"><div class="ranking-color" style="background:${c}"></div><div class="ranking-name" style="text-overflow:ellipsis;overflow:hidden;max-width:85px;white-space:nowrap" title="${r.receptor}">${r.receptor}</div></div>
       <div style="display:flex; gap:6px; align-items:center;">
-        <div class="ranking-value">${fmtVal(r.cpf, false)}</div>
-        <div style="font-size: 9px; width:28px; text-align:right; font-weight:600; color:${clr}">${sign}${r.growth}%</div>
+        <div class="ranking-value" style="width:35px; text-align:right;">${fmtVal(r.cpf, false)}</div>
+        <div style="font-size: 9px; width:35px; text-align:right; font-weight:600; color:${d_clr}">${d_sign}${fmtVal(r.daily_delta, false)}</div>
+        <div style="font-size: 9px; width:30px; text-align:right; font-weight:600; color:${clr}">${sign}${r.growth}%</div>
       </div>
     </li>`;
       });
@@ -1473,11 +1482,15 @@
         const c = _allReceptors.find(x => x.label === r.receptor)?.color || '#4A9EFF';
         const sign = r.growth > 0 ? '+' : '';
         const clr = r.growth > 0 ? 'var(--success)' : (r.growth < 0 ? 'var(--error)' : 'var(--text-muted)');
+        const d_sign = r.daily_delta > 0 ? '+' : '';
+        const d_clr = r.daily_delta > 0 ? 'var(--success)' : (r.daily_delta < 0 ? 'var(--error)' : 'var(--text-muted)');
+
         rPj.innerHTML += `<li class="ranking-item">
       <div class="ranking-label"><div class="ranking-color" style="background:${c}"></div><div class="ranking-name" style="text-overflow:ellipsis;overflow:hidden;max-width:85px;white-space:nowrap" title="${r.receptor}">${r.receptor}</div></div>
       <div style="display:flex; gap:6px; align-items:center;">
-        <div class="ranking-value">${fmtVal(r.cnpj, false)}</div>
-        <div style="font-size: 9px; width:28px; text-align:right; font-weight:600; color:${clr}">${sign}${r.growth}%</div>
+        <div class="ranking-value" style="width:35px; text-align:right;">${fmtVal(r.cnpj, false)}</div>
+        <div style="font-size: 9px; width:35px; text-align:right; font-weight:600; color:${d_clr}">${d_sign}${fmtVal(r.daily_delta, false)}</div>
+        <div style="font-size: 9px; width:30px; text-align:right; font-weight:600; color:${clr}">${sign}${r.growth}%</div>
       </div>
     </li>`;
       });
@@ -1594,7 +1607,7 @@
         data: { labels: [], datasets: [{ data: [], backgroundColor: [], borderColor: [], borderWidth: 1, borderRadius: 4, barPercentage: 0.68 }] },
         options: {
           indexAxis: 'y',
-          responsive: true, maintainAspectRatio: true,
+          responsive: true, maintainAspectRatio: false,
           plugins: {
             legend: { display: false },
             tooltip: {
