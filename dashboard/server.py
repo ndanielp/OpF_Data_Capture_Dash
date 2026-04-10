@@ -27,27 +27,32 @@ API_GROUPS = {
     "Investimento": ["funds", "bank-fixed-incomes", "credit-fixed-incomes",
                      "variable-incomes", "treasure-titles"],
     "Câmbio":       ["exchanges"],
-    "Cadastro":     ["customers"],
+    "Cadastro":     ["customers-pf", "customers-pj"],
 }
 RESOURCES_API = "resources"
 EXCLUDED_APIS = {"consents"}
 _ORDERED_APIS = [api for apis in API_GROUPS.values() for api in apis]
 
 _API_LABELS = {
-    "accounts":                      "accounts",
-    "credit-cards-accounts":         "credit\ncards",
-    "loans":                         "loans",
-    "financings":                    "financings",
-    "invoice-financings":            "invoice\nfin.",
-    "unarranged-accounts-overdraft": "overdraft",
-    "funds":                         "funds",
-    "bank-fixed-incomes":            "bank\nfixed",
-    "credit-fixed-incomes":          "credit\nfixed",
-    "variable-incomes":              "variable",
-    "treasure-titles":               "treasure",
-    "exchanges":                     "exchanges",
-    "customers":                     "customers",
+    "accounts":                      "Conta",
+    "credit-cards-accounts":         "Cartão",
+    "loans":                         "Empréstimo",
+    "financings":                    "Financiamento",
+    "invoice-financings":            "Dir.\nCreditório",
+    "unarranged-accounts-overdraft": "Adiantamento",
+    "funds":                         "Fundos",
+    "bank-fixed-incomes":            "Renda Fixa\nBancária",
+    "credit-fixed-incomes":          "Renda Fixa\nCrédito",
+    "variable-incomes":              "Renda\nVariável",
+    "treasure-titles":               "Tesouro",
+    "exchanges":                     "Câmbio",
+    "customers-pf":                  "Cadastro\nPF",
+    "customers-pj":                  "Cadastro\nPJ",
 }
+
+# APIs que usam denominador PF (cpf) ou PJ (cnpj) na normalização
+_NORM_CPF_APIS  = {"customers-pf"}
+_NORM_CNPJ_APIS = {"customers-pj"}
 
 _BRAND = [
     ("bradesco",        "#CC092F"),
@@ -108,22 +113,62 @@ def _load_consents() -> pd.DataFrame:
     except Exception:
         return pd.DataFrame()
 
-def _load_api() -> pd.DataFrame:
+def _is_pj_customer_endpoint(label: str) -> bool:
+    """Detecta se o label de endpoint de customers é Pessoa Jurídica."""
+    l = label.lower()
+    return "juríd" in l or "juridic" in l or "jurídic" in l
+
+def _normalize_customer_ep_label(label: str) -> str:
+    """Mapeia labels raw dos endpoints de customers para nomes curtos padronizados."""
+    l = label.lower()
+    suffix = " PJ" if _is_pj_customer_endpoint(label) else " PF"
+    if "identif"  in l: return "Identificação"  + suffix
+    if "qualif"   in l: return "Qualificação"   + suffix
+    if "relacion" in l: return "Relacionamento" + suffix
+    return label  # fallback: mantém original
+
+def _load_api_with_endpoints() -> pd.DataFrame:
+    """Carrega api_requests com detalhe de endpoint.
+    A API 'customers' é dividida em 'customers-pf' / 'customers-pj' pelo
+    label do endpoint, e os labels são normalizados para nomes curtos.
+    """
     try:
         con = sqlite3.connect(str(config.DB_PATH))
         df = pd.read_sql(
             """
-            SELECT date, receptor, api, status, SUM(total) AS total
+            SELECT date, receptor, api, endpoint_id, endpoint, status, SUM(total) AS total
             FROM api_requests
             WHERE endpoint_id <> 0
-            GROUP BY date, receptor, api, status
+            GROUP BY date, receptor, api, endpoint_id, endpoint, status
             """,
             con, parse_dates=["date"]
         )
         con.close()
-        return df
     except Exception:
         return pd.DataFrame()
+
+    if df.empty:
+        return df
+
+    # Split customers → customers-pf / customers-pj + normaliza labels dos endpoints
+    mask = df["api"] == "customers"
+    if mask.any():
+        df.loc[mask, "api"] = df.loc[mask, "endpoint"].apply(
+            lambda lbl: "customers-pj" if _is_pj_customer_endpoint(lbl) else "customers-pf"
+        )
+        df.loc[mask, "endpoint"] = df.loc[mask, "endpoint"].apply(_normalize_customer_ep_label)
+
+    return df
+
+def _load_api() -> pd.DataFrame:
+    """Agrega api_requests por (date, receptor, api, status); customers já dividido em PF/PJ."""
+    df = _load_api_with_endpoints()
+    if df.empty:
+        return df
+    return (
+        df.groupby(["date", "receptor", "api", "status"], as_index=False)["total"]
+        .sum()
+    )
 
 def _parse_date(s: str | None, fallback: date) -> date:
     if not s: return fallback
@@ -325,13 +370,23 @@ def get_api_requests(start: str = None, end: str = None, receptors: str = None, 
 
     if norm:
         df_cons = _filter_by_date(_load_consents(), dt_start, dt_end)
-        ct = df_cons.groupby("receptor")["total"].sum() if not df_cons.empty else pd.Series(dtype=float)
+        if not df_cons.empty:
+            ct_total = df_cons.groupby("receptor")["total"].sum()
+            ct_cpf   = df_cons.groupby("receptor")["cpf"].sum()
+            ct_cnpj  = df_cons.groupby("receptor")["cnpj"].sum()
+        else:
+            ct_total = ct_cpf = ct_cnpj = pd.Series(dtype=float)
+        # Converte de semanal para mensal; Cadastro PF/PJ usam denominadores específicos
         for i, rec in enumerate(pivot.index):
-            n = float(ct.get(rec, 0))
-            if n > 0:
-                # Converte de "Semanal" para "Mensal (30 dias)"
-                # Cálculo: (Somatório Chamadas / Somatório Consentimentos) / 7 * 30
-                data[i] = (data[i] / n) / 7 * 30
+            for j, col in enumerate(ordered_cols):
+                if col in _NORM_CPF_APIS:
+                    n = float(ct_cpf.get(rec, 0))
+                elif col in _NORM_CNPJ_APIS:
+                    n = float(ct_cnpj.get(rec, 0))
+                else:
+                    n = float(ct_total.get(rec, 0))
+                if n > 0:
+                    data[i, j] = (data[i, j] / n) / 7 * 30
 
     groups_info = []
     col_idx = 0
@@ -342,14 +397,174 @@ def get_api_requests(start: str = None, end: str = None, receptors: str = None, 
         col_idx += len(cols)
 
     max_val = float(data.max()) if data.size > 0 else 0
+
+    # ── Endpoint breakdown por API ─────────────────────────────────────────────
+    endpoints_by_api: dict = {}
+    endpoint_max_val = 0.0
+    df_ep = _load_api_with_endpoints()
+    df_ep = _filter_by_date(df_ep, dt_start, dt_end)
+    if not df_ep.empty:
+        if status == "200": df_ep = df_ep[df_ep["status"] == 200]
+        elif status == "500": df_ep = df_ep[df_ep["status"] == 500]
+        df_ep = df_ep[df_ep["receptor"].isin(top_reps)]
+        df_ep = df_ep[~df_ep["api"].isin(EXCLUDED_APIS | {RESOURCES_API})]
+
+        if not df_ep.empty:
+            # Pivot por (receptor, api, endpoint_id)
+            ep_pivot = (
+                df_ep.groupby(["receptor", "api", "endpoint_id", "endpoint"])["total"]
+                .sum().reset_index()
+            )
+            if norm and not df_ep.empty:
+                df_cons_ep = _filter_by_date(_load_consents(), dt_start, dt_end)
+                if not df_cons_ep.empty:
+                    ct_ep_total = df_cons_ep.groupby("receptor")["total"].sum()
+                    ct_ep_cpf   = df_cons_ep.groupby("receptor")["cpf"].sum()
+                    ct_ep_cnpj  = df_cons_ep.groupby("receptor")["cnpj"].sum()
+                else:
+                    ct_ep_total = ct_ep_cpf = ct_ep_cnpj = pd.Series(dtype=float)
+                def _norm_ep(row):
+                    if row["api"] in _NORM_CPF_APIS:
+                        n = float(ct_ep_cpf.get(row["receptor"], 0))
+                    elif row["api"] in _NORM_CNPJ_APIS:
+                        n = float(ct_ep_cnpj.get(row["receptor"], 0))
+                    else:
+                        n = float(ct_ep_total.get(row["receptor"], 0))
+                    return (row["total"] / n) / 7 * 30 if n > 0 else 0.0
+                ep_pivot["total"] = ep_pivot.apply(_norm_ep, axis=1)
+
+            for api_id in ordered_cols:
+                api_ep = ep_pivot[ep_pivot["api"] == api_id]
+                if api_ep.empty:
+                    continue
+                # Headers: endpoint_ids únicos ordenados por id
+                ep_headers = (
+                    api_ep[["endpoint_id", "endpoint"]]
+                    .drop_duplicates()
+                    .sort_values("endpoint_id")
+                )
+                headers = [{"id": int(r["endpoint_id"]), "label": r["endpoint"]} for _, r in ep_headers.iterrows()]
+                ep_ids = [h["id"] for h in headers]
+                # Valores: [receptor][endpoint]
+                values_ep = []
+                for rec in top_reps:
+                    row_vals = []
+                    rec_ep = api_ep[api_ep["receptor"] == rec]
+                    for ep_id in ep_ids:
+                        match = rec_ep[rec_ep["endpoint_id"] == ep_id]["total"]
+                        row_vals.append(float(match.iloc[0]) if not match.empty else 0.0)
+                    values_ep.append(row_vals)
+                endpoints_by_api[api_id] = {"headers": headers, "values": values_ep}
+                local_max = max((v for row in values_ep for v in row), default=0.0)
+                if local_max > endpoint_max_val:
+                    endpoint_max_val = local_max
+
     return JSONResponse({
-        "groups":    groups_info,
-        "apis":      [{"id": a, "label": _API_LABELS.get(a, a)} for a in ordered_cols],
-        "receptors": list(pivot.index),
-        "values":    data.tolist(),
-        "max_val":   max_val,
-        "normalize": norm,
+        "groups":          groups_info,
+        "apis":            [{"id": a, "label": _API_LABELS.get(a, a)} for a in ordered_cols],
+        "receptors":       list(pivot.index),
+        "values":          data.tolist(),
+        "max_val":         max_val,
+        "normalize":       norm,
+        "endpoints_by_api": endpoints_by_api,
+        "endpoint_max_val": endpoint_max_val,
     })
+
+@app.get("/api/api-requests-timeseries", response_class=JSONResponse)
+def get_api_requests_timeseries(
+    start: str = None, end: str = None,
+    receptors: str = None,
+    apis: str = None,
+    endpoints: str = None,
+    status: str = "all",
+    normalize: str = "0",
+):
+    today = date.today()
+    dt_start = _parse_date(start, today - timedelta(days=365))
+    dt_end   = _parse_date(end, today)
+    norm     = normalize == "1"
+    sel      = _parse_receptors(receptors)
+
+    if not sel:
+        return JSONResponse({"dates": [], "series": [], "normalize": norm, "filter_label": ""})
+
+    df = _load_api_with_endpoints()
+    df = _filter_by_date(df, dt_start, dt_end)
+    if df.empty:
+        return JSONResponse({"dates": [], "series": [], "normalize": norm, "filter_label": ""})
+
+    if status == "200": df = df[df["status"] == 200]
+    elif status == "500": df = df[df["status"] == 500]
+
+    df = df[df["receptor"].isin(sel)]
+    df = df[~df["api"].isin(EXCLUDED_APIS)]
+
+    filter_parts = []
+    if endpoints:
+        ep_ids = [int(e) for e in endpoints.split(",") if e.strip().isdigit()]
+        if ep_ids:
+            df = df[df["endpoint_id"].isin(ep_ids)]
+            # Labels já normalizados pelo _load_api_with_endpoints
+            ep_label_map = (
+                df[["endpoint_id", "endpoint"]].drop_duplicates()
+                .set_index("endpoint_id")["endpoint"].to_dict()
+            )
+            filter_parts = [ep_label_map.get(e, str(e)) for e in ep_ids]
+    elif apis:
+        api_list = [a.strip() for a in apis.split(",") if a.strip()]
+        if api_list:
+            df = df[df["api"].isin(api_list)]
+            filter_parts = [_API_LABELS.get(a, a).replace("\n", " ") for a in api_list]
+
+    if df.empty:
+        return JSONResponse({"dates": [], "series": [], "normalize": norm, "filter_label": " | ".join(filter_parts)})
+
+    # Agrega por (date, receptor)
+    agg = df.groupby(["date", "receptor"])["total"].sum().reset_index()
+    agg["date_str"] = agg["date"].dt.strftime("%Y-%m-%d")
+
+    all_dates = sorted(agg["date_str"].unique())
+
+    if norm:
+        # Determina denominador: se o filtro é exclusivamente PF ou PJ, usa cpf/cnpj
+        apis_in_filter = set(df["api"].unique())
+        use_cpf  = apis_in_filter <= _NORM_CPF_APIS
+        use_cnpj = apis_in_filter <= _NORM_CNPJ_APIS
+        df_cons = _filter_by_date(_load_consents(), dt_start, dt_end)
+        if not df_cons.empty:
+            ct_total = df_cons.groupby("receptor")["total"].sum()
+            ct_cpf   = df_cons.groupby("receptor")["cpf"].sum()
+            ct_cnpj  = df_cons.groupby("receptor")["cnpj"].sum()
+        else:
+            ct_total = ct_cpf = ct_cnpj = pd.Series(dtype=float)
+        def _norm_val(row):
+            if use_cpf:
+                n = float(ct_cpf.get(row["receptor"], 0))
+            elif use_cnpj:
+                n = float(ct_cnpj.get(row["receptor"], 0))
+            else:
+                n = float(ct_total.get(row["receptor"], 0))
+            return (row["total"] / n) / 7 * 30 if n > 0 else 0.0
+        agg["total"] = agg.apply(_norm_val, axis=1)
+
+    colors_map = _build_color_map(sel)
+    series = []
+    for rec in sel:
+        rec_data = agg[agg["receptor"] == rec].set_index("date_str")["total"]
+        values = [float(rec_data[d]) if d in rec_data.index else None for d in all_dates]
+        series.append({
+            "receptor": rec,
+            "color":    colors_map.get(rec, "#4A9EFF"),
+            "values":   values,
+        })
+
+    return JSONResponse({
+        "dates":        all_dates,
+        "series":       series,
+        "normalize":    norm,
+        "filter_label": " | ".join(filter_parts),
+    })
+
 
 @app.get("/api/resources", response_class=JSONResponse)
 def get_resources(start: str = None, end: str = None, receptors: str = None, status: str = "all", normalize: str = "0"):

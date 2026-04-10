@@ -816,6 +816,34 @@
       white-space: nowrap;
       vertical-align: middle;
       min-width: 175px;
+      position: sticky;
+      left: 0;
+      z-index: 2;
+      background: var(--bg-surface);
+    }
+    .heatmap-row-label.clickable { cursor: pointer; }
+    .heatmap-row-label.clickable:hover { color: var(--text-accent); }
+    .heatmap-row-label.hm-selected {
+      font-weight: 700;
+      color: var(--text-primary);
+      border-left: 3px solid var(--receptor-color, var(--text-accent));
+      padding-left: var(--s2);
+    }
+
+    .heatmap-th.expandable { cursor: pointer; transition: background 0.12s; }
+    .heatmap-th.expandable:hover { background: var(--bg-hover); border-radius: var(--r-sm); }
+
+    .heatmap-endpoint-th {
+      font-size: 10px;
+      font-weight: 400;
+      color: var(--text-muted);
+      text-align: center;
+      padding: 2px 4px var(--s2);
+      white-space: nowrap;
+      vertical-align: bottom;
+      max-width: 70px;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
 
     .heatmap-cell {
@@ -829,6 +857,11 @@
       min-width: 62px;
       vertical-align: middle;
     }
+    .heatmap-cell.clickable { cursor: pointer; }
+    .heatmap-cell.hm-selected {
+      outline: 2px solid var(--text-accent);
+      outline-offset: -2px;
+    }
 
     .heatmap-cell:hover {
       opacity: 0.82;
@@ -839,6 +872,73 @@
       background: var(--bg-elevated);
       color: var(--text-muted);
     }
+
+    /* ── Side-by-side layout para heatmap + temporal ─────────────────────────── */
+    .api-charts-row {
+      display: flex;
+      gap: var(--s4);
+      align-items: stretch;
+    }
+    .api-heatmap-card {
+      flex: 1 1 0;
+      min-width: 0;
+      height: 550px;          /* mesma altura do Evolução Consentimentos */
+      display: flex;
+      flex-direction: column;
+    }
+    .api-heatmap-card .heatmap-wrapper {
+      flex: 1;
+      min-height: 0;
+      overflow: auto;         /* scroll em ambas as direções se necessário */
+    }
+    .api-time-card {
+      flex: 0 1 550px;
+      flex-shrink: 1;
+      min-width: 320px;
+      height: 550px;          /* mesma altura do Evolução Consentimentos */
+      display: flex;
+      flex-direction: column;
+    }
+    @media (max-width: 1100px) {
+      .api-charts-row { flex-direction: column; }
+      .api-heatmap-card,
+      .api-time-card  { flex: none; width: 100%; height: 400px; min-width: 0; }
+    }
+
+    .page-footnote {
+      display: flex;
+      align-items: flex-start;
+      gap: var(--s1);
+      font-size: var(--tx-xs);
+      color: var(--text-muted, var(--text-secondary));
+      border-top: 1px solid var(--border-default);
+      padding-top: var(--s2);
+      margin-top: var(--s3);
+      line-height: 1.6;
+    }
+    .page-footnote strong { color: var(--text-secondary); font-weight: 500; }
+
+    .api-time-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: var(--s1);
+      padding: var(--s1) 0 var(--s2);
+    }
+    .api-time-chip {
+      font-size: var(--tx-xs);
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border-default);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      color: var(--text-secondary);
+      transition: border-color 0.12s;
+    }
+    .api-time-chip:hover { border-color: var(--text-accent); color: var(--text-primary); }
+    .api-time-chip .chip-x { opacity: 0.5; font-size: 10px; }
 
     .heatmap-legend {
       display: flex;
@@ -1090,21 +1190,41 @@
         </div>
       </div>
 
-      <!-- Chart 2: Chamadas de API -->
-      <div class="chart-card">
-        <div class="chart-head">
-          <div>
-            <div class="chart-title">Intensidade de Uso das APIs</div>
-            <div class="chart-subtitle" id="heatmap-subtitle">Chamadas semanais acumuladas</div>
+      <!-- Chart 2 + Temporal: side-by-side -->
+      <div class="api-charts-row">
+
+        <!-- Chart 2: Heatmap -->
+        <div class="chart-card api-heatmap-card">
+          <div class="chart-head">
+            <div>
+              <div class="chart-title">Intensidade de Uso das APIs</div>
+              <div class="chart-subtitle" id="heatmap-subtitle">Chamadas semanais acumuladas</div>
+            </div>
+            <div class="chart-actions">
+              <button class="chart-action-btn" id="btn-export-api">Exportar CSV</button>
+            </div>
           </div>
-          <div class="chart-actions">
-            <button class="chart-action-btn" id="btn-export-api">Exportar CSV</button>
+          <div id="chart2-empty" class="chart-empty" style="display:none">Sem dados de chamadas de API</div>
+          <div class="heatmap-wrapper">
+            <table class="heatmap-table" id="heatmap-table"></table>
           </div>
         </div>
-        <div id="chart2-empty" class="chart-empty" style="display:none">Sem dados de chamadas de API</div>
-        <div class="heatmap-wrapper">
-          <table class="heatmap-table" id="heatmap-table"></table>
+
+        <!-- Chart API Temporal -->
+        <div class="chart-card api-time-card" id="api-time-section" style="display:none">
+          <div class="chart-head">
+            <div>
+              <div class="chart-title">Intensidade no Tempo</div>
+              <div class="chart-subtitle" id="api-time-subtitle"></div>
+            </div>
+          </div>
+          <div id="api-time-chips" class="api-time-chips"></div>
+          <div id="api-time-empty" class="chart-empty" style="display:none">Sem dados para o período selecionado</div>
+          <div style="position:relative;flex:1;min-height:0;overflow:hidden;width:100%">
+            <canvas id="chart-api-time" style="position:absolute;inset:0"></canvas>
+          </div>
         </div>
+
       </div>
 
       <!-- Chart 3: Resources -->
@@ -1124,6 +1244,13 @@
         </div>
       </div>
 
+      <footer class="page-footnote">
+        <svg width="12" height="12" viewBox="0 0 13 13" fill="none" style="flex-shrink:0;margin-top:2px"><circle cx="6.5" cy="6.5" r="6" stroke="currentColor" stroke-width="1.1"/><text x="6.5" y="10" text-anchor="middle" font-size="8" fill="currentColor" font-family="sans-serif">i</text></svg>
+        <span>
+          Heatmap: clique em uma <strong>célula da API</strong> para filtrar o gráfico temporal · clique em <strong>▶</strong> no cabeçalho para expandir endpoints · clique no <strong>nome do receptor</strong> para incluir/excluir do gráfico.
+          <strong>Cadastro PF / PJ</strong>: endpoints da API <em>customers</em> classificados por pessoa física ou jurídica — na normalização, Cadastro PF usa consentimentos CPF e Cadastro PJ usa consentimentos CNPJ.
+        </span>
+      </footer>
     </main>
   </div>
 
@@ -1148,6 +1275,14 @@
     let _resData = null;     // last resources response (for export)
     let _dbMinDate = null;
     let _dbMaxDate = null;
+
+    // Heatmap interaction state
+    let _selectedHeatmapReceptors = new Set();
+    let _selectedAPIs             = new Set();
+    let _selectedEndpoints        = new Set();
+    let _expandedAPIs             = new Set();
+    let _lineChartApi             = null;
+    let _apiTimeData              = null;
 
     /* ============================================================
        THEME TOGGLE
@@ -1181,6 +1316,15 @@
         barChart.options.plugins.tooltip.titleColor = tooltipTitle;
         barChart.options.plugins.tooltip.bodyColor = Chart.defaults.color;
         barChart.update();
+      }
+      if (_lineChartApi) {
+        _lineChartApi.options.scales.x.grid.color = gridColor;
+        _lineChartApi.options.scales.y.grid.color = gridColor;
+        _lineChartApi.options.plugins.tooltip.backgroundColor = tooltipBg;
+        _lineChartApi.options.plugins.tooltip.borderColor = tooltipBorder;
+        _lineChartApi.options.plugins.tooltip.titleColor = tooltipTitle;
+        _lineChartApi.options.plugins.tooltip.bodyColor = Chart.defaults.color;
+        _lineChartApi.update();
       }
       // Refresh heatmap text colors
       if (_apiData) { updateChart2(new URLSearchParams(window.location.search).toString() || buildParams()); }
@@ -1518,76 +1662,206 @@
       _apiData = data;
       const empty = document.getElementById('chart2-empty');
       const wrapper = document.querySelector('.heatmap-wrapper');
-
       if (!data.receptors || data.receptors.length === 0) {
         empty.style.display = 'flex'; wrapper.style.display = 'none'; return;
       }
       empty.style.display = 'none'; wrapper.style.display = '';
 
+      // Pré-seleciona todos os receptores na primeira carga (ou ao trocar filtros globais)
+      _selectedHeatmapReceptors = new Set(data.receptors);
+
+      renderHeatmapTable(data);
+      updateChartApiTime(params);
+    }
+
+    function renderHeatmapTable(data) {
       const table = document.getElementById('heatmap-table');
       table.innerHTML = '';
 
-      const maxVal = data.max_val || 1;
-      const apis = data.apis;   // [{id, label}]
-      const groups = data.groups; // [{label, start, span}]
+      const maxVal       = data.max_val || 1;
+      const epMaxVal     = data.endpoint_max_val || 1;
+      const apis         = data.apis;    // [{id, label}]
+      const groups       = data.groups;  // [{label, start, span}]
+      const endpointsByApi = data.endpoints_by_api || {};
+      const anyExpanded  = apis.some(a => _expandedAPIs.has(a.id));
 
-      // Header row 1: group labels
+      // Helper: receptor color from _allReceptors
+      function recColor(rec) {
+        const found = _allReceptors.find(r => r.label === rec);
+        return found ? found.color : null;
+      }
+
+      // ── Header row 1: group labels (colspan dynamic) ──────────────────────
       const thead = table.createTHead();
       const grow = thead.insertRow();
       const cornerG = document.createElement('th');
       cornerG.style.width = '175px';
       grow.appendChild(cornerG);
+
       groups.forEach(g => {
+        const groupApis = apis.slice(g.start, g.start + g.span);
+        let colspan = 0;
+        groupApis.forEach(a => {
+          if (_expandedAPIs.has(a.id)) {
+            const eps = endpointsByApi[a.id];
+            colspan += eps ? eps.headers.length : 1;
+          } else {
+            colspan += 1;
+          }
+        });
         const th = document.createElement('th');
         th.className = 'heatmap-group-th';
-        th.colSpan = g.span;
+        th.colSpan = colspan;
         th.textContent = g.label;
         grow.appendChild(th);
       });
 
-      // Header row 2: api labels
+      // ── Header row 2: API labels (expandable) ─────────────────────────────
       const hrow = thead.insertRow();
       const corner = document.createElement('th');
       corner.style.width = '175px';
       hrow.appendChild(corner);
+
       apis.forEach(api => {
+        const expanded = _expandedAPIs.has(api.id);
+        const eps = endpointsByApi[api.id];
+        const epCount = eps ? eps.headers.length : 0;
         const th = document.createElement('th');
-        th.className = 'heatmap-th';
+        th.className = 'heatmap-th' + (epCount > 0 ? ' expandable' : '');
+        th.colSpan = (expanded && epCount > 0) ? epCount : 1;
         th.style.whiteSpace = 'pre';
-        th.textContent = api.label;
+        th.setAttribute('aria-expanded', String(expanded));
+        const icon = epCount > 0 ? (expanded ? ' ▼' : ' ▶') : '';
+        th.textContent = api.label + icon;
+        if (epCount > 0) {
+          th.addEventListener('click', () => {
+            _expandedAPIs.has(api.id) ? _expandedAPIs.delete(api.id) : _expandedAPIs.add(api.id);
+            renderHeatmapTable(_apiData);
+          });
+        }
         hrow.appendChild(th);
       });
 
-      // Body
+      // ── Header row 3: endpoint sub-headers (only if any expanded) ─────────
+      if (anyExpanded) {
+        const erow = thead.insertRow();
+        const ecorner = document.createElement('th');
+        ecorner.style.width = '175px';
+        erow.appendChild(ecorner);
+        apis.forEach(api => {
+          const expanded = _expandedAPIs.has(api.id);
+          const eps = endpointsByApi[api.id];
+          if (expanded && eps) {
+            eps.headers.forEach(ep => {
+              const th = document.createElement('th');
+              th.className = 'heatmap-endpoint-th';
+              th.title = ep.label;
+              th.textContent = ep.label.length > 12 ? ep.label.slice(0, 11) + '…' : ep.label;
+              erow.appendChild(th);
+            });
+          } else {
+            const th = document.createElement('th');
+            erow.appendChild(th);
+          }
+        });
+      }
+
+      // ── Body ──────────────────────────────────────────────────────────────
       const tbody = table.createTBody();
       data.receptors.forEach((rec, ri) => {
         const tr = tbody.insertRow();
+
+        // Receptor label cell
         const tdLabel = document.createElement('td');
-        tdLabel.className = 'heatmap-row-label';
-        tdLabel.textContent = rec;
+        tdLabel.className = 'heatmap-row-label clickable';
+        const isRecSel = _selectedHeatmapReceptors.has(rec);
+        if (isRecSel) {
+          tdLabel.classList.add('hm-selected');
+          const color = recColor(rec);
+          if (color) tdLabel.style.setProperty('--receptor-color', color);
+        }
+        tdLabel.setAttribute('role', 'button');
+        tdLabel.setAttribute('aria-pressed', String(isRecSel));
+        tdLabel.setAttribute('aria-label', `Incluir ${rec} no gráfico`);
+        const dot = isRecSel ? (recColor(rec) ? `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${recColor(rec)};margin-right:4px;vertical-align:middle"></span>` : '') : '';
+        tdLabel.innerHTML = dot + rec;
+        tdLabel.addEventListener('click', () => {
+          _selectedHeatmapReceptors.has(rec) ? _selectedHeatmapReceptors.delete(rec) : _selectedHeatmapReceptors.add(rec);
+          updateChartApiTime(buildParams());
+          renderHeatmapTable(_apiData);
+        });
         tr.appendChild(tdLabel);
-        data.values[ri].forEach((val, ci) => {
-          const td = document.createElement('td');
-          td.className = 'heatmap-cell';
-          if (val === 0) {
-            td.classList.add('empty');
-            td.textContent = '—';
+
+        // Data cells
+        apis.forEach((api, ci) => {
+          const expanded = _expandedAPIs.has(api.id);
+          const eps = endpointsByApi[api.id];
+
+          if (expanded && eps) {
+            // Render one cell per endpoint
+            eps.headers.forEach((ep, ei) => {
+              const val = eps.values[ri] ? (eps.values[ri][ei] || 0) : 0;
+              const td = document.createElement('td');
+              td.className = 'heatmap-cell clickable';
+              const epKey = String(ep.id);
+              if (_selectedEndpoints.has(epKey)) td.classList.add('hm-selected');
+              if (val === 0) {
+                td.classList.add('empty'); td.textContent = '—';
+              } else {
+                const col = heatColor(val, epMaxVal);
+                td.style.background = col.css;
+                td.style.color = col.brightness > 145 ? '#13151E' : '#EEF0F6';
+                td.textContent = fmtVal(val, data.normalize);
+                td.title = `${rec} · ${api.id} · ${ep.label} · ${fmtVal(val, data.normalize)}`;
+              }
+              td.setAttribute('role', 'button');
+              td.setAttribute('aria-pressed', String(_selectedEndpoints.has(epKey)));
+              td.addEventListener('click', () => {
+                _selectedEndpoints.has(epKey) ? _selectedEndpoints.delete(epKey) : _selectedEndpoints.add(epKey);
+                updateChartApiTime(buildParams());
+                renderHeatmapTable(_apiData);
+              });
+              tr.appendChild(td);
+            });
           } else {
-            const col = heatColor(val, maxVal);
-            const unit = data.normalize ? ' chamadas/mês por consentimento' : '';
-            td.style.background = col.css;
-            td.style.color = col.brightness > 145 ? '#13151E' : '#EEF0F6';
-            td.textContent = fmtVal(val, data.normalize);
-            td.title = `${rec} · ${apis[ci].id} · ${fmtVal(val, data.normalize)}${unit}`;
+            // Render aggregated API cell
+            const val = data.values[ri] ? (data.values[ri][ci] || 0) : 0;
+            const td = document.createElement('td');
+            td.className = 'heatmap-cell clickable';
+            if (_selectedAPIs.has(api.id)) td.classList.add('hm-selected');
+            if (val === 0) {
+              td.classList.add('empty'); td.textContent = '—';
+            } else {
+              const col = heatColor(val, maxVal);
+              const unit = data.normalize ? ' chamadas/mês por consentimento' : '';
+              td.style.background = col.css;
+              td.style.color = col.brightness > 145 ? '#13151E' : '#EEF0F6';
+              td.textContent = fmtVal(val, data.normalize);
+              td.title = `${rec} · ${api.id} · ${fmtVal(val, data.normalize)}${unit}`;
+            }
+            td.setAttribute('role', 'button');
+            td.setAttribute('aria-pressed', String(_selectedAPIs.has(api.id)));
+            td.addEventListener('click', () => {
+              _selectedAPIs.has(api.id) ? _selectedAPIs.delete(api.id) : _selectedAPIs.add(api.id);
+              updateChartApiTime(buildParams());
+              renderHeatmapTable(_apiData);
+            });
+            tr.appendChild(td);
           }
-          tr.appendChild(td);
         });
       });
 
-      // Legend
+      // ── Legend ────────────────────────────────────────────────────────────
+      // Count total columns for colspan
+      let totalCols = 1; // label column
+      apis.forEach(api => {
+        const expanded = _expandedAPIs.has(api.id);
+        const eps = endpointsByApi[api.id];
+        totalCols += (expanded && eps) ? eps.headers.length : 1;
+      });
       const legRow = tbody.insertRow();
       const legTd = document.createElement('td');
-      legTd.colSpan = apis.length + 1;
+      legTd.colSpan = totalCols;
       legTd.innerHTML = `
     <div class="heatmap-legend">
       <span class="heatmap-legend-text">0 (mín)</span>
@@ -1663,6 +1937,165 @@
     }
 
     /* ============================================================
+       CHART API — TEMPORAL (LINE)
+       ============================================================ */
+    function initChartApiTime() {
+      const ctx = document.getElementById('chart-api-time').getContext('2d');
+      const isLight = document.body.getAttribute('data-theme') === 'light';
+      const gridColor = isLight ? '#E5E7EB' : '#252A3A';
+      _lineChartApi = new Chart(ctx, {
+        type: 'line',
+        data: { labels: [], datasets: [] },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          spanGaps: false,
+          interaction: { mode: 'index', intersect: false },
+          plugins: {
+            legend: { display: true, position: 'bottom', labels: { boxWidth: 12, padding: 16 } },
+            tooltip: {
+              backgroundColor: isLight ? '#FFFFFF' : '#1B1F2E',
+              borderColor: isLight ? '#D1D5DB' : '#333B54',
+              borderWidth: 1,
+              titleColor: isLight ? '#111827' : '#EEF0F6',
+              bodyColor: Chart.defaults.color,
+            },
+          },
+          scales: {
+            x: {
+              grid: { color: gridColor },
+              ticks: { maxRotation: 45, font: { size: 10 } },
+            },
+            y: {
+              min: 0,
+              grid: { color: gridColor },
+              title: { display: true, text: 'Intensidade' },
+            },
+          },
+        },
+      });
+    }
+
+    // Helpers para labels em português a partir de _apiData
+    function _apiLabel(apiId) {
+      if (!_apiData) return apiId;
+      const found = (_apiData.apis || []).find(a => a.id === apiId);
+      return found ? found.label.replace('\n', ' ') : apiId;
+    }
+
+    function _groupLabel(apiId) {
+      if (!_apiData) return '';
+      const apis = _apiData.apis || [];
+      const idx = apis.findIndex(a => a.id === apiId);
+      if (idx < 0) return '';
+      const groups = _apiData.groups || [];
+      for (const g of groups) {
+        if (idx >= g.start && idx < g.start + g.span) return g.label;
+      }
+      return '';
+    }
+
+    function _endpointLabel(epKey) {
+      if (!_apiData) return epKey;
+      const epId = parseInt(epKey, 10);
+      for (const [apiId, epData] of Object.entries(_apiData.endpoints_by_api || {})) {
+        const found = (epData.headers || []).find(h => h.id === epId);
+        if (found) {
+          const grp = _groupLabel(apiId);
+          const api = _apiLabel(apiId);
+          return `${grp ? grp + ' · ' : ''}${api} · ${found.label}`;
+        }
+      }
+      return `endpoint ${epKey}`;
+    }
+
+    function renderApiTimeChips() {
+      const container = document.getElementById('api-time-chips');
+      container.innerHTML = '';
+
+      _selectedAPIs.forEach(apiId => {
+        if (_selectedEndpoints.size > 0) return; // endpoints take precedence
+        const grp = _groupLabel(apiId);
+        const api = _apiLabel(apiId);
+        const label = grp ? `${grp} · ${api}` : api;
+        const chip = document.createElement('div');
+        chip.className = 'api-time-chip';
+        chip.innerHTML = `<span>${label}</span><span>×</span>`;
+        chip.addEventListener('click', () => {
+          _selectedAPIs.delete(apiId);
+          updateChartApiTime(buildParams());
+          renderHeatmapTable(_apiData);
+        });
+        container.appendChild(chip);
+      });
+
+      _selectedEndpoints.forEach(epKey => {
+        const label = _endpointLabel(epKey);
+        const chip = document.createElement('div');
+        chip.className = 'api-time-chip';
+        chip.innerHTML = `<span>${label}</span><span>×</span>`;
+        chip.addEventListener('click', () => {
+          _selectedEndpoints.delete(epKey);
+          updateChartApiTime(buildParams());
+          renderHeatmapTable(_apiData);
+        });
+        container.appendChild(chip);
+      });
+    }
+
+    async function updateChartApiTime(globalParams) {
+      const section = document.getElementById('api-time-section');
+      if (_selectedHeatmapReceptors.size === 0) {
+        section.style.display = 'none';
+        return;
+      }
+      section.style.display = 'flex';
+
+      const p = new URLSearchParams(globalParams);
+      p.set('receptors', [..._selectedHeatmapReceptors].join(','));
+      if (_selectedEndpoints.size > 0) {
+        p.set('endpoints', [..._selectedEndpoints].join(','));
+      } else if (_selectedAPIs.size > 0) {
+        p.set('apis', [..._selectedAPIs].join(','));
+      }
+
+      let data;
+      try {
+        const resp = await fetch('/api/api-requests-timeseries?' + p);
+        data = await resp.json();
+      } catch (e) {
+        console.error('Erro ao carregar timeseries', e);
+        return;
+      }
+      _apiTimeData = data;
+
+      renderApiTimeChips();
+
+      const empty = document.getElementById('api-time-empty');
+      const canvas = document.getElementById('chart-api-time');
+      if (!data.series || data.series.length === 0) {
+        empty.style.display = 'flex'; canvas.style.display = 'none';
+        return;
+      }
+      empty.style.display = 'none'; canvas.style.display = '';
+
+      _lineChartApi.data.labels = data.dates;
+      _lineChartApi.data.datasets = data.series.map(s => ({
+        label: s.receptor,
+        data: s.values,
+        borderColor: s.color,
+        backgroundColor: s.color + '22',
+        tension: 0.3,
+        pointRadius: 3,
+        pointHoverRadius: 5,
+      }));
+      _lineChartApi.update();
+
+      document.getElementById('api-time-subtitle').textContent =
+        data.filter_label || (data.normalize ? 'Chamadas mensais / consentimento' : 'Total de chamadas');
+    }
+
+    /* ============================================================
        STATS
        ============================================================ */
     async function loadStats() {
@@ -1696,6 +2129,7 @@
         updateChart1(params),
         updateChart2(params),
         updateChart3(params),
+        updateChartApiTime(params),
       ]);
     }
 
@@ -1764,6 +2198,7 @@
     async function loadAll() {
       initLineChart();
       initBarChart();
+      initChartApiTime();
       await loadStats();
       try {
         const resp = await fetch('/api/receptors');
