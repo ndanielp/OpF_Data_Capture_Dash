@@ -285,6 +285,16 @@ def open_db(path: Path) -> sqlite3.Connection:
         )
     """)
 
+    # Índices de leitura para o dashboard — criados uma vez, idempotentes.
+    con.executescript("""
+        CREATE INDEX IF NOT EXISTS idx_consents_date
+            ON unique_consents(date);
+        CREATE INDEX IF NOT EXISTS idx_api_date
+            ON api_requests(date);
+        CREATE INDEX IF NOT EXISTS idx_api_receptor_api
+            ON api_requests(receptor, api, status);
+    """)
+
     con.commit()
     return con
 

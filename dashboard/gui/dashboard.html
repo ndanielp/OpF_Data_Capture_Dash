@@ -818,11 +818,40 @@
       min-width: 175px;
       position: sticky;
       left: 0;
-      z-index: 2;
+      z-index: 3;
       background: var(--bg-surface);
+      will-change: transform;
     }
     .heatmap-row-label.clickable { cursor: pointer; }
     .heatmap-row-label.clickable:hover { color: var(--text-accent); }
+
+    .heatmap-global-th {
+      position: sticky;
+      left: 178px;
+      z-index: 3;
+      background: var(--bg-surface);
+      min-width: 58px;
+      font-size: var(--tx-xs);
+      color: var(--text-muted);
+      text-align: center;
+      padding: 4px 6px;
+      will-change: transform;
+    }
+
+    .heatmap-global-cell {
+      position: sticky;
+      left: 178px;
+      z-index: 3;
+      background: var(--bg-surface);
+      will-change: transform;
+      border-radius: var(--r-sm);
+      padding: 7px 6px;
+      min-width: 58px;
+      font-size: var(--tx-xs);
+      font-weight: 600;
+      text-align: center;
+      vertical-align: middle;
+    }
     .heatmap-row-label.hm-selected {
       font-weight: 700;
       color: var(--text-primary);
@@ -1671,7 +1700,7 @@
       _selectedHeatmapReceptors = new Set(data.receptors);
 
       renderHeatmapTable(data);
-      updateChartApiTime(params);
+      // updateChartApiTime é chamado pelo Promise.all em refresh() — não duplicar aqui
     }
 
     function renderHeatmapTable(data) {
@@ -1680,6 +1709,8 @@
 
       const maxVal       = data.max_val || 1;
       const epMaxVal     = data.endpoint_max_val || 1;
+      const rowTotals    = data.row_totals   || [];
+      const maxRowTotal  = data.max_row_total || 1;
       const apis         = data.apis;    // [{id, label}]
       const groups       = data.groups;  // [{label, start, span}]
       const endpointsByApi = data.endpoints_by_api || {};
@@ -1697,6 +1728,11 @@
       const cornerG = document.createElement('th');
       cornerG.style.width = '175px';
       grow.appendChild(cornerG);
+
+      const globalThG = document.createElement('th');
+      globalThG.className = 'heatmap-global-th';
+      globalThG.textContent = 'Total';
+      grow.appendChild(globalThG);
 
       groups.forEach(g => {
         const groupApis = apis.slice(g.start, g.start + g.span);
@@ -1721,6 +1757,11 @@
       const corner = document.createElement('th');
       corner.style.width = '175px';
       hrow.appendChild(corner);
+
+      const globalTh = document.createElement('th');
+      globalTh.className = 'heatmap-global-th';
+      globalTh.textContent = 'Total';
+      hrow.appendChild(globalTh);
 
       apis.forEach(api => {
         const expanded = _expandedAPIs.has(api.id);
@@ -1748,6 +1789,11 @@
         const ecorner = document.createElement('th');
         ecorner.style.width = '175px';
         erow.appendChild(ecorner);
+
+        const globalThE = document.createElement('th');
+        globalThE.className = 'heatmap-global-th';
+        erow.appendChild(globalThE);
+
         apis.forEach(api => {
           const expanded = _expandedAPIs.has(api.id);
           const eps = endpointsByApi[api.id];
@@ -1791,6 +1837,22 @@
           renderHeatmapTable(_apiData);
         });
         tr.appendChild(tdLabel);
+
+        // Global intensity cell
+        const gVal = rowTotals[ri] || 0;
+        const gTd  = document.createElement('td');
+        gTd.className = 'heatmap-global-cell';
+        if (gVal === 0) {
+          gTd.classList.add('empty');
+          gTd.textContent = '—';
+        } else {
+          const col = heatColor(gVal, maxRowTotal);
+          gTd.style.background = col.css;
+          gTd.style.color = col.brightness > 145 ? '#13151E' : '#EEF0F6';
+          gTd.textContent = fmtVal(gVal, data.normalize);
+          gTd.title = `${rec} · Total · ${fmtVal(gVal, data.normalize)}`;
+        }
+        tr.appendChild(gTd);
 
         // Data cells
         apis.forEach((api, ci) => {
@@ -1853,7 +1915,7 @@
 
       // ── Legend ────────────────────────────────────────────────────────────
       // Count total columns for colspan
-      let totalCols = 1; // label column
+      let totalCols = 2; // label column + global intensity column
       apis.forEach(api => {
         const expanded = _expandedAPIs.has(api.id);
         const eps = endpointsByApi[api.id];

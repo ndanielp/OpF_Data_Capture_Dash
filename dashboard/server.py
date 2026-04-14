@@ -6,6 +6,8 @@ e os entrega formatados (JSON) para a interface HTML/JS.
 """
 
 import sqlite3
+import threading
+import time as _time
 import uvicorn
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
@@ -170,6 +172,42 @@ def _load_api() -> pd.DataFrame:
         .sum()
     )
 
+# ── Cache em memória ──────────────────────────────────────────────────────────
+# Os DataFrames são grandes; relê-los a cada request é o principal gargalo.
+# O cache é preenchido no startup e invalidado a cada _CACHE_TTL segundos
+# (ou forçadamente via POST /api/refresh-cache após uma nova coleta).
+
+_CACHE: dict = {"consents": None, "api": None, "ts": 0.0}
+_CACHE_LOCK = threading.Lock()
+_CACHE_TTL  = 300  # segundos
+
+def _refresh_cache(force: bool = False) -> None:
+    """Relê o SQLite e atualiza _CACHE. Thread-safe."""
+    with _CACHE_LOCK:
+        if not force and _time.time() - _CACHE["ts"] < _CACHE_TTL:
+            return
+        _CACHE["consents"] = _load_consents()
+        _CACHE["api"]      = _load_api_with_endpoints()
+        _CACHE["ts"]       = _time.time()
+
+def _cached_consents() -> pd.DataFrame:
+    _refresh_cache()
+    df = _CACHE["consents"]
+    return df if df is not None else pd.DataFrame()
+
+def _cached_api_ep() -> pd.DataFrame:
+    _refresh_cache()
+    df = _CACHE["api"]
+    return df if df is not None else pd.DataFrame()
+
+def _cached_api() -> pd.DataFrame:
+    """Versão agregada de _cached_api_ep() — equivalente a _load_api()."""
+    df = _cached_api_ep()
+    if df.empty:
+        return df
+    return df.groupby(["date", "receptor", "api", "status"], as_index=False)["total"].sum()
+
+
 def _parse_date(s: str | None, fallback: date) -> date:
     if not s: return fallback
     try:
@@ -201,6 +239,7 @@ def _top10_with_bradesco(df: pd.DataFrame) -> list[str]:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    _refresh_cache(force=True)
     yield
 
 app = FastAPI(title="OPF Batch Dashboard", lifespan=lifespan)
@@ -214,7 +253,7 @@ async def index():
 
 @app.get("/api/receptors", response_class=JSONResponse)
 def get_receptors():
-    df = _load_consents()
+    df = _cached_consents()
     if df.empty: return JSONResponse([])
     all_recs = df.groupby("receptor")["total"].sum().sort_values(ascending=False).index.tolist()
     colors = _build_color_map(all_recs)
@@ -224,6 +263,13 @@ def get_receptors():
         for r in all_recs
     ])
 
+@app.post("/api/refresh-cache")
+def post_refresh_cache():
+    """Invalida e recarrega o cache em memória. Chamar após uma nova coleta de dados."""
+    _refresh_cache(force=True)
+    return {"ok": True, "cached_at": _CACHE["ts"]}
+
+
 @app.get("/api/consents", response_class=JSONResponse)
 def get_consents(start: str = None, end: str = None, receptors: str = None):
     today = date.today()
@@ -231,7 +277,7 @@ def get_consents(start: str = None, end: str = None, receptors: str = None):
     dt_end   = _parse_date(end, today)
     sel      = _parse_receptors(receptors)
 
-    df = _load_consents()
+    df = _cached_consents()
     df = _filter_by_date(df, dt_start, dt_end)
     if df.empty: return JSONResponse({"labels": [], "datasets": [], "ranking_pf": [], "ranking_pj": []})
 
@@ -334,7 +380,12 @@ def get_api_requests(start: str = None, end: str = None, receptors: str = None, 
     sel      = _parse_receptors(receptors)
     norm     = normalize == "1"
 
-    df_api = _load_api()
+    # Lê do cache uma única vez — reutilizado para df_api e df_ep abaixo
+    _df_ep_full = _cached_api_ep()
+    df_api = (
+        _df_ep_full.groupby(["date", "receptor", "api", "status"], as_index=False)["total"].sum()
+        if not _df_ep_full.empty else pd.DataFrame()
+    )
     df_api = _filter_by_date(df_api, dt_start, dt_end)
     if df_api.empty:
         return JSONResponse({"groups": [], "apis": [], "receptors": [], "values": [], "max_val": 0})
@@ -349,7 +400,7 @@ def get_api_requests(start: str = None, end: str = None, receptors: str = None, 
     if sel:
         top_reps = [r for r in sel if r in df["receptor"].values]
     else:
-        df_cons = _filter_by_date(_load_consents(), dt_start, dt_end)
+        df_cons = _filter_by_date(_cached_consents(), dt_start, dt_end)
         base = df_cons if not df_cons.empty else df
         top_reps = [r for r in _top10_with_bradesco(base) if r in df["receptor"].values]
 
@@ -366,16 +417,18 @@ def get_api_requests(start: str = None, end: str = None, receptors: str = None, 
         .reindex(index=top_reps, columns=ordered_cols)
         .fillna(0)
     )
-    data = pivot.values.astype(float)
+    data     = pivot.values.astype(float)
+    data_raw = data.copy()              # chamadas brutas — usadas para a coluna Total
+    ct_total = pd.Series(dtype=float)  # populado dentro do bloco norm; visível depois
 
     if norm:
-        df_cons = _filter_by_date(_load_consents(), dt_start, dt_end)
+        df_cons = _filter_by_date(_cached_consents(), dt_start, dt_end)
         if not df_cons.empty:
             ct_total = df_cons.groupby("receptor")["total"].sum()
             ct_cpf   = df_cons.groupby("receptor")["cpf"].sum()
             ct_cnpj  = df_cons.groupby("receptor")["cnpj"].sum()
         else:
-            ct_total = ct_cpf = ct_cnpj = pd.Series(dtype=float)
+            ct_cpf = ct_cnpj = pd.Series(dtype=float)
         # Converte de semanal para mensal; Cadastro PF/PJ usam denominadores específicos
         for i, rec in enumerate(pivot.index):
             for j, col in enumerate(ordered_cols):
@@ -387,6 +440,25 @@ def get_api_requests(start: str = None, end: str = None, receptors: str = None, 
                     n = float(ct_total.get(rec, 0))
                 if n > 0:
                     data[i, j] = (data[i, j] / n) / 7 * 30
+
+    # ── Intensidade global por receptor ───────────────────────────────────────
+    # Usa denominador único (total consents) para evitar distorção de somar
+    # frações com denominadores diferentes (total vs cpf vs cnpj por API).
+    raw_row_sums = data_raw.sum(axis=1)
+    if norm:
+        denom = ct_total.reindex(list(pivot.index)).fillna(0).replace(0, float("nan"))
+        row_totals = (
+            pd.Series(raw_row_sums, index=list(pivot.index)) / denom / 7 * 30
+        ).fillna(0).values
+    else:
+        row_totals = raw_row_sums
+
+    # ── Ordenar receptores por intensidade global decrescente ─────────────────
+    sort_idx      = row_totals.argsort()[::-1]
+    data          = data[sort_idx]
+    top_reps      = [top_reps[i] for i in sort_idx]
+    row_totals    = row_totals[sort_idx]
+    max_row_total = float(row_totals.max()) if row_totals.size > 0 else 0.0
 
     groups_info = []
     col_idx = 0
@@ -401,7 +473,7 @@ def get_api_requests(start: str = None, end: str = None, receptors: str = None, 
     # ── Endpoint breakdown por API ─────────────────────────────────────────────
     endpoints_by_api: dict = {}
     endpoint_max_val = 0.0
-    df_ep = _load_api_with_endpoints()
+    df_ep = _df_ep_full  # reutiliza o cache já lido acima
     df_ep = _filter_by_date(df_ep, dt_start, dt_end)
     if not df_ep.empty:
         if status == "200": df_ep = df_ep[df_ep["status"] == 200]
@@ -416,7 +488,7 @@ def get_api_requests(start: str = None, end: str = None, receptors: str = None, 
                 .sum().reset_index()
             )
             if norm and not df_ep.empty:
-                df_cons_ep = _filter_by_date(_load_consents(), dt_start, dt_end)
+                df_cons_ep = _filter_by_date(_cached_consents(), dt_start, dt_end)
                 if not df_cons_ep.empty:
                     ct_ep_total = df_cons_ep.groupby("receptor")["total"].sum()
                     ct_ep_cpf   = df_cons_ep.groupby("receptor")["cpf"].sum()
@@ -462,12 +534,14 @@ def get_api_requests(start: str = None, end: str = None, receptors: str = None, 
     return JSONResponse({
         "groups":          groups_info,
         "apis":            [{"id": a, "label": _API_LABELS.get(a, a)} for a in ordered_cols],
-        "receptors":       list(pivot.index),
+        "receptors":       top_reps,
         "values":          data.tolist(),
         "max_val":         max_val,
         "normalize":       norm,
         "endpoints_by_api": endpoints_by_api,
         "endpoint_max_val": endpoint_max_val,
+        "row_totals":      row_totals.tolist(),
+        "max_row_total":   max_row_total,
     })
 
 @app.get("/api/api-requests-timeseries", response_class=JSONResponse)
@@ -488,7 +562,7 @@ def get_api_requests_timeseries(
     if not sel:
         return JSONResponse({"dates": [], "series": [], "normalize": norm, "filter_label": ""})
 
-    df = _load_api_with_endpoints()
+    df = _cached_api_ep()
     df = _filter_by_date(df, dt_start, dt_end)
     if df.empty:
         return JSONResponse({"dates": [], "series": [], "normalize": norm, "filter_label": ""})
@@ -532,7 +606,7 @@ def get_api_requests_timeseries(
         use_cpf  = apis_in_filter <= _NORM_CPF_APIS
         use_cnpj = apis_in_filter <= _NORM_CNPJ_APIS
         cons_col = "cpf" if use_cpf else ("cnpj" if use_cnpj else "total")
-        df_cons = _filter_by_date(_load_consents(), dt_start, dt_end)
+        df_cons = _filter_by_date(_cached_consents(), dt_start, dt_end)
         if not df_cons.empty:
             cons_weekly = (
                 df_cons.groupby(["date", "receptor"])[cons_col]
@@ -570,7 +644,7 @@ def get_resources(start: str = None, end: str = None, receptors: str = None, sta
     sel      = _parse_receptors(receptors)
     norm     = normalize == "1"
 
-    df_api = _load_api()
+    df_api = _cached_api()
     df_api = _filter_by_date(df_api, dt_start, dt_end)
     if df_api.empty: return JSONResponse({"receptors": [], "values": [], "colors": []})
 
@@ -583,7 +657,7 @@ def get_resources(start: str = None, end: str = None, receptors: str = None, sta
     if sel:
         top_reps = [r for r in sel if r in df["receptor"].values]
     else:
-        df_cons = _filter_by_date(_load_consents(), dt_start, dt_end)
+        df_cons = _filter_by_date(_cached_consents(), dt_start, dt_end)
         base = df_cons if not df_cons.empty else df
         top_reps = [r for r in _top10_with_bradesco(base) if r in df["receptor"].values]
 
@@ -594,7 +668,7 @@ def get_resources(start: str = None, end: str = None, receptors: str = None, sta
     values = totals.values.astype(float)
 
     if norm:
-        df_cons = _filter_by_date(_load_consents(), dt_start, dt_end)
+        df_cons = _filter_by_date(_cached_consents(), dt_start, dt_end)
         ct = df_cons.groupby("receptor")["total"].sum() if not df_cons.empty else pd.Series(dtype=float)
         for i, rec in enumerate(totals.index):
             n = float(ct.get(rec, 0))
