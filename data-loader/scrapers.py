@@ -289,10 +289,13 @@ def open_db(path: Path) -> sqlite3.Connection:
     con.executescript("""
         CREATE INDEX IF NOT EXISTS idx_consents_date
             ON unique_consents(date);
-        CREATE INDEX IF NOT EXISTS idx_api_date
-            ON api_requests(date);
-        CREATE INDEX IF NOT EXISTS idx_api_receptor_api
-            ON api_requests(receptor, api, status);
+
+        -- Covering index: SQLite resolve o GROUP BY do dashboard inteiramente
+        -- pelo índice, sem ler as linhas da tabela principal (index-only scan).
+        -- Inclui todas as colunas necessárias pela query de api_requests_dash.
+        CREATE INDEX IF NOT EXISTS idx_api_dash_covering
+            ON api_requests(date, receptor, api, endpoint_id, status, endpoint, total)
+            WHERE endpoint_id <> 0;
     """)
 
     con.commit()
