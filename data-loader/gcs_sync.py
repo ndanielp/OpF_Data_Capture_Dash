@@ -24,10 +24,17 @@ def _client():
     return storage.Client()
 
 
-def upload_data_to_gcs(bucket_name: str = GCS_BUCKET, prefix: str = GCS_PREFIX):
+def upload_data_to_gcs(
+    bucket_name: str = GCS_BUCKET,
+    prefix: str = GCS_PREFIX,
+    include_csv: bool = False,
+):
     """
-    Sobe todos os arquivos em data/ para o bucket GCS.
-    Uso: após rodar o batch local, executar sync_to_gcs.py
+    Sobe arquivos de data/ para o bucket GCS.
+
+    Por padrão sobe APENAS o(s) SQLite (*.db) — os CSVs são mantidos locais
+    para uso em planilhas mas não replicados no GCS. Passe include_csv=True
+    para subir tudo.
     """
     if not bucket_name:
         raise ValueError("GCS_BUCKET não definido. Configure a variável de ambiente GCS_BUCKET.")
@@ -38,6 +45,9 @@ def upload_data_to_gcs(bucket_name: str = GCS_BUCKET, prefix: str = GCS_PREFIX):
     LOCAL_DATA.mkdir(parents=True, exist_ok=True)
     files = list(LOCAL_DATA.rglob("*"))
     files = [f for f in files if f.is_file()]
+
+    if not include_csv:
+        files = [f for f in files if f.suffix.lower() != ".csv"]
 
     if not files:
         log.warning("Nenhum arquivo encontrado em %s para subir.", LOCAL_DATA)

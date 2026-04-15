@@ -111,7 +111,7 @@ Write-Step "Fazendo deploy no Cloud Run ($REGION)..."
     --platform managed `
     --region $REGION `
     --port 8000 `
-    --memory 512Mi `
+    --memory 2048Mi `
     --cpu 1 `
     --set-env-vars "GCS_BUCKET=$GCS_BUCKET,GOOGLE_CLOUD_PROJECT=$PROJECT_ID" `
     --allow-unauthenticated `
