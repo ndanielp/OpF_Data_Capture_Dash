@@ -361,6 +361,15 @@ def run_collection(
     )
     log.info(f"=== Concluído em {duration}s ===")
 
+    # Mantém api_group_weekly em sincronia para o dashboard.
+    log.info("Atualizando api_group_weekly...")
+    _agw_con = sqlite3.connect(str(config.DB_PATH))
+    try:
+        scrapers.refresh_api_group_weekly(_agw_con)
+    finally:
+        _agw_con.close()
+    log.info("api_group_weekly atualizado.")
+
     return {
         "run_id":         run_id,
         "period":         f"{start_d} → {end_d}",

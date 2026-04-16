@@ -302,8 +302,49 @@ def _top10_with_bradesco(df: pd.DataFrame) -> list[str]:
 
 # ── FastAPI App ────────────────────────────────────────────────────────────────
 
+def _ensure_api_group_weekly():
+    """Cria e popula api_group_weekly se vazio — compatibilidade com DBs antigos."""
+    con = sqlite3.connect(str(config.DB_PATH))
+    try:
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS api_group_weekly (
+                date           TEXT    NOT NULL,
+                receptor_uuid  TEXT    NOT NULL,
+                receptor       TEXT    NOT NULL DEFAULT '',
+                grp            TEXT    NOT NULL,
+                req_week       INTEGER NOT NULL DEFAULT 0,
+                consents_total INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (date, receptor_uuid, grp))
+        """)
+        n = con.execute("SELECT COUNT(*) FROM api_group_weekly").fetchone()[0]
+        if n == 0:
+            con.executescript("""
+                INSERT INTO api_group_weekly
+                    (date, receptor_uuid, receptor, grp, req_week, consents_total)
+                SELECT r.date, r.receptor_uuid, r.receptor,
+                       CASE WHEN r.api='accounts' THEN 'Conta'
+                            WHEN r.api='credit-cards-accounts' THEN 'Cartao'
+                            WHEN r.api IN ('bank-fixed-incomes','credit-fixed-incomes',
+                                'variable-incomes','funds','treasure-titles') THEN 'Investimento'
+                            WHEN r.api IN ('loans','financings','invoice-financings',
+                                'unarranged-accounts-overdraft') THEN 'Credito'
+                            WHEN r.api='exchanges' THEN 'Cambio'
+                            WHEN r.api='customers' THEN 'Identidade'
+                       END AS grp,
+                       SUM(r.total), c.total
+                FROM api_requests r
+                JOIN unique_consents c ON r.date=c.date AND r.receptor_uuid=c.receptor_uuid
+                WHERE r.api NOT IN ('consents','resources') AND r.status=200
+                GROUP BY r.date, r.receptor_uuid, grp HAVING grp IS NOT NULL;
+            """)
+    finally:
+        con.close()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Garante que api_group_weekly exista e tenha dados (DBs antigos sem a tabela populada).
+    _ensure_api_group_weekly()
     # Pré-aquece cache em background — servidor aceita conexões imediatamente.
     threading.Thread(target=lambda: _refresh_cache(force=True), daemon=True).start()
     yield

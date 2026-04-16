@@ -145,6 +145,42 @@ def _ep_intensity(req_4w: float, consents: float) -> float:
     return round(normalize(req_4w / 4.0, consents, 30), 5)
 
 
+@functools.lru_cache(maxsize=8)
+def _get_ep_ecosystem_stats(w1: str, w2: str, w3: str, w4: str) -> dict:
+    """Estatísticas do ecossistema para endpoint depth — invariante por conjunto de 4 semanas.
+
+    Cacheado por LRU: múltiplas chamadas com o mesmo ep_weeks (instituições diferentes
+    no mesmo período) reutilizam o resultado sem repetir o scan completo.
+    """
+    params = {"w1": w1, "w2": w2, "w3": w3, "w4": w4}
+    con = sqlite3.connect(str(config.DB_PATH))
+    con.row_factory = sqlite3.Row
+    try:
+        eco_rows = con.execute(_SQL_EP_ECOSYSTEM, params).fetchall()
+    finally:
+        con.close()
+    eco_vals: dict = defaultdict(list)
+    for row in eco_rows:
+        api, ep = row["api"], row["endpoint"]
+        if api == "customers":
+            is_pj = "jurídica" in ep.lower() or "juridica" in ep.lower()
+            cu = float(row["avg_c_cnpj"] or 0) if is_pj else float(row["avg_c_cpf"] or 0)
+        else:
+            cu = _ep_consents(ep, row["avg_c_total"], row["avg_c_cpf"], row["avg_c_cnpj"])
+        val = _ep_intensity(float(row["req_4w"]), cu)
+        if val > 0:
+            eco_vals[f"{api}|||{ep}"].append(val)
+    result: dict = {}
+    for key, vals in eco_vals.items():
+        sv = sorted(vals)
+        n  = len(sv)
+        if n < 2:
+            continue
+        upper = sv[n - n // 2:]
+        result[key] = {"median": round(statistics.median(sv), 4), "q3": round(statistics.median(upper), 4)}
+    return result
+
+
 def get_endpoint_depth(institution: str, weeks: list) -> dict:
     """Retorna profundidade de consumo por endpoint para a instituição e estatísticas do ecossistema.
 
@@ -177,7 +213,6 @@ def get_endpoint_depth(institution: str, weeks: list) -> dict:
     con.row_factory = sqlite3.Row
     try:
         inst_rows = con.execute(_SQL_EP_INSTITUTION, params).fetchall()
-        eco_rows  = con.execute(_SQL_EP_ECOSYSTEM,  {k: v for k, v in params.items() if k != "institution"}).fetchall()
     finally:
         con.close()
 
@@ -211,31 +246,8 @@ def get_endpoint_depth(institution: str, weeks: list) -> dict:
         institution_endpoints["customers"]["api_intensity"] = \
             _ep_intensity(_cust_req_total, _cust_avg_c_total)
 
-    # ── 2. Estatísticas do ecossistema ───────────────────────────────────
-    eco_vals: dict = defaultdict(list)
-    for row in eco_rows:
-        api = row["api"]
-        ep  = row["endpoint"]
-        if api == "customers":
-            ep_l = ep.lower()
-            is_pj = "jurídica" in ep_l or "juridica" in ep_l
-            cu = float(row["avg_c_cnpj"] or 0) if is_pj else float(row["avg_c_cpf"] or 0)
-        else:
-            cu = _ep_consents(ep, row["avg_c_total"], row["avg_c_cpf"], row["avg_c_cnpj"])
-        val = _ep_intensity(float(row["req_4w"]), cu)
-        if val > 0:
-            eco_vals[f"{api}|||{ep}"].append(val)
-
-    ecosystem_stats: dict = {}
-    for key, vals in eco_vals.items():
-        sorted_vals = sorted(vals)
-        n = len(sorted_vals)
-        if n < 2:
-            continue
-        med      = statistics.median(sorted_vals)
-        upper    = sorted_vals[n - n // 2:]
-        q3       = statistics.median(upper)
-        ecosystem_stats[key] = {"median": round(med, 4), "q3": round(q3, 4)}
+    # ── 2. Estatísticas do ecossistema (cacheadas por conjunto de semanas) ──
+    ecosystem_stats = _get_ep_ecosystem_stats(*padded)
 
     return {
         "institution_endpoints": institution_endpoints,
@@ -424,71 +436,53 @@ def get_receptor_profile(institution: str, from_date: str = "2000-01-01", to_dat
     archetype_name, archetype_desc = classify_archetype(category_shares)
     header["archetype"] = archetype_name
 
-    cur.execute("""SELECT r.date, r.api, r.endpoint, SUM(r.total) AS req_week, MAX(c.cpf) AS consents_cpf, MAX(c.cnpj) AS consents_cnpj, MAX(c.total) AS consents_total FROM api_requests r JOIN unique_consents c ON r.date = c.date AND r.receptor_uuid = c.receptor_uuid WHERE r.receptor_uuid = :receptor AND r.api NOT IN ('consents', 'resources') AND r.status = 200 AND r.date >= :from_date AND r.date <= :to_date GROUP BY r.date, r.api, r.endpoint ORDER BY r.date, r.api, r.endpoint""", {"receptor": institution, "from_date": from_date, "to_date": to_date})
-    intensities = cur.fetchall()
-
-    mix_dict = defaultdict(lambda: defaultdict(float))
-    endpoint_series = defaultdict(list)
-    weeks_set = set()
-    latest_date = max_consents = 0; active_apis = set()
-
-    for r in intensities:
-        dt = r["date"]
-        weeks_set.add(dt)
-        if not latest_date or dt > latest_date:
-            latest_date = dt; max_consents = max(max_consents, r["consents_total"])
-        consents = _get_consents(r)
-        week_val  = normalize(r["req_week"], consents, 7)   # req/consent/semana → mix_data
-        month_val = normalize(r["req_week"], consents, 30)  # req/consent/30d    → endpoint_data
-        mix_dict[dt][r["api"].replace("-", "_")] += week_val
-        active_apis.add(r["api"])
-        endpoint_series[(r["api"], r["endpoint"])].append(month_val)
-
-
+    cur.execute(
+        "SELECT COUNT(DISTINCT date) AS wc FROM api_requests "
+        "WHERE receptor_uuid=? AND status=200 AND date>=? AND date<=?",
+        (institution, from_date, to_date)
+    )
+    weeks_count = (cur.fetchone()["wc"] or 0)
     con.close()
-    mix_data = [{"date": dt[:10], **{a.replace("-", "_"): 0.0 for gs in API_GROUPS.values() for a in gs["apis"]}, **mix_dict[dt]} for dt in sorted(mix_dict.keys())]
-    endpoint_data = {}
-    for gn, gi in API_GROUPS.items():
-        g_str = {"color": gi["color"], "apis": {}}
-        for api in gi["apis"]:
-            api_eps = {ep: sum(vs)/len(vs) for (ap, ep), vs in endpoint_series.items() if ap == api and vs}
-            if api_eps: g_str["apis"][api] = {"label": API_LABELS.get(api, api), "endpoints": api_eps}
-        if g_str["apis"]: endpoint_data[gn] = g_str
 
-    # Mapa Estratégico e Endpoint Depth: abrem conexão própria
+    # Mapa Estratégico, Endpoint Depth e Evolução Temporal: abrem conexão própria
     strategic_map  = _get_strategic_map(from_date, to_date)
     endpoint_depth = get_endpoint_depth(institution, ep_weeks) if ep_weeks else {"institution_endpoints": {}, "ecosystem_stats": {}}
-
-    ts_intensity = get_temporal_intensity(institution, from_date, to_date)
+    ts_intensity   = get_temporal_intensity(institution, from_date, to_date)
 
     return {
         "institution": {"id": institution, "label": inst_clean_name, "uuid": institution, "archetype": archetype_name, "archetype_description": archetype_desc},
-        "header": header, "summary": {"total_consents": max_consents, "active_apis": len(active_apis), "weeks_count": len(weeks_set)},
-        "mix_data": mix_data, "tornado_data": tornado_data, "endpoint_data": endpoint_data,
+        "header": header,
+        "summary": {
+            "total_consents": kpi2_curr["current_consents"] if kpi2_curr else 0,
+            "active_apis":    len(inst_totals),
+            "weeks_count":    weeks_count,
+        },
+        "tornado_data": tornado_data,
         "strategic_map": strategic_map,
         "ts_intensity":  ts_intensity,
         "endpoint_depth": endpoint_depth,
-        "period": {"from": min(weeks_set) if weeks_set else from_date, "to": max(weeks_set) if weeks_set else to_date, "weeks_count": len(weeks_set)}
+        "period": {
+            "from":        kpi1["first_date"] or from_date,
+            "to":          kpi1["last_date"]  or to_date,
+            "weeks_count": weeks_count,
+        }
     }
 
 
 @functools.lru_cache(maxsize=4)
 def _get_strategic_map(from_date: str, to_date: str) -> dict:
     """Calcula o Mapa Estratégico: intensidade por grupo para todos os receptores.
-    Usa receptor_uuid no JOIN (chave indexada) para performance.
+    Lê de api_group_weekly (pré-agregada) para evitar o JOIN pesado em tempo real.
     """
     con = sqlite3.connect(str(config.DB_PATH))
     con.row_factory = sqlite3.Row
     cur = con.cursor()
 
-    # 1. Últimas 4 semanas com dados (join por receptor_uuid — chave rápida)
+    # 1. Últimas 4 semanas com dados no período
     cur.execute("""
-        SELECT DISTINCT r.date
-        FROM api_requests r
-        JOIN unique_consents c ON r.date = c.date AND r.receptor_uuid = c.receptor_uuid
-        WHERE r.status = 200
-          AND r.date >= ? AND r.date <= ?
-        ORDER BY r.date DESC LIMIT 4
+        SELECT DISTINCT date FROM api_group_weekly
+        WHERE date >= ? AND date <= ?
+        ORDER BY date DESC LIMIT 4
     """, (from_date, to_date))
     weeks = [r["date"] for r in cur.fetchall()]
     if not weeks:
@@ -497,30 +491,11 @@ def _get_strategic_map(from_date: str, to_date: str) -> dict:
 
     ph = ",".join("?" * len(weeks))
 
-    # 2. Intensidade semanal por receptor_uuid e grupo (query consolidada)
+    # 2. Intensidade semanal por receptor_uuid e grupo — leitura direta da tabela pré-agregada
     cur.execute(f"""
-        SELECT r.receptor_uuid, r.receptor,
-               CASE
-                   WHEN r.api = 'accounts'                                               THEN 'Conta'
-                   WHEN r.api = 'credit-cards-accounts'                                  THEN 'Cartao'
-                   WHEN r.api IN ('bank-fixed-incomes','credit-fixed-incomes',
-                                  'variable-incomes','funds','treasure-titles')           THEN 'Investimento'
-                   WHEN r.api IN ('loans','financings','invoice-financings',
-                                  'unarranged-accounts-overdraft')                        THEN 'Credito'
-                   WHEN r.api = 'exchanges'                                              THEN 'Cambio'
-                   WHEN r.api = 'customers'                                              THEN 'Identidade'
-                   WHEN r.api = 'resources'                                              THEN 'Resource'
-               END AS grp,
-               r.date,
-               SUM(r.total) AS req_week,
-               c.total      AS consents_total
-        FROM api_requests r
-        JOIN unique_consents c ON r.date = c.date AND r.receptor_uuid = c.receptor_uuid
-        WHERE r.api NOT IN ('consents')
-          AND r.status = 200
-          AND r.date IN ({ph})
-        GROUP BY r.receptor_uuid, r.date, grp
-        HAVING grp IS NOT NULL
+        SELECT receptor_uuid, receptor, grp, req_week, consents_total
+        FROM api_group_weekly
+        WHERE date IN ({ph})
     """, weeks)
     rows = cur.fetchall()
     con.close()
@@ -701,45 +676,24 @@ def _get_tornado_data(cur, institution_uuid: str, inst_display_name: str,
 
 # ── Evolução Temporal ─────────────────────────────────────────────────────
 
-_SQL_TEMPORAL = """
-SELECT
-    r.date,
-    CASE
-        WHEN r.api = 'accounts'                                                       THEN 'Conta'
-        WHEN r.api = 'credit-cards-accounts'                                          THEN 'Cartao'
-        WHEN r.api IN ('bank-fixed-incomes','credit-fixed-incomes',
-                       'variable-incomes','funds','treasure-titles')                  THEN 'Investimento'
-        WHEN r.api IN ('loans','financings','invoice-financings',
-                       'unarranged-accounts-overdraft')                               THEN 'Credito'
-        WHEN r.api = 'exchanges'                                                      THEN 'Cambio'
-        WHEN r.api = 'customers'                                                      THEN 'Identidade'
-        WHEN r.api = 'resources'                                                      THEN 'Resource'
-    END AS grp,
-    SUM(r.total)  AS req_week,
-    c.total       AS consents_total
-FROM api_requests r
-JOIN unique_consents c ON r.date = c.date AND r.receptor_uuid = c.receptor_uuid
-WHERE r.receptor_uuid = :institution
-  AND r.api NOT IN ('consents')
-  AND r.status = 200
-  AND r.date >= :from_date AND r.date <= :to_date
-GROUP BY r.date, grp
-HAVING grp IS NOT NULL
-ORDER BY r.date ASC
-"""
-
-_TEMPORAL_GROUPS = ['Conta', 'Cartao', 'Investimento', 'Credito', 'Cambio', 'Identidade', 'Resource']
+_TEMPORAL_GROUPS = ['Conta', 'Cartao', 'Investimento', 'Credito', 'Cambio', 'Identidade']
 
 def get_temporal_intensity(institution: str, from_date: str = "2000-01-01", to_date: str = "2100-01-01") -> dict:
     """
     Retorna todas as semanas disponíveis para a instituição dentro do período:
-      {"2025-06-06": {"Conta": 61.11, ..., "Resource": 13.09}, ...}
+      {"2025-06-06": {"Conta": 61.11, ..., "Identidade": 3.2}, ...}
+    Lê de api_group_weekly (pré-agregada) em vez do JOIN pesado em api_requests.
     """
     result: dict = {}
     con = sqlite3.connect(str(config.DB_PATH))
     con.row_factory = sqlite3.Row
     try:
-        rows = con.execute(_SQL_TEMPORAL, {"institution": institution, "from_date": from_date, "to_date": to_date}).fetchall()
+        rows = con.execute("""
+            SELECT date, grp, req_week, consents_total
+            FROM api_group_weekly
+            WHERE receptor_uuid = ? AND date >= ? AND date <= ?
+            ORDER BY date ASC
+        """, (institution, from_date, to_date)).fetchall()
     finally:
         con.close()
 
