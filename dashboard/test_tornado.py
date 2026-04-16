@@ -1,21 +1,19 @@
 import sys; sys.path.append('dashboard')
+import time
 from services import of_analytics
 
-# Test Bradesco
-BRADESCO_UUID = 'a72a6d4f-79be-5362-afb6-f8d9c9c39cf5'
-# Test Itau
-ITAU_UUID = '9c721898-9ce0-50f1-bf85-05075557850b'
+t = time.time()
+r = of_analytics.get_receptor_profile('a72a6d4f-79be-5362-afb6-f8d9c9c39cf5')  # Bradesco
+print(f"Total time: {time.time()-t:.2f}s")
 
-for uid, name in [(BRADESCO_UUID, 'Bradesco'), (ITAU_UUID, 'Itau')]:
-    r = of_analytics.get_receptor_profile(uid)
-    if not r:
-        print(f"{name}: NO DATA")
-        continue
-    td = r['tornado_data']
-    print(f"\n=== {name} ===")
-    print(f"  left_label:  {td['left_label']}")
-    print(f"  right_label: {td['right_label']}")
-    print(f"  scale_max:   {td['scale_max']}")
-    print(f"  rows:        {len(td['rows'])}")
-    for row in td['rows'][:5]:
-        print(f"    {row['label']:35s}  L={row['left']}  R={row['right']}  bilateral={row['bilateral']}")
+sm = r['strategic_map']
+print("Weeks:", sm['reference_weeks'])
+print("Receptors:", len(sm['all_receptors']))
+
+# Find Bradesco
+bradesco = next((v for k, v in sm['all_receptors'].items() if 'Bradesco' in k or 'BRADESCO' in k), None)
+print("Bradesco:", bradesco)
+
+print("\nGroup stats:")
+for g, s in sm['group_stats'].items():
+    print(f"  {g:15s}  mean={s['mean']:7.2f}  median={s['median']:7.2f}  q3={s['q3']:7.2f}")

@@ -1,5 +1,6 @@
 
 import hashlib
+import functools
 from datetime import datetime
 import sqlite3
 import statistics
@@ -57,16 +58,32 @@ def get_institutions():
     con = sqlite3.connect(str(config.DB_PATH))
     con.row_factory = sqlite3.Row
     cur = con.cursor()
-    cur.execute("SELECT DISTINCT receptor_uuid AS id, receptor AS name FROM unique_consents WHERE receptor_uuid IS NOT NULL ORDER BY receptor")
+    # Retorna apenas receptores com volume real em api_requests (status 200)
+    # ordenados por volume total descendente
+    cur.execute("""
+        SELECT receptor_uuid AS id, receptor AS name, SUM(total) AS vol
+        FROM api_requests
+        WHERE receptor_uuid IS NOT NULL
+          AND status = 200
+          AND api NOT IN ('consents', 'resources')
+        GROUP BY receptor_uuid, receptor
+        HAVING vol > 0
+        ORDER BY vol DESC
+    """)
     rows = cur.fetchall()
     con.close()
     institutions = []
     seen = set()
     for row in rows:
         db_id = row["id"]
-        if db_id in seen: continue
+        if db_id in seen:
+            continue
         seen.add(db_id)
-        institutions.append({"id": db_id, "label": LABEL_MAP.get(row["name"], row["name"].title()), "uuid": db_id})
+        institutions.append({
+            "id": db_id,
+            "label": LABEL_MAP.get(row["name"], row["name"].title()),
+            "uuid": db_id
+        })
     return institutions
 
 def _get_consents(row) -> float:
@@ -272,10 +289,13 @@ def get_receptor_profile(institution: str, from_date: str = "2000-01-01", to_dat
         weeks_set.add(dt)
         if not latest_date or dt > latest_date:
             latest_date = dt; max_consents = max(max_consents, r["consents_total"])
-        norm_val = normalize(r["req_week"], _get_consents(r), 30)
-        mix_dict[dt][r["api"].replace("-", "_")] += norm_val
+        consents = _get_consents(r)
+        week_val  = normalize(r["req_week"], consents, 7)   # req/consent/semana → mix_data
+        month_val = normalize(r["req_week"], consents, 30)  # req/consent/30d    → endpoint_data
+        mix_dict[dt][r["api"].replace("-", "_")] += week_val
         active_apis.add(r["api"])
-        endpoint_series[(r["api"], r["endpoint"])].append(norm_val)
+        endpoint_series[(r["api"], r["endpoint"])].append(month_val)
+
 
     con.close()
     mix_data = [{"date": dt[:10], **{a.replace("-", "_"): 0.0 for gs in API_GROUPS.values() for a in gs["apis"]}, **mix_dict[dt]} for dt in sorted(mix_dict.keys())]
@@ -287,12 +307,118 @@ def get_receptor_profile(institution: str, from_date: str = "2000-01-01", to_dat
             if api_eps: g_str["apis"][api] = {"label": API_LABELS.get(api, api), "endpoints": api_eps}
         if g_str["apis"]: endpoint_data[gn] = g_str
 
+    # Mapa Estratégico: calculado com a conn já aberta
+    strategic_map = _get_strategic_map(from_date, to_date)
+
     return {
         "institution": {"id": institution, "label": inst_clean_name, "uuid": institution, "archetype": archetype_name, "archetype_description": archetype_desc},
         "header": header, "summary": {"total_consents": max_consents, "active_apis": len(active_apis), "weeks_count": len(weeks_set)},
         "mix_data": mix_data, "tornado_data": tornado_data, "endpoint_data": endpoint_data,
+        "strategic_map": strategic_map,
         "period": {"from": min(weeks_set) if weeks_set else from_date, "to": max(weeks_set) if weeks_set else to_date, "weeks_count": len(weeks_set)}
     }
+
+
+@functools.lru_cache(maxsize=4)
+def _get_strategic_map(from_date: str, to_date: str) -> dict:
+    """Calcula o Mapa Estratégico: intensidade por grupo para todos os receptores.
+    Usa receptor_uuid no JOIN (chave indexada) para performance.
+    """
+    con = sqlite3.connect(str(config.DB_PATH))
+    con.row_factory = sqlite3.Row
+    cur = con.cursor()
+
+    # 1. Últimas 4 semanas com dados (join por receptor_uuid — chave rápida)
+    cur.execute("""
+        SELECT DISTINCT r.date
+        FROM api_requests r
+        JOIN unique_consents c ON r.date = c.date AND r.receptor_uuid = c.receptor_uuid
+        WHERE r.status = 200
+          AND r.date >= ? AND r.date <= ?
+        ORDER BY r.date DESC LIMIT 4
+    """, (from_date, to_date))
+    weeks = [r["date"] for r in cur.fetchall()]
+    if not weeks:
+        con.close()
+        return {"reference_weeks": [], "all_receptors": {}, "group_stats": {}}
+
+    ph = ",".join("?" * len(weeks))
+
+    # 2. Intensidade semanal por receptor_uuid e grupo (query consolidada)
+    cur.execute(f"""
+        SELECT r.receptor_uuid, r.receptor,
+               CASE
+                   WHEN r.api = 'accounts'                                               THEN 'Conta'
+                   WHEN r.api = 'credit-cards-accounts'                                  THEN 'Cartao'
+                   WHEN r.api IN ('bank-fixed-incomes','credit-fixed-incomes',
+                                  'variable-incomes','funds','treasure-titles')           THEN 'Investimento'
+                   WHEN r.api IN ('loans','financings','invoice-financings',
+                                  'unarranged-accounts-overdraft')                        THEN 'Credito'
+                   WHEN r.api = 'exchanges'                                              THEN 'Cambio'
+                   WHEN r.api = 'customers'                                              THEN 'Identidade'
+                   WHEN r.api = 'resources'                                              THEN 'Resource'
+               END AS grp,
+               r.date,
+               SUM(r.total) AS req_week,
+               c.total      AS consents_total
+        FROM api_requests r
+        JOIN unique_consents c ON r.date = c.date AND r.receptor_uuid = c.receptor_uuid
+        WHERE r.api NOT IN ('consents')
+          AND r.status = 200
+          AND r.date IN ({ph})
+        GROUP BY r.receptor_uuid, r.date, grp
+        HAVING grp IS NOT NULL
+    """, weeks)
+    rows = cur.fetchall()
+    con.close()
+
+    # 3. Agrupar por (receptor_uuid, grupo) → lista de intensidades semanais
+    weekly = defaultdict(lambda: defaultdict(list))
+    receptor_labels = {}
+    for row in rows:
+        cons = float(row["consents_total"] or 0)
+        if cons <= 0:
+            continue
+        intensity = (row["req_week"] / cons) * (30.0 / 7)
+        uid = row["receptor_uuid"]
+        weekly[uid][row["grp"]].append(intensity)
+        if uid not in receptor_labels:
+            receptor_labels[uid] = LABEL_MAP.get(row["receptor"], row["receptor"].title())
+
+    # 4. Média das 4 semanas por (receptor, grupo)
+    GROUPS = ["Conta", "Cartao", "Investimento", "Credito", "Cambio", "Identidade", "Resource"]
+    all_receptors = {}  # keyed by display label
+    for uid, groups in weekly.items():
+        label = receptor_labels.get(uid, uid)
+        all_receptors[label] = {
+            grp: round(sum(vals) / len(vals), 2)
+            for grp, vals in groups.items()
+        }
+
+    # 5. GROUP_STATS: mean, median, Q3 (upper_half = vals[n - n//2:])
+    group_stats = {}
+    for grp in GROUPS:
+        vals = sorted(all_receptors[rec].get(grp, 0.0) for rec in all_receptors)
+        n = len(vals)
+        if n == 0:
+            group_stats[grp] = {"mean": 0, "median": 0, "q3": 0}
+            continue
+        mean_v   = sum(vals) / n
+        median_v = statistics.median(vals)
+        upper    = vals[n - n // 2:]
+        q3_v     = statistics.median(upper)
+        group_stats[grp] = {
+            "mean":   round(mean_v,   2),
+            "median": round(median_v, 2),
+            "q3":     round(q3_v,     2),
+        }
+
+    return {
+        "reference_weeks": weeks,
+        "all_receptors":   all_receptors,
+        "group_stats":     group_stats,
+    }
+
 
 
 def _get_tornado_data(cur, institution_uuid: str, inst_display_name: str) -> dict:
