@@ -17,6 +17,11 @@
   --c-conta:#4A9EFF;--c-cartao:#F472B6;--c-invest:#2ECC7F;
   --c-credito:#FF6B6B;--c-cambio:#A855F7;--c-identidade:#F5A623;--c-resource:#14B8A6;
 }
+[data-theme="light"] {
+  --bg-base:#F3F4F6;--bg-surface:#FFFFFF;--bg-elevated:#E5E7EB;--bg-hover:#D1D5DB;
+  --text-primary:#111827;--text-secondary:#4B5563;--text-muted:#6B7280;
+  --border-subtle:#D1D5DB;--border-default:#9CA3AF;
+}
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;
   background:var(--bg-base);color:var(--text-primary);font-size:var(--tx-base);
@@ -148,6 +153,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-seri
 .ep-chevron{display:inline-block;font-size:9px;color:var(--text-muted);
   transition:transform 0.18s ease;margin-right:var(--s2);flex-shrink:0}
 .ep-chevron.collapsed{transform:rotate(-90deg)}
+.ep-sub-header{font-size:10px;font-weight:700;text-transform:uppercase;
+  letter-spacing:0.07em;color:var(--text-muted);margin:var(--s2) 0 var(--s1);
+  padding-bottom:3px;border-bottom:1px solid var(--border-subtle)}
 
 canvas{display:block}
 
@@ -157,6 +165,26 @@ canvas{display:block}
   background-image:linear-gradient(90deg,rgba(255,255,255,0) 0,rgba(255,255,255,0.05) 20%,rgba(255,255,255,0.05) 60%,rgba(255,255,255,0));
   animation:shimmer 1.5s infinite}
 @keyframes shimmer{100%{transform:translateX(100%)}}
+
+.theme-btn{background:transparent;border:none;font-size:14px;cursor:pointer;
+  padding:4px;border-radius:var(--r-sm);color:var(--text-primary);transition:background 0.15s}
+.theme-btn:hover{background:var(--bg-hover)}
+
+/* DATE BAR */
+.date-bar{display:flex;align-items:center;gap:var(--s3);padding:var(--s3) var(--s4);
+  background:var(--bg-panel,var(--bg-surface));border-bottom:1px solid var(--border-subtle);flex-wrap:wrap}
+.date-bar-label{font-size:var(--tx-xs);color:var(--text-muted);white-space:nowrap}
+.date-inputs{display:flex;align-items:center;gap:var(--s2)}
+.date-field{background:var(--bg-base);border:1px solid var(--border-default);color:var(--text-primary);
+  border-radius:6px;padding:4px 8px;font-size:var(--tx-sm);color-scheme:dark}
+[data-theme="light"] .date-field{color-scheme:light}
+.date-arrow{color:var(--text-muted);font-size:var(--tx-xs)}
+.date-spacer{flex:1}
+.quick-ranges{display:flex;gap:var(--s2);flex-wrap:wrap}
+.quick-btn{background:transparent;border:1px solid var(--border-default);color:var(--text-secondary);
+  border-radius:6px;padding:4px 10px;font-size:var(--tx-xs);cursor:pointer;transition:.15s}
+.quick-btn:hover{background:var(--bg-hover);color:var(--text-primary)}
+.quick-btn.active{background:var(--text-accent);border-color:var(--text-accent);color:#fff}
 
 /* Responsive */
 @media(max-width:1279px){.kpi-card{min-width:30%}}
@@ -177,14 +205,33 @@ canvas{display:block}
 <div class="titlebar">
   <div class="titlebar-logo">OF</div>
   <span class="titlebar-name">Open Finance Brasil</span>
-  <span class="titlebar-sep">›</span>
-  <span class="titlebar-sub">Perfil Estratégico — Receptor</span>
-  <div class="titlebar-nav">
-    <a href="/">Ecossistema</a>
-    <a href="/profile" class="active">Perfil Receptores</a>
+  <span class="titlebar-sep" style="color:var(--text-muted);margin:0 var(--s2)">›</span>
+  <div style="display:flex;gap:var(--s2);margin-left:var(--s3);background:rgba(0,0,0,0.1);padding:3px;border-radius:var(--r-md);border:1px solid var(--border-subtle)">
+    <a href="/" style="color:var(--text-secondary);text-decoration:none;font-size:var(--tx-sm);font-weight:500;padding:3px 12px;border-radius:var(--r-sm);transition:color 0.15s">Ecossistema</a>
+    <a href="/profile" style="color:var(--text-primary);text-decoration:none;font-size:var(--tx-sm);font-weight:600;padding:3px 12px;border-radius:var(--r-sm);background:var(--bg-hover);box-shadow:0 1px 2px rgba(0,0,0,0.2)">Perfil Receptores</a>
   </div>
   <div class="titlebar-spacer"></div>
-  <span class="titlebar-period" id="titlebar-period">Dados semanais · Intensidade normalizada 30 dias</span>
+  <span id="titlebar-period" style="font-size:var(--tx-xs);color:var(--text-muted)"></span>
+  <button id="theme-toggle" class="theme-btn" title="Alternar Tema">☀️/🌙</button>
+</div>
+
+<div class="date-bar" id="date-bar" style="display:none">
+  <span class="date-bar-label">Período</span>
+  <div class="date-inputs">
+    <input class="date-field" type="date" id="prof-date-start">
+    <span class="date-arrow">→</span>
+    <input class="date-field" type="date" id="prof-date-end">
+  </div>
+  <div class="date-spacer"></div>
+  <div class="quick-ranges">
+    <button class="quick-btn" data-months="0.25">7d</button>
+    <button class="quick-btn" data-months="1">30d</button>
+    <button class="quick-btn" data-months="3">3m</button>
+    <button class="quick-btn" data-months="6">6m</button>
+    <button class="quick-btn active" data-months="12">1a</button>
+    <button class="quick-btn" data-months="ytd">Ano atual</button>
+    <button class="quick-btn" data-months="0">Tudo</button>
+  </div>
 </div>
 
 <div class="page">
@@ -291,15 +338,12 @@ canvas{display:block}
     <div class="chart-card">
       <div class="chart-head">
         <div>
-          <div class="chart-title">Intensidade Empilhada por Grupo</div>
-          <div class="chart-subtitle">Req / consentimento / semana · Valores empilhados — altura total = intensidade semanal normalizada por consentimento</div>
+          <div class="chart-title">Intensidade Empilhada por Grupo (excl. Resource)</div>
+          <div class="chart-subtitle">Req / consentimento / 30 dias · Valores empilhados — altura total = intensidade total semanal normalizada</div>
         </div>
         <div class="chart-badge" id="stacked-badge">-</div>
       </div>
-      <div style="position:relative;height:260px">
-        <canvas id="stackedIntensityChart"></canvas>
-      </div>
-      <div class="legend">
+      <div class="legend" style="margin-bottom:var(--s3)">
         <div class="legend-item"><div class="legend-dot" style="background:var(--c-conta)"></div>Conta</div>
         <div class="legend-item"><div class="legend-dot" style="background:var(--c-cartao)"></div>Cartão</div>
         <div class="legend-item"><div class="legend-dot" style="background:var(--c-invest)"></div>Investimento</div>
@@ -307,14 +351,31 @@ canvas{display:block}
         <div class="legend-item"><div class="legend-dot" style="background:var(--c-identidade)"></div>Identidade</div>
         <div class="legend-item"><div class="legend-dot" style="background:var(--c-cambio)"></div>Câmbio</div>
       </div>
+      <div style="position:relative;height:220px">
+        <canvas id="stackedIntensityChart"></canvas>
+      </div>
+    </div>
+
+    <!-- RESOURCE CHART -->
+    <div class="chart-card" style="margin-top:calc(-1 * var(--s3))">
+      <div class="chart-head">
+        <div>
+          <div class="chart-title">Resource — Intensidade Semanal</div>
+          <div class="chart-subtitle">Req / consentimento / 30 dias · Escala independente · Pivô visível em set/2025</div>
+        </div>
+        <div class="chart-badge" style="color:#14B8A6;background:rgba(20,184,166,0.1);border-color:rgba(20,184,166,0.3)">Resource</div>
+      </div>
+      <div style="position:relative;height:140px">
+        <canvas id="resourceChart"></canvas>
+      </div>
     </div>
 
     <!-- ENDPOINT DEPTH -->
     <div class="section-label">Profundidade de Consumo por API</div>
     <div style="display:flex;align-items:center;justify-content:space-between;margin-top:-12px;margin-bottom:var(--s4);flex-wrap:wrap;gap:var(--s3)">
       <div style="font-size:var(--tx-xs);color:var(--text-secondary)">
-        Intensidade média por endpoint · Req / consentimento / 30 dias (média do período)
-      </div>
+        Intensidade média por endpoint · Req / consentimento / 30 dias (média do período) · Excl. Resource
+</div>
       <div style="display:flex;gap:var(--s5);flex-shrink:0">
         <div style="display:flex;align-items:center;gap:5px;font-size:var(--tx-xs);color:var(--text-muted)">
           <div style="width:12px;height:2px;background:#F5A623;border-radius:1px"></div>Mediana ecossistema
@@ -331,11 +392,55 @@ canvas{display:block}
 
 <script>
 // ─── GLOBALS ──────────────────────────────────────────────────────────
-Chart.defaults.color='#8B95B0';
-Chart.defaults.borderColor='#252A3A';
 Chart.defaults.font.family="-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif";
 Chart.defaults.font.size=11;
-const TT={backgroundColor:'#1B1F2E',borderColor:'#333B54',borderWidth:1,titleColor:'#EEF0F6',bodyColor:'#8B95B0',padding:10,cornerRadius:6};
+
+// ─── THEME ────────────────────────────────────────────────────────────
+let _currentTheme = localStorage.getItem('theme') || 'dark';
+document.body.setAttribute('data-theme', _currentTheme);
+(function applyChartDefaults(){
+  const isLight = _currentTheme === 'light';
+  Chart.defaults.color       = isLight ? '#4B5563' : '#8B95B0';
+  Chart.defaults.borderColor = isLight ? '#D1D5DB' : '#252A3A';
+})();
+
+function getTT() {
+  const isLight = document.body.getAttribute('data-theme') === 'light';
+  return {
+    backgroundColor: isLight ? '#FFFFFF' : '#1B1F2E',
+    borderColor:     isLight ? '#D1D5DB' : '#333B54',
+    borderWidth: 1, cornerRadius: 6, padding: 10,
+    titleColor: isLight ? '#111827' : '#EEF0F6',
+    bodyColor:  isLight ? '#4B5563' : '#8B95B0',
+  };
+}
+// Alias mantido para compatibilidade com código existente
+let TT = getTT();
+
+function applyThemeColorsToCharts() {
+  const isLight = document.body.getAttribute('data-theme') === 'light';
+  TT = getTT();
+  Chart.defaults.color       = isLight ? '#4B5563' : '#8B95B0';
+  Chart.defaults.borderColor = isLight ? '#D1D5DB' : '#252A3A';
+  const gridColor    = isLight ? '#E5E7EB' : '#252A3A';
+  Object.values(activeCharts).forEach(chart => {
+    if(!chart) return;
+    Object.values(chart.options.scales || {}).forEach(axis => {
+      if(axis.grid) axis.grid.color = gridColor;
+    });
+    if(chart.options.plugins?.tooltip) {
+      Object.assign(chart.options.plugins.tooltip, getTT());
+    }
+    chart.update();
+  });
+}
+
+document.getElementById('theme-toggle').addEventListener('click', () => {
+  _currentTheme = document.body.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+  document.body.setAttribute('data-theme', _currentTheme);
+  localStorage.setItem('theme', _currentTheme);
+  applyThemeColorsToCharts();
+});
 
 let activeCharts={};
 
@@ -401,13 +506,13 @@ async function loadProfile(institutionId){
   document.getElementById('error-state').style.display='none';
   document.getElementById('profile-content').style.display='block';
   document.getElementById('loading-state').style.display='block';
+  document.getElementById('date-bar').style.display='flex';
   loadSkeleton();
 
   try{
-    const [profileRes, statsRes]=await Promise.all([
-      fetch(`/api/of/receptor-profile?institution=${encodeURIComponent(institutionId)}`),
-      fetch('/api/of/ecosystem-stats')
-    ]);
+    const fromDate = document.getElementById('prof-date-start').value || '2000-01-01';
+    const toDate   = document.getElementById('prof-date-end').value   || '2100-01-01';
+    const profileRes=await fetch(`/api/of/receptor-profile?institution=${encodeURIComponent(institutionId)}&from=${fromDate}&to=${toDate}`);
     if(!profileRes.ok){
       document.getElementById('profile-content').style.display='none';
       document.getElementById('error-state').style.display='block';
@@ -416,20 +521,58 @@ async function loadProfile(institutionId){
       return;
     }
     const profile=await profileRes.json();
-    const ecosystemStats=await statsRes.json();
     document.getElementById('loading-state').style.display='none';
 
     renderHeader(profile);
     renderStrategicMap(profile.strategic_map, profile.institution);
     renderTornadoChart(profile.tornado_data);
-    renderStackedChart(profile.mix_data, profile.period);
-    renderEndpointSection(profile.endpoint_data, ecosystemStats.stats);
+    renderTemporalIntensity(profile.ts_intensity);
+    renderEndpointDepth(profile.endpoint_depth);
   }catch(err){
     console.error(err);
     document.getElementById('error-state').style.display='block';
     document.getElementById('loading-state').style.display='none';
   }
 }
+
+// ─── PERIOD FILTER ────────────────────────────────────────────────────
+(function initPeriodFilter() {
+  const today = new Date().toISOString().slice(0,10);
+  const oneYearAgo = new Date(Date.now() - 365*24*3600*1000).toISOString().slice(0,10);
+  document.getElementById('prof-date-start').value = oneYearAgo;
+  document.getElementById('prof-date-end').value   = today;
+
+  document.querySelectorAll('#date-bar .quick-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#date-bar .quick-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      const action = btn.dataset.months;
+      const endDate = new Date().toISOString().slice(0,10);
+      let startDate;
+      if (action === '0') {
+        startDate = '2000-01-01';
+      } else if (action === 'ytd') {
+        startDate = new Date().getFullYear() + '-01-01';
+      } else {
+        const d = new Date();
+        d.setDate(d.getDate() - Math.round(parseFloat(action) * 30.44));
+        startDate = d.toISOString().slice(0,10);
+      }
+      document.getElementById('prof-date-start').value = startDate;
+      document.getElementById('prof-date-end').value   = endDate;
+      const instId = new URLSearchParams(window.location.search).get('institution');
+      if (instId) loadProfile(instId);
+    });
+  });
+
+  ['prof-date-start','prof-date-end'].forEach(id => {
+    document.getElementById(id).addEventListener('change', () => {
+      document.querySelectorAll('#date-bar .quick-btn').forEach(b => b.classList.remove('active'));
+      const instId = new URLSearchParams(window.location.search).get('institution');
+      if (instId) loadProfile(instId);
+    });
+  });
+})();
 
 // ─── SKELETON ─────────────────────────────────────────────────────────
 function loadSkeleton(){
@@ -510,11 +653,12 @@ const SM_COLORS   = {Conta:'#4A9EFF',Cartao:'#F472B6',Investimento:'#2ECC7F',Cre
 function renderStrategicMap(sm, institution) {
   if(!sm || !sm.all_receptors || !sm.group_stats) return;
 
-  const allRec    = sm.all_receptors;
-  const stats     = sm.group_stats;
-  const smOutliers= sm.outliers   || {};
-  const xCap      = sm.x_cap      || 500;
-  const instLabel = institution.label;
+  const allRec      = sm.all_receptors;
+  const stats       = sm.group_stats;
+  const smOutliers  = sm.outliers        || {};
+  const xCap        = sm.x_cap           || 500;
+  const worstGroup  = sm.worst_case_group || null;
+  const instLabel   = institution.label;
   const instColor = document.getElementById('hdr-logo').style.background || '#4A9EFF';
 
   // Update legend institution label
@@ -535,7 +679,6 @@ function renderStrategicMap(sm, institution) {
     const s = stats[g] || {mean:0,median:0,q3:0};
     const h = 0.42;
     refDatasets.push(
-      {label:`mean_${g}`,   data:[{x:s.mean,   y:i-h},{x:s.mean,   y:i+h}], borderColor:'rgba(238,240,246,0.7)', borderWidth:1.5, borderDash:[],    pointRadius:0, showLine:true, fill:false, type:'line'},
       {label:`median_${g}`, data:[{x:s.median, y:i-h},{x:s.median, y:i+h}], borderColor:'rgba(245,166,35,0.7)',  borderWidth:1.5, borderDash:[3,2], pointRadius:0, showLine:true, fill:false, type:'line'},
       {label:`q3_${g}`,     data:[{x:s.q3,     y:i-h},{x:s.q3,     y:i+h}], borderColor:'rgba(139,149,176,0.5)', borderWidth:1,   borderDash:[2,3], pointRadius:0, showLine:true, fill:false, type:'line'}
     );
@@ -543,16 +686,20 @@ function renderStrategicMap(sm, institution) {
 
   // ── 2. Normal peers (grey circles) ────────────────────────────────
   const normalPeers  = {};
-  const outlierPts   = [];   // [{label, grp, realVal, fenceX, yi}]
+  const outlierPts   = [];   // Tukey outliers no worst-case group
+  const offScalePts  = [];   // Valores > x_cap nos demais grupos
 
   Object.entries(allRec).forEach(([lbl, vals]) => {
     if(lbl === instLabel) return;
     const grpVals = {};
     SM_GROUPS.forEach((g, i) => {
-      if(isOut(lbl, g)){
+      const v = vals[g] ?? 0;
+      if(g === worstGroup && isOut(lbl, g)){
         outlierPts.push({label:lbl, grp:g, realVal:realV(lbl,g), fenceX:stats[g].outlier_fence, yi:i});
+      } else if(g !== worstGroup && v > xCap) {
+        offScalePts.push({label:lbl, grp:g, realVal:v, yi:i});
       } else {
-        grpVals[g] = vals[g] ?? 0;
+        grpVals[g] = v;
       }
     });
     normalPeers[lbl] = grpVals;
@@ -565,7 +712,7 @@ function renderStrategicMap(sm, institution) {
     pointRadius: 4, pointHoverRadius: 6, type: 'scatter',
   }));
 
-  // ── 3. Outlier peers (orange triangles at fence) ───────────────────
+  // ── 3a. Outlier peers — triângulos na fence (worst-case group) ─────
   const outlierDatasets = outlierPts.map(o => ({
     label: `outlier__${o.label}__${o.grp}`,
     _realVal: o.realVal, _receptor: o.label,
@@ -575,31 +722,82 @@ function renderStrategicMap(sm, institution) {
     pointRadius: 7, pointHoverRadius: 9, type: 'scatter',
   }));
 
+  // ── 3b. Off-scale peers — triângulos na borda (demais grupos) ──────
+  const offScaleDatasets = offScalePts.map(o => ({
+    label: `offscale__${o.label}__${o.grp}`,
+    _realVal: o.realVal, _receptor: o.label,
+    data: [{x: xCap * 0.985, y: o.yi}],
+    backgroundColor: 'rgba(245,158,11,0.85)', borderColor: 'rgba(245,158,11,1)', borderWidth:1,
+    pointStyle: 'triangle', rotation: 90,
+    pointRadius: 7, pointHoverRadius: 9, type: 'scatter',
+  }));
+
   // ── 4. Selected institution ───────────────────────────────────────
   const instVals = allRec[instLabel] || {};
   const instNormalDs = {
     label: instLabel,
-    data: SM_GROUPS.map((g,i) => isOut(instLabel,g) ? null : {x: instVals[g] ?? 0, y: i}).filter(Boolean),
+    data: SM_GROUPS.map((g,i) => {
+      const v = instVals[g] ?? 0;
+      if(g === worstGroup && isOut(instLabel,g)) return null;
+      if(g !== worstGroup && v > xCap) return null;
+      return {x: v, y: i};
+    }).filter(Boolean),
     backgroundColor: instColor, borderColor: '#FFFFFF', borderWidth: 1.5,
     pointRadius: 9, pointHoverRadius: 11, type: 'scatter',
   };
-  const instOutlierDss = SM_GROUPS.map((g,i) => !isOut(instLabel,g) ? null : ({
+  const instOutlierDss = SM_GROUPS.map((g,i) => (g === worstGroup && isOut(instLabel,g)) ? ({
     label:`outlier__${instLabel}__${g}`,
     _realVal: realV(instLabel,g), _receptor: instLabel,
     data: [{x: stats[g].outlier_fence * 0.985, y: i}],
     backgroundColor: instColor, borderColor: '#FFFFFF', borderWidth: 2,
     pointStyle: 'triangle', rotation: 90,
     pointRadius: 10, pointHoverRadius: 12, type: 'scatter',
-  })).filter(Boolean);
+  }) : null).filter(Boolean);
+  const instOffScaleDss = SM_GROUPS.map((g,i) => {
+    const v = instVals[g] ?? 0;
+    if(g === worstGroup || v <= xCap) return null;
+    return {
+      label:`offscale__${instLabel}__${g}`,
+      _realVal: v, _receptor: instLabel,
+      data: [{x: xCap * 0.985, y: i}],
+      backgroundColor: instColor, borderColor: '#FFFFFF', borderWidth: 2,
+      pointStyle: 'triangle', rotation: 90,
+      pointRadius: 10, pointHoverRadius: 12, type: 'scatter',
+    };
+  }).filter(Boolean);
 
   // ── Chart ──────────────────────────────────────────────────────────
   if(activeCharts.dot) activeCharts.dot.destroy();
   const ctx = document.getElementById('dotChart');
   if(!ctx) return;
 
+  // Plugin: draw receptor labels next to each marked triangle
+  const outlierLabelPlugin = {
+    id: 'outlierLabels',
+    afterDraw(chart) {
+      const c = chart.ctx;
+      chart.data.datasets.forEach((ds, idx) => {
+        const isMarked = ds.label.startsWith('outlier__') || ds.label.startsWith('offscale__');
+        if(!isMarked || !ds._receptor) return;
+        const meta = chart.getDatasetMeta(idx);
+        if(!meta.visible) return;
+        meta.data.forEach(pt => {
+          c.save();
+          c.font = '9px Inter, sans-serif';
+          c.fillStyle = 'rgba(245,158,11,0.9)';
+          c.textAlign = 'left';
+          c.textBaseline = 'middle';
+          c.fillText(ds._receptor, pt.x + 10, pt.y);
+          c.restore();
+        });
+      });
+    }
+  };
+
   activeCharts.dot = new Chart(ctx, {
     type: 'scatter',
-    data: { datasets: [...refDatasets, ...peerDatasets, ...outlierDatasets, instNormalDs, ...instOutlierDss] },
+    data: { datasets: [...refDatasets, ...peerDatasets, ...outlierDatasets, ...offScaleDatasets, instNormalDs, ...instOutlierDss, ...instOffScaleDss] },
+    plugins: [outlierLabelPlugin],
     options: {
       responsive: true, maintainAspectRatio: false,
       animation: { duration: 400 },
@@ -607,7 +805,7 @@ function renderStrategicMap(sm, institution) {
         x: {
           min: 0, max: xCap,
           grid: { color: '#252A3A' },
-          title: { display: true, text: 'req / consentimento / 30 dias  (▶ = outlier, valor real no tooltip)', color: '#4A5270', font: { size: 10 } },
+          title: { display: true, text: 'req / consentimento / 30 dias  (▶ = fora da escala · ⚠ = outlier estatístico · valor real no tooltip)', color: '#4A5270', font: { size: 10 } },
           ticks: { color: '#4A5270', font: { size: 10 } }
         },
         y: {
@@ -628,10 +826,14 @@ function renderStrategicMap(sm, institution) {
           callbacks: {
             title: (items) => {
               const lb = items[0].dataset.label;
-              if(lb.startsWith('mean_')||lb.startsWith('median_')||lb.startsWith('q3_')) return null;
+              if(lb.startsWith('median_')||lb.startsWith('q3_')) return null;
               if(lb.startsWith('outlier__')) {
                 const [,rec] = lb.split('__');
-                return `⚠ OUTLIER — ${rec}`;
+                return `⚠ Outlier estatístico — ${rec}`;
+              }
+              if(lb.startsWith('offscale__')) {
+                const n = items.filter(i => i.dataset.label.startsWith('offscale__')).length;
+                return n > 1 ? `▶ Fora da escala (${n} receptores)` : `▶ Fora da escala — ${items[0].dataset._receptor}`;
               }
               return lb;
             },
@@ -640,12 +842,14 @@ function renderStrategicMap(sm, institution) {
               const lb  = ds.label;
               const grp = SM_GROUPS[Math.round(item.parsed.y)];
               const val = item.parsed.x.toFixed(1);
-              if(lb.startsWith('mean_'))   return `Média ecossistema: ${val}`;
               if(lb.startsWith('median_')) return `Mediana ecossistema: ${val}`;
               if(lb.startsWith('q3_'))     return `3º Quartil (top 25%): ${val}`;
               if(lb.startsWith('outlier__')) {
                 const fence = (stats[grp]?.outlier_fence || 0).toFixed(1);
                 return [`${SM_LABELS[grp]}: ${ds._realVal ?? '?'} req/consent/30d`, `Fence Tukey: ${fence}`];
+              }
+              if(lb.startsWith('offscale__')) {
+                return `${ds._receptor} — ${SM_LABELS[grp]}: ${ds._realVal ?? '?'} req/consent/30d`;
               }
               return `${SM_LABELS[grp]}: ${val} req/consent/30d`;
             }
@@ -723,94 +927,198 @@ function renderTornadoChart(tornadoData){
   });
 }
 
-// ─── STACKED INTENSITY CHART ──────────────────────────────────────────
-function renderStackedChart(mixData, period){
-  if(!mixData||!mixData.length) return;
+// ─── TEMPORAL INTENSITY CHARTS ────────────────────────────────────────
+const _TS_STACK_GROUPS = [
+  {key:'Conta',        label:'Conta',        color:'#4A9EFF'},
+  {key:'Cartao',       label:'Cartão',       color:'#F472B6'},
+  {key:'Investimento', label:'Investimento', color:'#2ECC7F'},
+  {key:'Credito',      label:'Crédito',      color:'#FF6B6B'},
+  {key:'Identidade',   label:'Identidade',   color:'#F5A623'},
+  {key:'Cambio',       label:'Câmbio',       color:'#A855F7'},
+];
 
-  // Update badge
-  if(period) document.getElementById('stacked-badge').textContent=
-    `${fmtDate(period.from)} – ${fmtDate(period.to)}`;
+function renderTemporalIntensity(tsIntensity) {
+  if(!tsIntensity || !Object.keys(tsIntensity).length) return;
 
-  const dates=mixData.map(d=>d.date);
+  const dates  = Object.keys(tsIntensity);
+  const labels = dates.map(fmtDate);
 
-  // Build one dataset per GROUP (sum all apis in that group)
-  const groupDefs=[
-    {name:'Conta',         color:'#4A9EFF',  apis:['accounts','credit_cards_accounts']},
-    {name:'Cartão',        color:'#F472B6',  apis:['credit_cards_accounts']}, // already counted above — we need distinct
-    {name:'Investimento',  color:'#2ECC7F',  apis:['bank_fixed_incomes','credit_fixed_incomes','variable_incomes','funds','treasure_titles']},
-    {name:'Crédito',       color:'#FF6B6B',  apis:['loans','financings','invoice_financings','unarranged_accounts_overdraft']},
-    {name:'Identidade',    color:'#F5A623',  apis:['customers']},
-    {name:'Câmbio',        color:'#A855F7',  apis:['exchanges']}
-  ];
+  // Badge: period range
+  const badge = document.getElementById('stacked-badge');
+  if(badge && dates.length) badge.textContent = `${fmtDate(dates[0])} – ${fmtDate(dates[dates.length-1])}`;
 
-  // Fix: Conta should be only 'accounts', Cartão only 'credit_cards_accounts' to match prototype
-  const stackDefs=[
-    {label:'Conta',        color:'#4A9EFF',  apis:['accounts']},
-    {label:'Cartão',       color:'#F472B6',  apis:['credit_cards_accounts']},
-    {label:'Investimento', color:'#2ECC7F',  apis:['bank_fixed_incomes','credit_fixed_incomes','variable_incomes','funds','treasure_titles']},
-    {label:'Crédito',      color:'#FF6B6B',  apis:['loans','financings','invoice_financings','unarranged_accounts_overdraft']},
-    {label:'Identidade',   color:'#F5A623',  apis:['customers']},
-    {label:'Câmbio',       color:'#A855F7',  apis:['exchanges']}
-  ];
-
-  const datasets=stackDefs.map(def=>({
-    label:def.label,
-    data:mixData.map(d=>def.apis.reduce((s,k)=>s+(d[k]||0),0)),
-    backgroundColor:def.color+'BB',
-    borderColor:def.color,
-    borderWidth:0.5,
-    fill:true,
-    tension:0.3,
-    pointRadius:0,
-    pointHoverRadius:4
+  // ── Stacked area (excl. Resource) ─────────────────────────────────
+  const stackDatasets = _TS_STACK_GROUPS.map(g => ({
+    label:            g.label,
+    data:             dates.map(d => tsIntensity[d][g.key] || 0),
+    backgroundColor:  g.color + 'BB',
+    borderColor:      g.color,
+    borderWidth:      0.5,
+    fill:             true,
+    tension:          0.3,
+    pointRadius:      0,
+    pointHoverRadius: 4,
   }));
 
   if(activeCharts.stacked) activeCharts.stacked.destroy();
-  const ctx=document.getElementById('stackedIntensityChart');
-  if(!ctx) return;
-
-  activeCharts.stacked=new Chart(ctx,{
-    type:'line',
-    data:{labels:dates.map(fmtDate),datasets},
-    options:{
-      responsive:true,maintainAspectRatio:false,
-      interaction:{mode:'index',intersect:false},
-      scales:{
-        x:{grid:{color:'#252A3A'},ticks:{maxRotation:0,maxTicksLimit:13}},
-        y:{stacked:true,grid:{color:'#252A3A'},min:0,
-          ticks:{callback:v=>v.toFixed(1)},
-          title:{display:true,text:'req/consent/semana',color:'#4A5270',font:{size:10}}}
+  const ctxS = document.getElementById('stackedIntensityChart');
+  if(ctxS) activeCharts.stacked = new Chart(ctxS, {
+    type: 'line',
+    data: { labels, datasets: stackDatasets },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      scales: {
+        x: { grid: { color: '#252A3A' }, ticks: { maxRotation: 0, maxTicksLimit: 13 } },
+        y: { stacked: true, grid: { color: '#252A3A' }, min: 0,
+             ticks: { callback: v => v.toFixed(0) },
+             title: { display: true, text: 'req/consent/30d', color: '#4A5270', font: { size: 10 } } }
       },
-      plugins:{
-        legend:{display:false},
-        tooltip:{...TT,callbacks:{label:ctx=>' '+ctx.dataset.label+': '+ctx.raw.toFixed(1)}}
+      plugins: {
+        legend: { display: false },
+        tooltip: { ...TT, callbacks: { label: ctx => ' ' + ctx.dataset.label + ': ' + ctx.raw.toFixed(1) } }
+      }
+    }
+  });
+
+  // ── Resource line (escala independente) ───────────────────────────
+  if(activeCharts.resource) activeCharts.resource.destroy();
+  const ctxR = document.getElementById('resourceChart');
+  if(ctxR) activeCharts.resource = new Chart(ctxR, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{
+        label:            'Resource',
+        data:             dates.map(d => tsIntensity[d].Resource || 0),
+        borderColor:      '#14B8A6',
+        backgroundColor:  'rgba(20,184,166,0.12)',
+        fill:             true,
+        tension:          0.3,
+        borderWidth:      1.5,
+        pointRadius:      0,
+        pointHoverRadius: 4,
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      scales: {
+        x: { grid: { color: '#252A3A' }, ticks: { maxRotation: 0, maxTicksLimit: 13 } },
+        y: { grid: { color: '#252A3A' }, min: 0,
+             ticks: { callback: v => v.toFixed(0) },
+             title: { display: true, text: 'req/consent/30d', color: '#4A5270', font: { size: 10 } } }
+      },
+      plugins: {
+        legend: { display: false },
+        tooltip: { ...TT, callbacks: { label: ctx => ' Resource: ' + ctx.raw.toFixed(1) } }
       }
     }
   });
 }
 
 // ─── ENDPOINT DEPTH ───────────────────────────────────────────────────
-function renderEndpointSection(endpointData, ecosystemStats){
-  const section=document.getElementById('endpointSection');
-  if(!section) return;
-  section.innerHTML='';
-  const EP_BAR_W=120, GRP_BAR_W=110;
 
-  // Compute global max for comparable intensity bars
-  let globalMax=0;
-  Object.values(endpointData).forEach(g=>{
-    let gt=0;
-    Object.values(g.apis).forEach(a=>{
-      Object.values(a.endpoints).forEach(v=>gt+=v);
+const GROUP_META = {
+  Conta:       { color: '#4A9EFF', apis: { 'accounts': 'Conta Corrente' } },
+  Cartao:      { color: '#F472B6', apis: { 'credit-cards-accounts': 'Cartão de Crédito' } },
+  Investimento:{ color: '#2ECC7F', apis: {
+    'bank-fixed-incomes':   'Renda Fixa Bancária',
+    'variable-incomes':     'Renda Variável',
+    'funds':                'Fundos de Investimento',
+    'treasure-titles':      'Tesouro Direto',
+    'credit-fixed-incomes': 'Renda Fixa Creditícia'
+  }},
+  Credito:     { color: '#FF6B6B', apis: {
+    'loans':                         'Empréstimos',
+    'financings':                    'Financiamentos',
+    'invoice-financings':            'Direitos Creditórios Descontados',
+    'unarranged-accounts-overdraft': 'Adiantamento a Depositantes'
+  }},
+  Cambio:      { color: '#A855F7', apis: { 'exchanges': 'Câmbio' } },
+  Identidade:  { color: '#F5A623', apis: { 'customers': 'Dados Cadastrais' } }
+};
+
+// abbrev display name → raw DB endpoint name (used for EP_STATS key lookup)
+const CUSTOMERS_KEY_MAP = {
+  'Relacionamento PF': 'Relacionamento pessoa natural',
+  'Identificação PF':  'Identificação pessoa natural',
+  'Qualificação PF':   'Qualificação pessoa natural',
+  'Identificação PJ':  'Identificação pessoa jurídica',
+  'Relacionamento PJ': 'Relacionamento pessoa jurídica',
+  'Qualificação PJ':   'Qualificação pessoa jurídica'
+};
+// raw DB name → abbrev display name (inverse of CUSTOMERS_KEY_MAP)
+const CUSTOMERS_DISPLAY_MAP = Object.fromEntries(
+  Object.entries(CUSTOMERS_KEY_MAP).map(([abbr, raw]) => [raw, abbr])
+);
+
+function rekeyCustomers(src) {
+  const out = {};
+  Object.entries(src).forEach(([raw, val]) => { out[CUSTOMERS_DISPLAY_MAP[raw] || raw] = val; });
+  return out;
+}
+
+function buildEpData(institutionEndpoints) {
+  const result = {};
+  for (const [groupKey, groupMeta] of Object.entries(GROUP_META)) {
+    result[groupKey] = { color: groupMeta.color, apis: {} };
+    for (const [apiKey, apiLabel] of Object.entries(groupMeta.apis)) {
+      const raw = institutionEndpoints[apiKey];
+      if (!raw) continue;
+      if (apiKey === 'customers') {
+        result[groupKey].apis[apiKey] = {
+          key: apiKey, label: apiLabel,
+          api_intensity: raw.api_intensity || 0,
+          pfEndpoints: rekeyCustomers(raw.pf || {}),
+          pjEndpoints: rekeyCustomers(raw.pj || {}),
+          epKeyMap: CUSTOMERS_KEY_MAP
+        };
+      } else {
+        result[groupKey].apis[apiKey] = { key: apiKey, label: apiLabel, endpoints: raw };
+      }
+    }
+    if (Object.keys(result[groupKey].apis).length === 0) delete result[groupKey];
+  }
+  return result;
+}
+
+function renderEndpointDepth(endpointDepth) {
+  const section = document.getElementById('endpointSection');
+  if (!section) return;
+  section.innerHTML = '';
+  if (!endpointDepth || !endpointDepth.institution_endpoints) return;
+
+  const EP_STATS   = endpointDepth.ecosystem_stats || {};
+  const EP_DATA    = buildEpData(endpointDepth.institution_endpoints);
+  const EP_BAR_W   = 120, GRP_BAR_W = 110;
+
+  // ── Group totals & global max ─────────────────────────────────────
+  const groupTotals = {}, apiTotals = {};
+  Object.entries(EP_DATA).forEach(([gk, gd]) => {
+    let gt = 0;
+    apiTotals[gk] = {};
+    Object.entries(gd.apis).forEach(([ak, a]) => {
+      let at = 0;
+      if (a.endpoints) {
+        at = Object.values(a.endpoints).reduce((s, v) => s + v, 0);
+      } else if (a.api_intensity !== undefined) {
+        at = a.api_intensity;
+      } else {
+        at += Object.values(a.pfEndpoints || {}).reduce((s, v) => s + v, 0);
+        at += Object.values(a.pjEndpoints || {}).reduce((s, v) => s + v, 0);
+      }
+      apiTotals[gk][ak] = at;
+      gt += at;
     });
-    globalMax=Math.max(globalMax,gt);
+    groupTotals[gk] = gt;
   });
-  if(globalMax===0) globalMax=1;
+  const GLOBAL_MAX = Math.max(...Object.values(groupTotals), 0.01);
 
-  function fmtVal(v){return v<0.01?v.toFixed(4):v<0.1?v.toFixed(3):v.toFixed(2)}
+  function fmtVal(v) { return v < 0.01 ? v.toFixed(4) : v < 0.1 ? v.toFixed(3) : v.toFixed(2); }
 
-  function intensityBar(total,color,trackW,height){
-    const fillW=Math.max(1,Math.round((total/globalMax)*trackW));
+  function intensityBar(total, color, trackW, height) {
+    const fillW = Math.max(1, Math.round((total / GLOBAL_MAX) * trackW));
     return `<div style="display:flex;align-items:center;gap:5px;margin-left:auto;flex-shrink:0">
       <div style="width:${trackW}px;height:${height}px;background:var(--bg-base);border-radius:${height}px;overflow:hidden;flex-shrink:0">
         <div style="width:${fillW}px;height:100%;background:${color};opacity:0.75;border-radius:${height}px"></div>
@@ -819,16 +1127,16 @@ function renderEndpointSection(endpointData, ecosystemStats){
     </div>`;
   }
 
-  function epRow(displayName,rawEpName,apiKey,val,maxEp,color){
-    const barFill=Math.max(1,Math.round((val/maxEp)*EP_BAR_W));
-    const statsKey=apiKey+'|||'+rawEpName;
-    const stats=ecosystemStats[statsKey]||null;
-    let ticks='';
-    if(stats){
-      const mPx=Math.min(Math.round((stats.median/maxEp)*EP_BAR_W),EP_BAR_W);
-      const q3Px=Math.min(Math.round((stats.q3/maxEp)*EP_BAR_W),EP_BAR_W);
-      if(mPx>0) ticks+=`<div class="ep-ref-tick ep-ref-median" style="left:${mPx}px" title="Mediana ecossistema: ${fmtVal(stats.median)}"></div>`;
-      if(q3Px>0) ticks+=`<div class="ep-ref-tick ep-ref-q3" style="left:${q3Px}px" title="3º Quartil (top 25%): ${fmtVal(stats.q3)}"></div>`;
+  function epRow(displayName, rawEpName, apiKey, val, maxEp, color) {
+    const barFill  = Math.max(1, Math.round((val / maxEp) * EP_BAR_W));
+    const statsKey = `${apiKey}|||${rawEpName}`;
+    const stats    = EP_STATS[statsKey] || null;
+    let ticks = '';
+    if (stats) {
+      const mPx  = Math.min(Math.round((stats.median / maxEp) * EP_BAR_W), EP_BAR_W);
+      const q3Px = Math.min(Math.round((stats.q3     / maxEp) * EP_BAR_W), EP_BAR_W);
+      if (mPx  > 0) ticks += `<div class="ep-ref-tick ep-ref-median" style="left:${mPx}px"  title="Mediana ecossistema: ${fmtVal(stats.median)}"></div>`;
+      if (q3Px > 0) ticks += `<div class="ep-ref-tick ep-ref-q3"     style="left:${q3Px}px" title="3º Quartil (top 25%): ${fmtVal(stats.q3)}"></div>`;
     }
     return `<div class="ep-row">
       <div class="ep-name" title="${displayName}">${displayName}</div>
@@ -842,67 +1150,83 @@ function renderEndpointSection(endpointData, ecosystemStats){
     </div>`;
   }
 
-  Object.entries(endpointData).forEach(([groupName,groupObj])=>{
-    const groupDiv=document.createElement('div');
-    groupDiv.className='ep-group';
-    const bgBase=`${groupObj.color}18`;
-    const bgHover=`${groupObj.color}2E`;
+  // ── Render groups ─────────────────────────────────────────────────
+  Object.entries(EP_DATA).forEach(([groupKey, groupData]) => {
+    const groupTotal = groupTotals[groupKey] || 0;
+    const bgBase     = `${groupData.color}18`;
+    const bgHover    = `${groupData.color}2E`;
 
-    // Group total
-    let grpTotal=0;
-    Object.values(groupObj.apis).forEach(a=>{Object.values(a.endpoints).forEach(v=>grpTotal+=v)});
+    const groupDiv   = document.createElement('div');
+    groupDiv.className = 'ep-group';
 
-    const hdr=document.createElement('div');
-    hdr.className='ep-group-header';
-    hdr.style.cssText=`display:flex;align-items:center;gap:var(--s2);padding:var(--s2) var(--s3);
-      border-radius:var(--r-sm);background:${bgBase};border-left:3px solid ${groupObj.color};transition:background 0.15s`;
-    hdr.innerHTML=`
-      <span class="ep-chevron" id="chev-${groupName}">▼</span>
-      <div class="ep-group-name" style="color:${groupObj.color}">${groupName}</div>
-      ${intensityBar(grpTotal,groupObj.color,GRP_BAR_W,5)}`;
-    hdr.addEventListener('mouseenter',()=>hdr.style.background=bgHover);
-    hdr.addEventListener('mouseleave',()=>hdr.style.background=bgBase);
+    const hdr = document.createElement('div');
+    hdr.className  = 'ep-group-header';
+    hdr.style.cssText = `display:flex;align-items:center;gap:var(--s2);padding:var(--s2) var(--s3);
+      border-radius:var(--r-sm);background:${bgBase};border-left:3px solid ${groupData.color};transition:background 0.15s`;
+    hdr.innerHTML = `
+      <span class="ep-chevron" id="chev-${groupKey}">▼</span>
+      <div class="ep-group-name" style="color:${groupData.color}">${groupKey}</div>
+      ${intensityBar(groupTotal, groupData.color, GRP_BAR_W, 5)}`;
+    hdr.addEventListener('mouseenter', () => hdr.style.background = bgHover);
+    hdr.addEventListener('mouseleave', () => hdr.style.background = bgBase);
     groupDiv.appendChild(hdr);
 
-    const grid=document.createElement('div');
-    grid.className='ep-apis-grid';
-    grid.style.marginTop='var(--s3)';
+    const grid = document.createElement('div');
+    grid.className = 'ep-apis-grid';
+    grid.style.marginTop = 'var(--s3)';
 
-    hdr.addEventListener('click',()=>{
-      const isOpen=grid.style.display!=='none';
-      grid.style.display=isOpen?'none':'grid';
-      document.getElementById('chev-'+groupName).classList.toggle('collapsed',isOpen);
+    hdr.addEventListener('click', () => {
+      const isOpen = grid.style.display !== 'none';
+      grid.style.display = isOpen ? 'none' : 'grid';
+      document.getElementById('chev-' + groupKey).classList.toggle('collapsed', isOpen);
     });
 
     // Sort APIs by total desc
-    const sortedApis=Object.entries(groupObj.apis).sort(([,a],[,b])=>{
-      const tA=Object.values(a.endpoints).reduce((s,v)=>s+v,0);
-      const tB=Object.values(b.endpoints).reduce((s,v)=>s+v,0);
-      return tB-tA;
-    });
+    const sortedApis = Object.entries(groupData.apis)
+      .sort(([a], [b]) => (apiTotals[groupKey][b] || 0) - (apiTotals[groupKey][a] || 0));
 
-    sortedApis.forEach(([apiKey,apiData])=>{
-      const card=document.createElement('div');
-      card.className='ep-api-card';
-      let apiTotal=0;
-      Object.values(apiData.endpoints).forEach(v=>apiTotal+=v);
+    sortedApis.forEach(([apiKey, apiData]) => {
+      const apiTotal = apiTotals[groupKey][apiKey] || 0;
+      const card     = document.createElement('div');
+      card.className = 'ep-api-card';
 
-      let cardInner=`<div class="ep-api-name" style="flex-wrap:wrap;row-gap:4px">
-        <div class="ep-api-dot" style="background:${groupObj.color}"></div>
+      let cardInner = `<div class="ep-api-name" style="flex-wrap:wrap;row-gap:4px">
+        <div class="ep-api-dot" style="background:${groupData.color}"></div>
         <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis">${apiData.label}</span>
-        ${intensityBar(apiTotal,groupObj.color,GRP_BAR_W,4)}
+        ${intensityBar(apiTotal, groupData.color, GRP_BAR_W, 4)}
       </div>`;
 
-      // Scale includes Q3 values
-      const epQ3s=Object.keys(apiData.endpoints).map(ep=>(ecosystemStats[apiKey+'|||'+ep]||{}).q3||0);
-      const maxEp=Math.max(...Object.values(apiData.endpoints),...epQ3s,0.01);
+      if (apiData.pfEndpoints !== undefined) {
+        // ── customers: PF / PJ split ──────────────────────────────
+        const allVals = [...Object.values(apiData.pfEndpoints), ...Object.values(apiData.pjEndpoints)];
+        const custQ3s = Object.entries(EP_STATS)
+          .filter(([k]) => k.startsWith('customers'))
+          .map(([, s]) => s.q3 || 0);
+        const maxEp = Math.max(...allVals, ...custQ3s, 0.01);
 
-      // Sort endpoints by value desc
-      Object.entries(apiData.endpoints).sort((a,b)=>b[1]-a[1]).forEach(([ep,val])=>{
-        cardInner+=epRow(ep,ep,apiKey,val,maxEp,groupObj.color);
-      });
+        cardInner += `<div class="ep-sub-header">Pessoa Física — normaliz. por CPF ativos</div>`;
+        Object.entries(apiData.pfEndpoints).sort((a, b) => b[1] - a[1]).forEach(([dn, val]) => {
+          const rawKey = apiData.epKeyMap[dn] || dn;
+          cardInner += epRow(dn, rawKey, apiData.key, val, maxEp, groupData.color);
+        });
 
-      card.innerHTML=cardInner;
+        cardInner += `<div class="ep-sub-header" style="margin-top:var(--s3)">Pessoa Jurídica — normaliz. por CNPJ ativos</div>`;
+        Object.entries(apiData.pjEndpoints).sort((a, b) => b[1] - a[1]).forEach(([dn, val]) => {
+          const rawKey = apiData.epKeyMap[dn] || dn;
+          cardInner += epRow(dn, rawKey, apiData.key, val, maxEp, groupData.color);
+        });
+      } else {
+        // ── normal APIs ───────────────────────────────────────────
+        const epQ3s = Object.keys(apiData.endpoints)
+          .map(ep => (EP_STATS[`${apiData.key}|||${ep}`] || {}).q3 || 0);
+        const maxEp = Math.max(...Object.values(apiData.endpoints), ...epQ3s, 0.01);
+
+        Object.entries(apiData.endpoints).sort((a, b) => b[1] - a[1]).forEach(([ep, val]) => {
+          cardInner += epRow(ep, ep, apiData.key, val, maxEp, groupData.color);
+        });
+      }
+
+      card.innerHTML = cardInner;
       grid.appendChild(card);
     });
 

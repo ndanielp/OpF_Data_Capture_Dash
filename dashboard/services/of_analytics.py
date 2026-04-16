@@ -99,6 +99,150 @@ def normalize(req_week: float, consents: float, days: int = 30) -> float:
     if consents <= 0: return 0.0
     return (req_week / consents) * (days / 7)
 
+_SQL_EP_INSTITUTION = """
+SELECT r.api, r.endpoint,
+       SUM(r.total)  AS req_4w,
+       AVG(c.total)  AS avg_c_total,
+       AVG(c.cpf)    AS avg_c_cpf,
+       AVG(c.cnpj)   AS avg_c_cnpj
+FROM api_requests r
+JOIN unique_consents c ON r.date = c.date AND r.receptor_uuid = c.receptor_uuid
+WHERE r.receptor_uuid = :institution
+  AND r.api NOT IN ('consents', 'resources')
+  AND r.status = 200
+  AND r.endpoint_id <> 0
+  AND r.date IN (:w1, :w2, :w3, :w4)
+GROUP BY r.api, r.endpoint
+ORDER BY r.api, SUM(r.total) DESC
+"""
+
+_SQL_EP_ECOSYSTEM = """
+SELECT r.receptor_uuid AS receptor, r.api, r.endpoint,
+       SUM(r.total)  AS req_4w,
+       AVG(c.total)  AS avg_c_total,
+       AVG(c.cpf)    AS avg_c_cpf,
+       AVG(c.cnpj)   AS avg_c_cnpj
+FROM api_requests r
+JOIN unique_consents c ON r.date = c.date AND r.receptor_uuid = c.receptor_uuid
+WHERE r.api NOT IN ('consents', 'resources')
+  AND r.status = 200
+  AND r.endpoint_id <> 0
+  AND r.date IN (:w1, :w2, :w3, :w4)
+GROUP BY r.receptor_uuid, r.api, r.endpoint
+"""
+
+
+def _ep_consents(ep_name: str, avg_total, avg_cpf, avg_cnpj) -> float:
+    ep_l = ep_name.lower()
+    if "jurídica" in ep_l or "juridica" in ep_l:
+        return float(avg_cnpj or 0)
+    if "natural" in ep_l:
+        return float(avg_cpf or 0)
+    return float(avg_total or 0)
+
+
+def _ep_intensity(req_4w: float, consents: float) -> float:
+    return round(normalize(req_4w / 4.0, consents, 30), 5)
+
+
+def get_endpoint_depth(institution: str, weeks: list) -> dict:
+    """Retorna profundidade de consumo por endpoint para a instituição e estatísticas do ecossistema.
+
+    Retorno:
+    {
+      "institution_endpoints": {
+        "accounts": {"Saldos da Conta": 18.26, ...},
+        "customers": {
+          "pf": {"Identificação pessoa natural": 1.47, ...},
+          "pj": {"Identificação pessoa jurídica": 0.12, ...}
+        },
+        ...
+      },
+      "ecosystem_stats": {
+        "accounts|||Saldos da Conta": {"median": 37.16, "q3": 79.58},
+        ...
+      }
+    }
+    """
+    padded = list(weeks)
+    while len(padded) < 4:
+        padded.append(padded[-1] if padded else "1900-01-01")
+
+    params = {
+        "w1": padded[0], "w2": padded[1], "w3": padded[2], "w4": padded[3],
+        "institution": institution,
+    }
+
+    con = sqlite3.connect(str(config.DB_PATH))
+    con.row_factory = sqlite3.Row
+    try:
+        inst_rows = con.execute(_SQL_EP_INSTITUTION, params).fetchall()
+        eco_rows  = con.execute(_SQL_EP_ECOSYSTEM,  {k: v for k, v in params.items() if k != "institution"}).fetchall()
+    finally:
+        con.close()
+
+    # ── 1. Intensidades da instituição ──────────────────────────────────
+    institution_endpoints: dict = {}
+    _cust_req_total   = 0.0
+    _cust_avg_c_total = 0.0
+    for row in inst_rows:
+        api = row["api"]
+        ep  = row["endpoint"]
+        if api == "customers":
+            ep_l = ep.lower()
+            sub  = "pj" if ("jurídica" in ep_l or "juridica" in ep_l) else "pf"
+            cu   = float(row["avg_c_cnpj"] or 0) if sub == "pj" else float(row["avg_c_cpf"] or 0)
+            # Acumular para intensidade agregada da API com consentimento total
+            _cust_req_total   += float(row["req_4w"])
+            _cust_avg_c_total  = float(row["avg_c_total"] or 0)
+        else:
+            cu = _ep_consents(ep, row["avg_c_total"], row["avg_c_cpf"], row["avg_c_cnpj"])
+        val = _ep_intensity(float(row["req_4w"]), cu)
+
+        if api == "customers":
+            institution_endpoints.setdefault("customers", {"pf": {}, "pj": {}})
+            institution_endpoints["customers"][sub][ep] = val
+        else:
+            institution_endpoints.setdefault(api, {})
+            institution_endpoints[api][ep] = val
+
+    # Intensidade agregada da API customers usando consentimento total
+    if "customers" in institution_endpoints:
+        institution_endpoints["customers"]["api_intensity"] = \
+            _ep_intensity(_cust_req_total, _cust_avg_c_total)
+
+    # ── 2. Estatísticas do ecossistema ───────────────────────────────────
+    eco_vals: dict = defaultdict(list)
+    for row in eco_rows:
+        api = row["api"]
+        ep  = row["endpoint"]
+        if api == "customers":
+            ep_l = ep.lower()
+            is_pj = "jurídica" in ep_l or "juridica" in ep_l
+            cu = float(row["avg_c_cnpj"] or 0) if is_pj else float(row["avg_c_cpf"] or 0)
+        else:
+            cu = _ep_consents(ep, row["avg_c_total"], row["avg_c_cpf"], row["avg_c_cnpj"])
+        val = _ep_intensity(float(row["req_4w"]), cu)
+        if val > 0:
+            eco_vals[f"{api}|||{ep}"].append(val)
+
+    ecosystem_stats: dict = {}
+    for key, vals in eco_vals.items():
+        sorted_vals = sorted(vals)
+        n = len(sorted_vals)
+        if n < 2:
+            continue
+        med      = statistics.median(sorted_vals)
+        upper    = sorted_vals[n - n // 2:]
+        q3       = statistics.median(upper)
+        ecosystem_stats[key] = {"median": round(med, 4), "q3": round(q3, 4)}
+
+    return {
+        "institution_endpoints": institution_endpoints,
+        "ecosystem_stats":       ecosystem_stats,
+    }
+
+
 def get_ecosystem_stats():
     con = sqlite3.connect(str(config.DB_PATH))
     con.row_factory = sqlite3.Row
@@ -142,17 +286,17 @@ def get_receptor_profile(institution: str, from_date: str = "2000-01-01", to_dat
     cur = con.cursor()
 
     # HEADER KPIS - START
-    # 1. Total Reqs
-    cur.execute("SELECT SUM(total) AS total_req, MIN(date) AS first_date, MAX(date) AS last_date FROM api_requests WHERE receptor_uuid = ? AND status = 200", (institution,))
+    # 1. Total Reqs — filtrado pelo período
+    cur.execute("SELECT SUM(total) AS total_req, MIN(date) AS first_date, MAX(date) AS last_date FROM api_requests WHERE receptor_uuid = ? AND status = 200 AND date >= ? AND date <= ?", (institution, from_date, to_date))
     kpi1 = cur.fetchone()
-    # 2. Consents
-    cur.execute("SELECT total AS current_consents, date AS current_date FROM unique_consents WHERE receptor_uuid = ? ORDER BY date DESC LIMIT 1", (institution,))
+    # 2. Consents — snapshot mais recente dentro do período
+    cur.execute("SELECT total AS current_consents, date AS current_date FROM unique_consents WHERE receptor_uuid = ? AND date <= ? ORDER BY date DESC LIMIT 1", (institution, to_date))
     kpi2_curr = cur.fetchone()
-    cur.execute("SELECT total AS first_consents FROM unique_consents WHERE receptor_uuid = ? ORDER BY date ASC LIMIT 1", (institution,))
+    cur.execute("SELECT total AS first_consents FROM unique_consents WHERE receptor_uuid = ? AND date >= ? ORDER BY date ASC LIMIT 1", (institution, from_date))
     kpi2_first = cur.fetchone()
-    
-    # Global Rankings
-    cur.execute("SELECT receptor_uuid, SUM(CASE WHEN status = 500 THEN total ELSE 0 END)*1.0/SUM(total) AS err_rate, COUNT(DISTINCT transmitter_uuid) AS n_transmitters, SUM(CASE WHEN status = 200 THEN total ELSE 0 END) AS vol_req FROM api_requests GROUP BY receptor_uuid")
+
+    # Global Rankings — filtrados pelo período para comparação justa
+    cur.execute("SELECT receptor_uuid, SUM(CASE WHEN status = 500 THEN total ELSE 0 END)*1.0/SUM(total) AS err_rate, COUNT(DISTINCT transmitter_uuid) AS n_transmitters, SUM(CASE WHEN status = 200 THEN total ELSE 0 END) AS vol_req FROM api_requests WHERE date >= ? AND date <= ? GROUP BY receptor_uuid", (from_date, to_date))
     all_ranks = cur.fetchall()
     
     err_sorted = sorted([x for x in all_ranks if x["err_rate"] is not None], key=lambda x: x["err_rate"])
@@ -178,7 +322,7 @@ def get_receptor_profile(institution: str, from_date: str = "2000-01-01", to_dat
     ext_ord = lambda r: ordinals_pt.get(r, f"{r}º")
     
     # 3. Intensity 30D
-    cur.execute("SELECT MAX(r.date) AS ref_date FROM api_requests r JOIN unique_consents c ON r.date=c.date AND r.receptor_uuid=c.receptor_uuid WHERE r.receptor_uuid=? AND r.status=200 AND r.api NOT IN ('consents','resources')", (institution,))
+    cur.execute("SELECT MAX(r.date) AS ref_date FROM api_requests r JOIN unique_consents c ON r.date=c.date AND r.receptor_uuid=c.receptor_uuid WHERE r.receptor_uuid=? AND r.status=200 AND r.api NOT IN ('consents','resources') AND r.date >= ? AND r.date <= ?", (institution, from_date, to_date))
     ref_date_row = cur.fetchone()
     ref_date = ref_date_row["ref_date"] if ref_date_row else None
     
@@ -271,8 +415,12 @@ def get_receptor_profile(institution: str, from_date: str = "2000-01-01", to_dat
         category_shares[group_name] = g_inst / inst_total_all if inst_total_all > 0 else 0
 
     # Tornado: fluxo bilateral de transmissores (institution = receptor_uuid)
-    tornado_data = _get_tornado_data(cur, institution, inst_clean_name)
-        
+    tornado_data = _get_tornado_data(cur, institution, inst_clean_name, from_date, to_date)
+
+    # Últimas 4 semanas para endpoint depth — filtrado pela instituição
+    cur.execute("SELECT DISTINCT date FROM api_requests WHERE status=200 AND receptor_uuid=? AND date >= ? AND date <= ? ORDER BY date DESC LIMIT 4", (institution, from_date, to_date))
+    ep_weeks = [r["date"] for r in cur.fetchall()]
+
     archetype_name, archetype_desc = classify_archetype(category_shares)
     header["archetype"] = archetype_name
 
@@ -307,14 +455,19 @@ def get_receptor_profile(institution: str, from_date: str = "2000-01-01", to_dat
             if api_eps: g_str["apis"][api] = {"label": API_LABELS.get(api, api), "endpoints": api_eps}
         if g_str["apis"]: endpoint_data[gn] = g_str
 
-    # Mapa Estratégico: calculado com a conn já aberta
-    strategic_map = _get_strategic_map(from_date, to_date)
+    # Mapa Estratégico e Endpoint Depth: abrem conexão própria
+    strategic_map  = _get_strategic_map(from_date, to_date)
+    endpoint_depth = get_endpoint_depth(institution, ep_weeks) if ep_weeks else {"institution_endpoints": {}, "ecosystem_stats": {}}
+
+    ts_intensity = get_temporal_intensity(institution, from_date, to_date)
 
     return {
         "institution": {"id": institution, "label": inst_clean_name, "uuid": institution, "archetype": archetype_name, "archetype_description": archetype_desc},
         "header": header, "summary": {"total_consents": max_consents, "active_apis": len(active_apis), "weeks_count": len(weeks_set)},
         "mix_data": mix_data, "tornado_data": tornado_data, "endpoint_data": endpoint_data,
         "strategic_map": strategic_map,
+        "ts_intensity":  ts_intensity,
+        "endpoint_depth": endpoint_depth,
         "period": {"from": min(weeks_set) if weeks_set else from_date, "to": max(weeks_set) if weeks_set else to_date, "weeks_count": len(weeks_set)}
     }
 
@@ -428,54 +581,67 @@ def _get_strategic_map(from_date: str, to_date: str) -> dict:
             if all_receptors[rec].get(grp, 0.0) > fence_v
         ]
 
-    # x_cap: maior fence entre todos os grupos + 10% de margem
-    fences  = [group_stats[g]["outlier_fence"] for g in GROUPS if group_stats[g]["outlier_fence"] > 0]
-    x_cap   = round(max(fences) * 1.10, 1) if fences else 500.0
+    # worst_case_group: grupo com maior fence que tenha outliers
+    groups_with_outliers = [(g, group_stats[g]["outlier_fence"]) for g in GROUPS if outliers.get(g)]
+    worst_case_group = max(groups_with_outliers, key=lambda t: t[1])[0] if groups_with_outliers else None
+
+    # x_cap: maior valor não-outlier entre todos os grupos (ponto imediatamente antes dos outliers)
+    non_outlier_vals = [
+        all_receptors[rec].get(grp, 0.0)
+        for grp in GROUPS
+        for rec in all_receptors
+        if all_receptors[rec].get(grp, 0.0) <= group_stats[grp]["outlier_fence"]
+    ]
+    x_cap = round(max(non_outlier_vals) * 1.05, 1) if non_outlier_vals else 500.0
 
     return {
-        "reference_weeks": weeks,
-        "all_receptors":   all_receptors,
-        "group_stats":     group_stats,
-        "outliers":        outliers,
-        "x_cap":           x_cap,
+        "reference_weeks":   weeks,
+        "all_receptors":     all_receptors,
+        "group_stats":       group_stats,
+        "outliers":          outliers,
+        "worst_case_group":  worst_case_group,
+        "x_cap":             x_cap,
     }
 
 
 
-def _get_tornado_data(cur, institution_uuid: str, inst_display_name: str) -> dict:
+def _get_tornado_data(cur, institution_uuid: str, inst_display_name: str,
+                      from_date: str = "2000-01-01", to_date: str = "2100-01-01") -> dict:
     """Calcula o fluxo bilateral de requisições entre a instituição (por UUID) e cada par."""
-    # 1. Últimas 4 semanas com dados
-    cur.execute("SELECT DISTINCT date FROM api_requests WHERE status=200 ORDER BY date DESC LIMIT 4")
-    weeks = [r["date"] for r in cur.fetchall()]
-    if not weeks:
+    # 1. Semanas dentro do período
+    cur.execute("SELECT COUNT(DISTINCT date) AS n_weeks, MIN(date) AS min_date, MAX(date) AS max_date FROM api_requests WHERE status=200 AND date >= ? AND date <= ?", (from_date, to_date))
+    meta = cur.fetchone()
+    n_weeks = meta["n_weeks"] or 0
+    if not n_weeks:
         return {"reference_weeks": [], "scale_max": 0, "left_label": "", "right_label": "", "rows": []}
 
-    placeholders = ",".join("?" * len(weeks))
+    weeks = [meta["min_date"], meta["max_date"]]  # só para period_label
+    norm = 30.0 / (n_weeks * 7.0)                 # normaliza para req/30d
 
     # 2. LEFT: institution_uuid como receptor — ela consulta transmissores
-    cur.execute(f"""
+    cur.execute("""
         SELECT transmitter AS institution_name, transmitter_uuid AS institution_uuid,
-               SUM(total) * 30.0 / 28.0 / 1e6 AS value_30d
+               SUM(total) * ? / 1e6 AS value_30d
         FROM api_requests
         WHERE receptor_uuid = ?
           AND status = 200
           AND api NOT IN ('consents', 'resources')
-          AND date IN ({placeholders})
+          AND date >= ? AND date <= ?
         GROUP BY transmitter, transmitter_uuid
-    """, [institution_uuid] + weeks)
+    """, (norm, institution_uuid, from_date, to_date))
     left_rows = [dict(r) for r in cur.fetchall()]
 
     # 3. RIGHT: institution_uuid como transmissor — outros a consultam
-    cur.execute(f"""
+    cur.execute("""
         SELECT receptor AS institution_name, receptor_uuid AS institution_uuid,
-               SUM(total) * 30.0 / 28.0 / 1e6 AS value_30d
+               SUM(total) * ? / 1e6 AS value_30d
         FROM api_requests
         WHERE transmitter_uuid = ?
           AND status = 200
           AND api NOT IN ('consents', 'resources')
-          AND date IN ({placeholders})
+          AND date >= ? AND date <= ?
         GROUP BY receptor, receptor_uuid
-    """, [institution_uuid] + weeks)
+    """, (norm, institution_uuid, from_date, to_date))
     right_rows = [dict(r) for r in cur.fetchall()]
 
     # 4. Merge — chave de merge = institution_name (nome DB) ou institution_uuid
@@ -531,4 +697,61 @@ def _get_tornado_data(cur, institution_uuid: str, inst_display_name: str) -> dic
         "right_label": f"consulta {inst_display_name}",
         "rows": result_rows,
     }
+
+
+# ── Evolução Temporal ─────────────────────────────────────────────────────
+
+_SQL_TEMPORAL = """
+SELECT
+    r.date,
+    CASE
+        WHEN r.api = 'accounts'                                                       THEN 'Conta'
+        WHEN r.api = 'credit-cards-accounts'                                          THEN 'Cartao'
+        WHEN r.api IN ('bank-fixed-incomes','credit-fixed-incomes',
+                       'variable-incomes','funds','treasure-titles')                  THEN 'Investimento'
+        WHEN r.api IN ('loans','financings','invoice-financings',
+                       'unarranged-accounts-overdraft')                               THEN 'Credito'
+        WHEN r.api = 'exchanges'                                                      THEN 'Cambio'
+        WHEN r.api = 'customers'                                                      THEN 'Identidade'
+        WHEN r.api = 'resources'                                                      THEN 'Resource'
+    END AS grp,
+    SUM(r.total)  AS req_week,
+    c.total       AS consents_total
+FROM api_requests r
+JOIN unique_consents c ON r.date = c.date AND r.receptor_uuid = c.receptor_uuid
+WHERE r.receptor_uuid = :institution
+  AND r.api NOT IN ('consents')
+  AND r.status = 200
+  AND r.date >= :from_date AND r.date <= :to_date
+GROUP BY r.date, grp
+HAVING grp IS NOT NULL
+ORDER BY r.date ASC
+"""
+
+_TEMPORAL_GROUPS = ['Conta', 'Cartao', 'Investimento', 'Credito', 'Cambio', 'Identidade', 'Resource']
+
+def get_temporal_intensity(institution: str, from_date: str = "2000-01-01", to_date: str = "2100-01-01") -> dict:
+    """
+    Retorna todas as semanas disponíveis para a instituição dentro do período:
+      {"2025-06-06": {"Conta": 61.11, ..., "Resource": 13.09}, ...}
+    """
+    result: dict = {}
+    con = sqlite3.connect(str(config.DB_PATH))
+    con.row_factory = sqlite3.Row
+    try:
+        rows = con.execute(_SQL_TEMPORAL, {"institution": institution, "from_date": from_date, "to_date": to_date}).fetchall()
+    finally:
+        con.close()
+
+    for row in rows:
+        date = row["date"]
+        grp  = row["grp"]
+        req  = float(row["req_week"]      or 0)
+        cons = float(row["consents_total"] or 0)
+        intensity = round((req / cons) * (30.0 / 7.0), 4) if cons > 0 else 0.0
+        if date not in result:
+            result[date] = {g: 0.0 for g in _TEMPORAL_GROUPS}
+        result[date][grp] = intensity
+
+    return dict(sorted(result.items()))
 
