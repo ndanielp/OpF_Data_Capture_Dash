@@ -1,19 +1,16 @@
 import sys; sys.path.append('dashboard')
-import time
-from services import of_analytics
+from services.of_analytics import _get_strategic_map
 
-t = time.time()
-r = of_analytics.get_receptor_profile('a72a6d4f-79be-5362-afb6-f8d9c9c39cf5')  # Bradesco
-print(f"Total time: {time.time()-t:.2f}s")
+sm = _get_strategic_map("2000-01-01", "2100-01-01")
+print(f"x_cap: {sm['x_cap']}")
+print(f"\nOUTLIERS:")
+for g, outs in sm['outliers'].items():
+    if outs:
+        fence = sm['group_stats'][g]['outlier_fence']
+        print(f"  {g} (fence={fence:.1f}):")
+        for o in outs:
+            print(f"    {o['label']:35s}  {o['value']:.1f}")
 
-sm = r['strategic_map']
-print("Weeks:", sm['reference_weeks'])
-print("Receptors:", len(sm['all_receptors']))
-
-# Find Bradesco
-bradesco = next((v for k, v in sm['all_receptors'].items() if 'Bradesco' in k or 'BRADESCO' in k), None)
-print("Bradesco:", bradesco)
-
-print("\nGroup stats:")
+print(f"\nGROUP STATS (with fence):")
 for g, s in sm['group_stats'].items():
-    print(f"  {g:15s}  mean={s['mean']:7.2f}  median={s['median']:7.2f}  q3={s['q3']:7.2f}")
+    print(f"  {g:15s}  median={s['median']:7.1f}  q3={s['q3']:7.1f}  iqr={s['iqr']:7.1f}  fence={s['outlier_fence']:8.1f}")

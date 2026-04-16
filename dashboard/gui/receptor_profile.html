@@ -261,6 +261,7 @@ canvas{display:block}
           <div class="legend-item"><div class="legend-line" style="background:rgba(238,240,246,0.7)"></div>Média</div>
           <div class="legend-item"><div class="legend-dashed" style="border-color:rgba(245,166,35,0.7)"></div>Mediana</div>
           <div class="legend-item"><div class="legend-dashed" style="border-color:rgba(139,149,176,0.5)"></div>3º Quartil (top 25%)</div>
+          <div class="legend-item"><div style="width:0;height:0;border-left:7px solid transparent;border-right:7px solid transparent;border-bottom:12px solid rgba(245,158,11,0.9);flex-shrink:0"></div>Outlier (valor real no tooltip)</div>
         </div>
       </div>
 
@@ -509,83 +510,104 @@ const SM_COLORS   = {Conta:'#4A9EFF',Cartao:'#F472B6',Investimento:'#2ECC7F',Cre
 function renderStrategicMap(sm, institution) {
   if(!sm || !sm.all_receptors || !sm.group_stats) return;
 
-  const allRec   = sm.all_receptors;
-  const stats    = sm.group_stats;
-  const instLabel= institution.label;
-  const instColor= document.getElementById('hdr-logo').style.background || '#4A9EFF';
+  const allRec    = sm.all_receptors;
+  const stats     = sm.group_stats;
+  const smOutliers= sm.outliers   || {};
+  const xCap      = sm.x_cap      || 500;
+  const instLabel = institution.label;
+  const instColor = document.getElementById('hdr-logo').style.background || '#4A9EFF';
 
   // Update legend institution label
   const li = document.getElementById('dot-legend-inst');
   if(li) li.textContent = instLabel;
 
-  // ── Build datasets ──────────────────────────────────────────
-  // 1. Reference lines (mean, median, Q3) — rendered first (behind)
+  // Build outlier lookup: "label__grp" → realValue
+  const outlierMap = {};
+  SM_GROUPS.forEach(g => {
+    (smOutliers[g] || []).forEach(o => { outlierMap[`${o.label}__${g}`] = o.value; });
+  });
+  const isOut  = (lbl,g) => (`${lbl}__${g}` in outlierMap);
+  const realV  = (lbl,g) =>  outlierMap[`${lbl}__${g}`];
+
+  // ── 1. Reference lines (mean, median, Q3) ─────────────────────────
   const refDatasets = [];
   SM_GROUPS.forEach((g, i) => {
     const s = stats[g] || {mean:0,median:0,q3:0};
-    const half = 0.42;
-    refDatasets.push({
-      label: `mean_${g}`,
-      data: [{x:s.mean, y:i-half},{x:s.mean, y:i+half}],
-      borderColor: 'rgba(238,240,246,0.7)', borderWidth: 1.5,
-      borderDash: [], pointRadius: 0, showLine: true, fill: false, type: 'line',
-    },{
-      label: `median_${g}`,
-      data: [{x:s.median, y:i-half},{x:s.median, y:i+half}],
-      borderColor: 'rgba(245,166,35,0.7)', borderWidth: 1.5,
-      borderDash: [3,2], pointRadius: 0, showLine: true, fill: false, type: 'line',
-    },{
-      label: `q3_${g}`,
-      data: [{x:s.q3, y:i-half},{x:s.q3, y:i+half}],
-      borderColor: 'rgba(139,149,176,0.5)', borderWidth: 1,
-      borderDash: [2,3], pointRadius: 0, showLine: true, fill: false, type: 'line',
-    });
+    const h = 0.42;
+    refDatasets.push(
+      {label:`mean_${g}`,   data:[{x:s.mean,   y:i-h},{x:s.mean,   y:i+h}], borderColor:'rgba(238,240,246,0.7)', borderWidth:1.5, borderDash:[],    pointRadius:0, showLine:true, fill:false, type:'line'},
+      {label:`median_${g}`, data:[{x:s.median, y:i-h},{x:s.median, y:i+h}], borderColor:'rgba(245,166,35,0.7)',  borderWidth:1.5, borderDash:[3,2], pointRadius:0, showLine:true, fill:false, type:'line'},
+      {label:`q3_${g}`,     data:[{x:s.q3,     y:i-h},{x:s.q3,     y:i+h}], borderColor:'rgba(139,149,176,0.5)', borderWidth:1,   borderDash:[2,3], pointRadius:0, showLine:true, fill:false, type:'line'}
+    );
   });
 
-  // 2. Peer dots (grey) — one dataset per receptor (enables per-receptor tooltip)
-  const peerDatasets = Object.entries(allRec)
-    .filter(([label]) => label !== instLabel)
-    .map(([label, vals]) => ({
-      label,
-      data: SM_GROUPS.map((g, i) => ({x: vals[g] ?? 0, y: i})),
-      backgroundColor: 'rgba(74,82,112,0.45)',
-      borderColor:     'rgba(74,82,112,0)',
-      pointRadius: 4, pointHoverRadius: 6, type: 'scatter',
-    }));
+  // ── 2. Normal peers (grey circles) ────────────────────────────────
+  const normalPeers  = {};
+  const outlierPts   = [];   // [{label, grp, realVal, fenceX, yi}]
 
-  // 3. Selected institution (highlighted)
+  Object.entries(allRec).forEach(([lbl, vals]) => {
+    if(lbl === instLabel) return;
+    const grpVals = {};
+    SM_GROUPS.forEach((g, i) => {
+      if(isOut(lbl, g)){
+        outlierPts.push({label:lbl, grp:g, realVal:realV(lbl,g), fenceX:stats[g].outlier_fence, yi:i});
+      } else {
+        grpVals[g] = vals[g] ?? 0;
+      }
+    });
+    normalPeers[lbl] = grpVals;
+  });
+
+  const peerDatasets = Object.entries(normalPeers).map(([lbl, vals]) => ({
+    label: lbl,
+    data: SM_GROUPS.map((g,i) => ({x: vals[g] ?? 0, y: i})),
+    backgroundColor: 'rgba(74,82,112,0.45)', borderColor: 'rgba(74,82,112,0)',
+    pointRadius: 4, pointHoverRadius: 6, type: 'scatter',
+  }));
+
+  // ── 3. Outlier peers (orange triangles at fence) ───────────────────
+  const outlierDatasets = outlierPts.map(o => ({
+    label: `outlier__${o.label}__${o.grp}`,
+    _realVal: o.realVal, _receptor: o.label,
+    data: [{x: o.fenceX * 0.985, y: o.yi}],
+    backgroundColor: 'rgba(245,158,11,0.85)', borderColor: 'rgba(245,158,11,1)', borderWidth:1,
+    pointStyle: 'triangle', rotation: 90,
+    pointRadius: 7, pointHoverRadius: 9, type: 'scatter',
+  }));
+
+  // ── 4. Selected institution ───────────────────────────────────────
   const instVals = allRec[instLabel] || {};
-  const selectedDataset = {
+  const instNormalDs = {
     label: instLabel,
-    data: SM_GROUPS.map((g, i) => ({x: instVals[g] ?? 0, y: i})),
-    backgroundColor: instColor,
-    borderColor: '#FFFFFF', borderWidth: 1.5,
+    data: SM_GROUPS.map((g,i) => isOut(instLabel,g) ? null : {x: instVals[g] ?? 0, y: i}).filter(Boolean),
+    backgroundColor: instColor, borderColor: '#FFFFFF', borderWidth: 1.5,
     pointRadius: 9, pointHoverRadius: 11, type: 'scatter',
   };
+  const instOutlierDss = SM_GROUPS.map((g,i) => !isOut(instLabel,g) ? null : ({
+    label:`outlier__${instLabel}__${g}`,
+    _realVal: realV(instLabel,g), _receptor: instLabel,
+    data: [{x: stats[g].outlier_fence * 0.985, y: i}],
+    backgroundColor: instColor, borderColor: '#FFFFFF', borderWidth: 2,
+    pointStyle: 'triangle', rotation: 90,
+    pointRadius: 10, pointHoverRadius: 12, type: 'scatter',
+  })).filter(Boolean);
 
-  // ── X axis max ─────────────────────────────────────────────
-  const allVals = [
-    ...Object.values(allRec).flatMap(v => Object.values(v)),
-    ...Object.values(stats).flatMap(s => [s.mean, s.median, s.q3])
-  ].filter(v => v != null && isFinite(v));
-  const xMax = (Math.max(...allVals, 1)) * 1.12;
-
-  // ── Chart ──────────────────────────────────────────────────
+  // ── Chart ──────────────────────────────────────────────────────────
   if(activeCharts.dot) activeCharts.dot.destroy();
   const ctx = document.getElementById('dotChart');
   if(!ctx) return;
 
   activeCharts.dot = new Chart(ctx, {
     type: 'scatter',
-    data: { datasets: [...refDatasets, ...peerDatasets, selectedDataset] },
+    data: { datasets: [...refDatasets, ...peerDatasets, ...outlierDatasets, instNormalDs, ...instOutlierDss] },
     options: {
       responsive: true, maintainAspectRatio: false,
       animation: { duration: 400 },
       scales: {
         x: {
-          min: 0, max: xMax,
+          min: 0, max: xCap,
           grid: { color: '#252A3A' },
-          title: { display: true, text: 'req / consentimento / 30 dias', color: '#4A5270', font: { size: 10 } },
+          title: { display: true, text: 'req / consentimento / 30 dias  (▶ = outlier, valor real no tooltip)', color: '#4A5270', font: { size: 10 } },
           ticks: { color: '#4A5270', font: { size: 10 } }
         },
         y: {
@@ -605,17 +627,26 @@ function renderStrategicMap(sm, institution) {
           ...TT,
           callbacks: {
             title: (items) => {
-              const ds = items[0].dataset.label;
-              if(ds.startsWith('mean_')||ds.startsWith('median_')||ds.startsWith('q3_')) return null;
-              return ds;
+              const lb = items[0].dataset.label;
+              if(lb.startsWith('mean_')||lb.startsWith('median_')||lb.startsWith('q3_')) return null;
+              if(lb.startsWith('outlier__')) {
+                const [,rec] = lb.split('__');
+                return `⚠ OUTLIER — ${rec}`;
+              }
+              return lb;
             },
             label: (item) => {
-              const ds  = item.dataset.label;
+              const ds  = item.dataset;
+              const lb  = ds.label;
               const grp = SM_GROUPS[Math.round(item.parsed.y)];
               const val = item.parsed.x.toFixed(1);
-              if(ds.startsWith('mean_'))   return `Média ecossistema: ${val}`;
-              if(ds.startsWith('median_')) return `Mediana ecossistema: ${val}`;
-              if(ds.startsWith('q3_'))     return `3º Quartil (top 25%): ${val}`;
+              if(lb.startsWith('mean_'))   return `Média ecossistema: ${val}`;
+              if(lb.startsWith('median_')) return `Mediana ecossistema: ${val}`;
+              if(lb.startsWith('q3_'))     return `3º Quartil (top 25%): ${val}`;
+              if(lb.startsWith('outlier__')) {
+                const fence = (stats[grp]?.outlier_fence || 0).toFixed(1);
+                return [`${SM_LABELS[grp]}: ${ds._realVal ?? '?'} req/consent/30d`, `Fence Tukey: ${fence}`];
+              }
               return `${SM_LABELS[grp]}: ${val} req/consent/30d`;
             }
           }

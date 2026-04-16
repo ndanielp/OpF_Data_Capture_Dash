@@ -395,28 +395,49 @@ def _get_strategic_map(from_date: str, to_date: str) -> dict:
             for grp, vals in groups.items()
         }
 
-    # 5. GROUP_STATS: mean, median, Q3 (upper_half = vals[n - n//2:])
+    # 5. GROUP_STATS: mean, median, Q1, Q3, IQR, outlier_fence (Tukey)
     group_stats = {}
+    outliers    = {}   # {grp: [{label, value}]}
     for grp in GROUPS:
         vals = sorted(all_receptors[rec].get(grp, 0.0) for rec in all_receptors)
         n = len(vals)
         if n == 0:
-            group_stats[grp] = {"mean": 0, "median": 0, "q3": 0}
+            group_stats[grp] = {"mean": 0, "median": 0, "q1": 0, "q3": 0, "iqr": 0, "outlier_fence": 0}
+            outliers[grp] = []
             continue
         mean_v   = sum(vals) / n
         median_v = statistics.median(vals)
+        lower    = vals[:n // 2]
         upper    = vals[n - n // 2:]
+        q1_v     = statistics.median(lower) if lower else 0.0
         q3_v     = statistics.median(upper)
+        iqr_v    = q3_v - q1_v
+        fence_v  = q3_v + 1.5 * iqr_v   # Tukey upper fence
         group_stats[grp] = {
-            "mean":   round(mean_v,   2),
-            "median": round(median_v, 2),
-            "q3":     round(q3_v,     2),
+            "mean":          round(mean_v,   2),
+            "median":        round(median_v, 2),
+            "q1":            round(q1_v,     2),
+            "q3":            round(q3_v,     2),
+            "iqr":           round(iqr_v,    2),
+            "outlier_fence": round(fence_v,  2),
         }
+        # Flag receptors above the fence
+        outliers[grp] = [
+            {"label": rec, "value": round(all_receptors[rec][grp], 1)}
+            for rec in all_receptors
+            if all_receptors[rec].get(grp, 0.0) > fence_v
+        ]
+
+    # x_cap: maior fence entre todos os grupos + 10% de margem
+    fences  = [group_stats[g]["outlier_fence"] for g in GROUPS if group_stats[g]["outlier_fence"] > 0]
+    x_cap   = round(max(fences) * 1.10, 1) if fences else 500.0
 
     return {
         "reference_weeks": weeks,
         "all_receptors":   all_receptors,
         "group_stats":     group_stats,
+        "outliers":        outliers,
+        "x_cap":           x_cap,
     }
 
 
