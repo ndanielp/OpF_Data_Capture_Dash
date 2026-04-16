@@ -13,3 +13,6 @@ data-loader/data/
 data-loader/logs/
 dashboard/data/
 dashboard/logs/
+
+# Banco de dados local
+*.db
