@@ -308,13 +308,21 @@ async def lifespan(app: FastAPI):
     threading.Thread(target=lambda: _refresh_cache(force=True), daemon=True).start()
     yield
 
+from routers import openfinance
+
 app = FastAPI(title="OPF Batch Dashboard", lifespan=lifespan)
+app.include_router(openfinance.router, prefix="/api/of")
 
 GUI_DIR = Path(__file__).parent / "gui"
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
     index_path = GUI_DIR / "dashboard.html"
+    return HTMLResponse(index_path.read_text(encoding="utf-8"))
+
+@app.get("/profile", response_class=HTMLResponse)
+async def profile():
+    index_path = GUI_DIR / "receptor_profile.html"
     return HTMLResponse(index_path.read_text(encoding="utf-8"))
 
 @app.get("/api/receptors", response_class=JSONResponse)
