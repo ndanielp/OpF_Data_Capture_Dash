@@ -636,7 +636,7 @@ def _get_tornado_data(cur, institution_uuid: str, inst_display_name: str,
         return {"reference_weeks": [], "scale_max": 0, "left_label": "", "right_label": "", "rows": []}
 
     weeks = [meta["min_date"], meta["max_date"]]  # só para period_label
-    norm = 30.0 / (n_weeks * 7.0) if normalize else 1.0 / n_weeks
+    norm = 30.0 / (n_weeks * 7.0) if normalize else 1.0
 
     # 2. LEFT: institution_uuid como receptor — ela consulta transmissores
     cur.execute("""

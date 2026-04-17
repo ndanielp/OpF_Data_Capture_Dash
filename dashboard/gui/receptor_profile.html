@@ -1132,11 +1132,11 @@ function renderTornadoChart(tornadoData, normalize = true){
   if(!container) return;
   container.innerHTML='';
 
-  const torUnit = normalize ? 'req/30d' : 'req/semana';
+  const torUnit = normalize ? 'req/30d' : 'total no período';
   const torSubEl = document.getElementById('tornado-subtitle');
   if(torSubEl) torSubEl.textContent = normalize
-    ? 'Média 30 dias (últimas 4 semanas) · Requisições em milhões'
-    : 'Média semanal (volume bruto) · Requisições em milhões';
+    ? 'Média mensal (30d) · Período filtrado · Requisições em milhões'
+    : 'Total no período filtrado · Requisições em milhões';
 
   if(!tornadoData||!tornadoData.rows||tornadoData.rows.length===0){
     container.innerHTML='<div style="padding:var(--s4);color:var(--text-muted);font-size:var(--tx-xs);text-align:center">Nenhuma relação de transmissão encontrada para este período.</div>';
