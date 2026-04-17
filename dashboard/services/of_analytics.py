@@ -681,7 +681,7 @@ def _get_tornado_data(cur, institution_uuid: str, inst_display_name: str,
 
 # ── Evolução Temporal ─────────────────────────────────────────────────────
 
-_TEMPORAL_GROUPS = ['Conta', 'Cartao', 'Investimento', 'Credito', 'Cambio', 'Identidade']
+_TEMPORAL_GROUPS = ['Conta', 'Cartao', 'Investimento', 'Credito', 'Cambio', 'Identidade', 'Resource']
 
 def get_temporal_intensity(institution: str, from_date: str = "2000-01-01", to_date: str = "2100-01-01") -> dict:
     """

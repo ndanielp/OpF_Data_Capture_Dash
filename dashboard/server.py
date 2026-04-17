@@ -375,13 +375,30 @@ def _ensure_api_group_weekly():
                                 'unarranged-accounts-overdraft') THEN 'Credito'
                             WHEN r.api='exchanges' THEN 'Cambio'
                             WHEN r.api='customers' THEN 'Identidade'
+                            WHEN r.api='resources' THEN 'Resource'
                        END AS grp,
                        SUM(r.total), c.total
                 FROM api_requests r
                 JOIN unique_consents c ON r.date=c.date AND r.receptor_uuid=c.receptor_uuid
-                WHERE r.api NOT IN ('consents','resources') AND r.status=200
+                WHERE r.api NOT IN ('consents') AND r.status=200
                 GROUP BY r.date, r.receptor_uuid, grp HAVING grp IS NOT NULL;
             """)
+        # Garante que Resource esteja presente mesmo em DBs já populados sem ele.
+        n_resource = con.execute(
+            "SELECT COUNT(*) FROM api_group_weekly WHERE grp='Resource'"
+        ).fetchone()[0]
+        if n_resource == 0:
+            con.execute("""
+                INSERT OR REPLACE INTO api_group_weekly
+                    (date, receptor_uuid, receptor, grp, req_week, consents_total)
+                SELECT r.date, r.receptor_uuid, r.receptor, 'Resource',
+                       SUM(r.total), COALESCE(c.total, 0)
+                FROM api_requests r
+                LEFT JOIN unique_consents c ON r.date=c.date AND r.receptor_uuid=c.receptor_uuid
+                WHERE r.api='resources' AND r.status=200
+                GROUP BY r.date, r.receptor_uuid
+            """)
+            con.commit()
     finally:
         con.close()
 
