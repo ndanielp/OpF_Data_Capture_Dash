@@ -38,7 +38,26 @@
       "PowerShell(Stop-Process -Force)",
       "PowerShell(Invoke-RestMethod \"http://localhost:8000/api/of/receptor-profile/temporal?institution=926e3037-a685-553c-afa3-f7cb46ff8084&normalize=false\")",
       "PowerShell(Invoke-RestMethod \"http://localhost:8000/api/of/ecosystem-stats\")",
-      "PowerShell(Invoke-RestMethod \"http://localhost:8000/api/stats\")"
+      "PowerShell(Invoke-RestMethod \"http://localhost:8000/api/stats\")",
+      "Bash(curl -s http://localhost:8000/api/health)",
+      "Bash(curl -s http://localhost:8000/)",
+      "Bash(tasklist /FI \"IMAGENAME eq uvicorn.exe\")",
+      "Bash(tasklist /FI \"IMAGENAME eq python.exe\")",
+      "Bash(../venv_dash/Scripts/uvicorn server:app --port 8000)",
+      "Bash(curl -s http://localhost:8000/api/stats)",
+      "Bash(.venv/Scripts/uvicorn server:app --port 8000)",
+      "Bash(curl -s \"http://localhost:8000/openfinance/institutions\")",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(d['institutions'][0]\\)\")",
+      "Bash(curl -s \"http://localhost:8000/api/receptors\")",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(d[0]\\)\")",
+      "Bash(curl -sv \"http://localhost:8000/api/receptors\")",
+      "Bash(curl -s \"http://localhost:8000/api/stats\")",
+      "PowerShell(netstat -ano)",
+      "PowerShell(Stop-Process -Id 47440, 36592, 43800 -Force -ErrorAction SilentlyContinue)",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); [print\\(r['label'][:20], r['uuid'][:20]\\) for r in d[:3]]\")",
+      "Bash(curl -s \"http://localhost:8000/openfinance/receptor-profile/header?institution=926e3037-a685-553c-afa3-f7cb46ff8084&from=2025-01-01&to=2026-02-27\")",
+      "Bash(.venv/Scripts/python -c ' *)",
+      "Bash(wmic logicaldisk *)"
     ]
   }
 }

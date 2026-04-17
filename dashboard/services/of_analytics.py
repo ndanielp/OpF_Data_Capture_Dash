@@ -43,7 +43,7 @@ def fmt_period(first: str, last: str) -> str:
 
 def fmt_consents(n: int) -> str:
     if n >= 1_000_000: return f"{n/1_000_000:.2f} Mi".replace(".", ",")
-    if n >= 1_000: return f"{n/1_000:.1f} Mi".replace(".", ",")
+    if n >= 1_000: return f"{n/1_000:.1f} k".replace(".", ",")
     return str(n)
 
 def get_institutions():
@@ -412,7 +412,7 @@ def get_profile_header(institution: str, from_date: str = "2000-01-01", to_date:
 
     header["kpis"]["intensity_30d"] = {
         "formatted": f"~{int(round(intensity_30d))}",
-        "subtitle": "Req / consent / 30d (atual)",
+        "subtitle": "req/consent/30d · últ. semana",
         "above_median": intensity_30d >= eco_median
     }
 
