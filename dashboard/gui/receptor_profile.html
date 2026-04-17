@@ -490,7 +490,12 @@ document.addEventListener("DOMContentLoaded", async()=>{
 });
 
 // ─── LOAD PROFILE ─────────────────────────────────────────────────────
-async function loadProfile(institutionId){
+let _profileAbort = null;
+async function _loadProfileNow(institutionId){
+  if (_profileAbort) { try { _profileAbort.abort(); } catch (_) { } }
+  _profileAbort = new AbortController();
+  const signal = _profileAbort.signal;
+
   document.getElementById('empty-state').style.display='none';
   document.getElementById('error-state').style.display='none';
   document.getElementById('profile-content').style.display='block';
@@ -511,7 +516,7 @@ async function loadProfile(institutionId){
 
   // 1. Header primeiro → UX imediata
   try{
-    const headerRes = await fetch(`${base}/header?${qs}`);
+    const headerRes = await fetch(`${base}/header?${qs}`, { signal });
     if(!headerRes.ok){
       document.getElementById('profile-content').style.display='none';
       document.getElementById('error-state').style.display='block';
@@ -523,6 +528,7 @@ async function loadProfile(institutionId){
     document.getElementById('loading-state').style.display='none';
     renderHeader(header);
   }catch(err){
+    if (err?.name === 'AbortError') return;
     console.error(err);
     document.getElementById('error-state').style.display='block';
     document.getElementById('loading-state').style.display='none';
@@ -532,11 +538,12 @@ async function loadProfile(institutionId){
   // 2. Charts em paralelo — falha isolada por seção
   const instLabel = document.getElementById('hdr-name').textContent;
   const [smRes, tsRes, tornadoRes, depthRes] = await Promise.allSettled([
-    fetch(`${base}/strategic-map?${qsMap}`),
-    fetch(`${base}/temporal?${qs}`),
-    fetch(`${base}/tornado?${qs}`),
-    fetch(`${base}/depth?${qs}`),
+    fetch(`${base}/strategic-map?${qsMap}`, { signal }),
+    fetch(`${base}/temporal?${qs}`, { signal }),
+    fetch(`${base}/tornado?${qs}`, { signal }),
+    fetch(`${base}/depth?${qs}`, { signal }),
   ]);
+  if (signal.aborted) return;
 
   if(smRes.status==='fulfilled' && smRes.value.ok)
     renderStrategicMap(await smRes.value.json(), {label: instLabel});
@@ -554,6 +561,9 @@ async function loadProfile(institutionId){
     renderEndpointDepth(await depthRes.value.json());
   else console.warn('depth falhou', depthRes);
 }
+
+function _debounce(fn, wait){ let t; return function(...a){ clearTimeout(t); t=setTimeout(()=>fn.apply(this,a), wait); }; }
+const loadProfile = _debounce(_loadProfileNow, 120);
 
 // ─── PERIOD FILTER ────────────────────────────────────────────────────
 (function initPeriodFilter() {
@@ -983,61 +993,76 @@ function renderTemporalIntensity(tsIntensity) {
     pointHoverRadius: 4,
   }));
 
-  if(activeCharts.stacked) activeCharts.stacked.destroy();
   const ctxS = document.getElementById('stackedIntensityChart');
-  if(ctxS) activeCharts.stacked = new Chart(ctxS, {
-    type: 'line',
-    data: { labels, datasets: stackDatasets },
-    options: {
-      responsive: true, maintainAspectRatio: false,
-      interaction: { mode: 'index', intersect: false },
-      scales: {
-        x: { grid: { color: '#252A3A' }, ticks: { maxRotation: 0, maxTicksLimit: 13 } },
-        y: { stacked: true, grid: { color: '#252A3A' }, min: 0,
-             ticks: { callback: v => v.toFixed(0) },
-             title: { display: true, text: 'req/consent/30d', color: '#4A5270', font: { size: 10 } } }
-      },
-      plugins: {
-        legend: { display: false },
-        tooltip: { ...TT, callbacks: { label: ctx => ' ' + ctx.dataset.label + ': ' + ctx.raw.toFixed(1) } }
-      }
+  if (ctxS) {
+    if (activeCharts.stacked) {
+      activeCharts.stacked.data.labels = labels;
+      activeCharts.stacked.data.datasets = stackDatasets;
+      activeCharts.stacked.update('none');
+    } else {
+      activeCharts.stacked = new Chart(ctxS, {
+        type: 'line',
+        data: { labels, datasets: stackDatasets },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          interaction: { mode: 'index', intersect: false },
+          scales: {
+            x: { grid: { color: '#252A3A' }, ticks: { maxRotation: 0, maxTicksLimit: 13 } },
+            y: { stacked: true, grid: { color: '#252A3A' }, min: 0,
+                 ticks: { callback: v => v.toFixed(0) },
+                 title: { display: true, text: 'req/consent/30d', color: '#4A5270', font: { size: 10 } } }
+          },
+          plugins: {
+            legend: { display: false },
+            tooltip: { ...TT, callbacks: { label: ctx => ' ' + ctx.dataset.label + ': ' + ctx.raw.toFixed(1) } }
+          }
+        }
+      });
     }
-  });
+  }
 
   // ── Resource line (escala independente) ───────────────────────────
-  if(activeCharts.resource) activeCharts.resource.destroy();
+  const resourceData = dates.map(d => tsIntensity[d].Resource || 0);
   const ctxR = document.getElementById('resourceChart');
-  if(ctxR) activeCharts.resource = new Chart(ctxR, {
-    type: 'line',
-    data: {
-      labels,
-      datasets: [{
-        label:            'Resource',
-        data:             dates.map(d => tsIntensity[d].Resource || 0),
-        borderColor:      '#14B8A6',
-        backgroundColor:  'rgba(20,184,166,0.12)',
-        fill:             true,
-        tension:          0.3,
-        borderWidth:      1.5,
-        pointRadius:      0,
-        pointHoverRadius: 4,
-      }]
-    },
-    options: {
-      responsive: true, maintainAspectRatio: false,
-      interaction: { mode: 'index', intersect: false },
-      scales: {
-        x: { grid: { color: '#252A3A' }, ticks: { maxRotation: 0, maxTicksLimit: 13 } },
-        y: { grid: { color: '#252A3A' }, min: 0,
-             ticks: { callback: v => v.toFixed(0) },
-             title: { display: true, text: 'req/consent/30d', color: '#4A5270', font: { size: 10 } } }
-      },
-      plugins: {
-        legend: { display: false },
-        tooltip: { ...TT, callbacks: { label: ctx => ' Resource: ' + ctx.raw.toFixed(1) } }
-      }
+  if (ctxR) {
+    if (activeCharts.resource) {
+      activeCharts.resource.data.labels = labels;
+      activeCharts.resource.data.datasets[0].data = resourceData;
+      activeCharts.resource.update('none');
+    } else {
+      activeCharts.resource = new Chart(ctxR, {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [{
+            label:            'Resource',
+            data:             resourceData,
+            borderColor:      '#14B8A6',
+            backgroundColor:  'rgba(20,184,166,0.12)',
+            fill:             true,
+            tension:          0.3,
+            borderWidth:      1.5,
+            pointRadius:      0,
+            pointHoverRadius: 4,
+          }]
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          interaction: { mode: 'index', intersect: false },
+          scales: {
+            x: { grid: { color: '#252A3A' }, ticks: { maxRotation: 0, maxTicksLimit: 13 } },
+            y: { grid: { color: '#252A3A' }, min: 0,
+                 ticks: { callback: v => v.toFixed(0) },
+                 title: { display: true, text: 'req/consent/30d', color: '#4A5270', font: { size: 10 } } }
+          },
+          plugins: {
+            legend: { display: false },
+            tooltip: { ...TT, callbacks: { label: ctx => ' Resource: ' + ctx.raw.toFixed(1) } }
+          }
+        }
+      });
     }
-  });
+  }
 }
 
 // ─── ENDPOINT DEPTH ───────────────────────────────────────────────────

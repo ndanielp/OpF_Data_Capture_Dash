@@ -5,7 +5,23 @@
       "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(json.dumps\\(d,indent=2,ensure_ascii=False\\)[:500]\\)\")",
       "Bash(sqlite3 \"c:/Users/LENOVO/OneDrive/Documentos/Projetos/OpF_Data_Capture_Dash/dashboard/data/consents.db\" \"SELECT DISTINCT api FROM api_requests WHERE api LIKE 'customer%' OR api LIKE 'cadastr%' LIMIT 20;\")",
       "Bash(python -c \"import sqlite3; c=sqlite3.connect\\(r'c:/Users/LENOVO/OneDrive/Documentos/Projetos/OpF_Data_Capture_Dash/dashboard/data/consents.db'\\); print\\(sorted\\(r[0] for r in c.execute\\('SELECT DISTINCT api FROM api_requests'\\).fetchall\\(\\)\\)\\)\")",
-      "Bash(python -c \"import server\")"
+      "Bash(python -c \"import server\")",
+      "Bash(xargs grep *)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('c:/Users/LENOVO/OneDrive/Documentos/Projetos/OpF_Data_Capture_Dash/dashboard/server.py', encoding='utf-8'\\).read\\(\\)\\); print\\('server.py OK'\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('server.py', encoding='utf-8'\\).read\\(\\)\\); print\\('server.py OK'\\)\")",
+      "Bash(ls .venv)",
+      "Bash(ls venv *)",
+      "Bash(where python *)",
+      "Bash(./venv/Scripts/python.exe -c ' *)",
+      "Bash(./.venv/Scripts/python.exe -c ' *)",
+      "Bash(./.venv/Scripts/python.exe -m uvicorn server:app --port 8123 --log-level warning)",
+      "Bash(curl -sf \"http://127.0.0.1:8123/api/stats\")",
+      "Bash(curl -sf \"http://127.0.0.1:8123/api/api-requests?start=2025-09-01&end=2026-04-01&normalize=1&status=200\" -o /tmp/r1.json)",
+      "Read(//tmp/**)",
+      "Bash(python -c \"import json; d=json.load\\(open\\('/tmp/r1.json'\\)\\); print\\('receptors:', len\\(d['receptors']\\), 'apis:', len\\(d['apis']\\), 'max_val:', d['max_val'], 'endpoint_max:', d['endpoint_max_val']\\)\")",
+      "Bash(kill %1)",
+      "Bash(awk '{print $2}')",
+      "Bash(xargs -r kill)"
     ]
   }
 }

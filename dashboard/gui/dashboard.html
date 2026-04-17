@@ -1450,12 +1450,18 @@
       const normalize = document.getElementById('toggle-escala').classList.contains('on') ? '1' : '0';
       const selItems = [...document.querySelectorAll('.receptor-item.selected')];
       const receptors = selItems.map(el => el.dataset.label).join(',');
-      // Persist across tabs so Perfil Receptor opens with the same context.
-      try {
-        sessionStorage.setItem('opf:filters', JSON.stringify({ start, end, status, normalize, receptors }));
-      } catch (_) { /* sessionStorage unavailable — ignore */ }
       return new URLSearchParams({ start, end, status, normalize, receptors });
     }
+
+    function debounce(fn, wait) {
+      let t;
+      return function (...args) {
+        clearTimeout(t);
+        t = setTimeout(() => fn.apply(this, args), wait);
+      };
+    }
+
+    let _refreshAbort = null;
 
     function today() {
       return new Date().toISOString().slice(0, 10);
@@ -1666,46 +1672,28 @@
 
       const rPf = document.getElementById('ranking-pf-list');
       const rPj = document.getElementById('ranking-pj-list');
-      rPf.innerHTML = '';
-      rPj.innerHTML = '';
 
-      (_consentsData.ranking_pf || []).forEach(r => {
+      const renderRow = (r, key) => {
         const c = _allReceptors.find(x => x.label === r.receptor)?.color || '#4A9EFF';
         const sign = r.growth > 0 ? '+' : '';
         const clr = r.growth > 0 ? 'var(--success)' : (r.growth < 0 ? 'var(--error)' : 'var(--text-muted)');
         const d_sign = r.daily_delta > 0 ? '+' : '';
         const d_clr = r.daily_delta > 0 ? 'var(--success)' : (r.daily_delta < 0 ? 'var(--error)' : 'var(--text-muted)');
-        
-        rPf.innerHTML += `<li class="ranking-item">
+        return `<li class="ranking-item">
       <div class="ranking-label"><div class="ranking-color" style="background:${c}"></div><div class="ranking-name" style="text-overflow:ellipsis;overflow:hidden;max-width:85px;white-space:nowrap" title="${r.receptor}">${r.receptor}</div></div>
       <div style="display:flex; gap:6px; align-items:center;">
-        <div class="ranking-value" style="width:35px; text-align:right;">${fmtVal(r.cpf, false)}</div>
+        <div class="ranking-value" style="width:35px; text-align:right;">${fmtVal(r[key], false)}</div>
         <div style="font-size: 9px; width:35px; text-align:right; font-weight:600; color:${d_clr}">${d_sign}${fmtVal(r.daily_delta, false)}</div>
         <div style="font-size: 9px; width:30px; text-align:right; font-weight:600; color:${clr}">${sign}${r.growth}%</div>
       </div>
     </li>`;
-      });
-
-      (_consentsData.ranking_pj || []).forEach(r => {
-        const c = _allReceptors.find(x => x.label === r.receptor)?.color || '#4A9EFF';
-        const sign = r.growth > 0 ? '+' : '';
-        const clr = r.growth > 0 ? 'var(--success)' : (r.growth < 0 ? 'var(--error)' : 'var(--text-muted)');
-        const d_sign = r.daily_delta > 0 ? '+' : '';
-        const d_clr = r.daily_delta > 0 ? 'var(--success)' : (r.daily_delta < 0 ? 'var(--error)' : 'var(--text-muted)');
-
-        rPj.innerHTML += `<li class="ranking-item">
-      <div class="ranking-label"><div class="ranking-color" style="background:${c}"></div><div class="ranking-name" style="text-overflow:ellipsis;overflow:hidden;max-width:85px;white-space:nowrap" title="${r.receptor}">${r.receptor}</div></div>
-      <div style="display:flex; gap:6px; align-items:center;">
-        <div class="ranking-value" style="width:35px; text-align:right;">${fmtVal(r.cnpj, false)}</div>
-        <div style="font-size: 9px; width:35px; text-align:right; font-weight:600; color:${d_clr}">${d_sign}${fmtVal(r.daily_delta, false)}</div>
-        <div style="font-size: 9px; width:30px; text-align:right; font-weight:600; color:${clr}">${sign}${r.growth}%</div>
-      </div>
-    </li>`;
-      });
+      };
+      rPf.innerHTML = (_consentsData.ranking_pf || []).map(r => renderRow(r, 'cpf')).join('');
+      rPj.innerHTML = (_consentsData.ranking_pj || []).map(r => renderRow(r, 'cnpj')).join('');
     }
 
-    async function updateChart1(params) {
-      const resp = await fetch('/api/consents?' + params);
+    async function updateChart1(params, signal) {
+      const resp = await fetch('/api/consents?' + params, { signal });
       const data = await resp.json();
       _consentsData = data;
       const empty = document.getElementById('chart1-empty');
@@ -1720,8 +1708,8 @@
     /* ============================================================
        CHART 2 — HEATMAP
        ============================================================ */
-    async function updateChart2(params) {
-      const resp = await fetch('/api/api-requests?' + params);
+    async function updateChart2(params, signal) {
+      const resp = await fetch('/api/api-requests?' + params, { signal });
       const data = await resp.json();
       _apiData = data;
       const empty = document.getElementById('chart2-empty');
@@ -1738,8 +1726,34 @@
       // updateChartApiTime é chamado pelo Promise.all em refresh() — não duplicar aqui
     }
 
+    let _heatmapDelegated = false;
     function renderHeatmapTable(data) {
       const table = document.getElementById('heatmap-table');
+      if (!_heatmapDelegated) {
+        table.addEventListener('click', (ev) => {
+          const t = ev.target.closest('[data-hm-ep],[data-hm-api],[data-hm-rec],[data-hm-toggle-api]');
+          if (!t) return;
+          if (t.dataset.hmToggleApi) {
+            const id = t.dataset.hmToggleApi;
+            _expandedAPIs.has(id) ? _expandedAPIs.delete(id) : _expandedAPIs.add(id);
+            renderHeatmapTable(_apiData);
+            return;
+          }
+          if (t.dataset.hmRec) {
+            const rec = t.dataset.hmRec;
+            _selectedHeatmapReceptors.has(rec) ? _selectedHeatmapReceptors.delete(rec) : _selectedHeatmapReceptors.add(rec);
+          } else if (t.dataset.hmEp) {
+            const k = t.dataset.hmEp;
+            _selectedEndpoints.has(k) ? _selectedEndpoints.delete(k) : _selectedEndpoints.add(k);
+          } else if (t.dataset.hmApi) {
+            const a = t.dataset.hmApi;
+            _selectedAPIs.has(a) ? _selectedAPIs.delete(a) : _selectedAPIs.add(a);
+          }
+          updateChartApiTime(buildParams());
+          renderHeatmapTable(_apiData);
+        });
+        _heatmapDelegated = true;
+      }
       table.innerHTML = '';
 
       const maxVal       = data.max_val || 1;
@@ -1809,12 +1823,7 @@
         th.setAttribute('aria-expanded', String(expanded));
         const icon = epCount > 0 ? (expanded ? ' ▼' : ' ▶') : '';
         th.textContent = api.label + icon;
-        if (epCount > 0) {
-          th.addEventListener('click', () => {
-            _expandedAPIs.has(api.id) ? _expandedAPIs.delete(api.id) : _expandedAPIs.add(api.id);
-            renderHeatmapTable(_apiData);
-          });
-        }
+        if (epCount > 0) th.dataset.hmToggleApi = api.id;
         hrow.appendChild(th);
       });
 
@@ -1866,11 +1875,7 @@
         tdLabel.setAttribute('aria-label', `Incluir ${rec} no gráfico`);
         const dot = isRecSel ? (recColor(rec) ? `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${recColor(rec)};margin-right:4px;vertical-align:middle"></span>` : '') : '';
         tdLabel.innerHTML = dot + rec;
-        tdLabel.addEventListener('click', () => {
-          _selectedHeatmapReceptors.has(rec) ? _selectedHeatmapReceptors.delete(rec) : _selectedHeatmapReceptors.add(rec);
-          updateChartApiTime(buildParams());
-          renderHeatmapTable(_apiData);
-        });
+        tdLabel.dataset.hmRec = rec;
         tr.appendChild(tdLabel);
 
         // Global intensity cell
@@ -1913,11 +1918,7 @@
               }
               td.setAttribute('role', 'button');
               td.setAttribute('aria-pressed', String(_selectedEndpoints.has(epKey)));
-              td.addEventListener('click', () => {
-                _selectedEndpoints.has(epKey) ? _selectedEndpoints.delete(epKey) : _selectedEndpoints.add(epKey);
-                updateChartApiTime(buildParams());
-                renderHeatmapTable(_apiData);
-              });
+              td.dataset.hmEp = epKey;
               tr.appendChild(td);
             });
           } else {
@@ -1938,11 +1939,7 @@
             }
             td.setAttribute('role', 'button');
             td.setAttribute('aria-pressed', String(_selectedAPIs.has(api.id)));
-            td.addEventListener('click', () => {
-              _selectedAPIs.has(api.id) ? _selectedAPIs.delete(api.id) : _selectedAPIs.add(api.id);
-              updateChartApiTime(buildParams());
-              renderHeatmapTable(_apiData);
-            });
+            td.dataset.hmApi = api.id;
             tr.appendChild(td);
           }
         });
@@ -2004,8 +2001,8 @@
       });
     }
 
-    async function updateChart3(params) {
-      const resp = await fetch('/api/resources?' + params);
+    async function updateChart3(params, signal) {
+      const resp = await fetch('/api/resources?' + params, { signal });
       const data = await resp.json();
       _resData = data;
       const empty = document.getElementById('chart3-empty');
@@ -2140,7 +2137,7 @@
       });
     }
 
-    async function updateChartApiTime(globalParams) {
+    async function updateChartApiTime(globalParams, signal) {
       const section = document.getElementById('api-time-section');
       if (_selectedHeatmapReceptors.size === 0) {
         section.style.display = 'none';
@@ -2158,10 +2155,10 @@
 
       let data;
       try {
-        const resp = await fetch('/api/api-requests-timeseries?' + p);
+        const resp = await fetch('/api/api-requests-timeseries?' + p, { signal });
         data = await resp.json();
       } catch (e) {
-        console.error('Erro ao carregar timeseries', e);
+        if (e?.name !== 'AbortError') console.error('Erro ao carregar timeseries', e);
         return;
       }
       _apiTimeData = data;
@@ -2234,21 +2231,34 @@
     /* ============================================================
        REFRESH
        ============================================================ */
-    async function refresh() {
+    async function _refreshNow() {
+      if (_refreshAbort) { try { _refreshAbort.abort(); } catch (_) { } }
+      _refreshAbort = new AbortController();
+      const mySignal = _refreshAbort.signal;
       const params = buildParams();
+      try {
+        sessionStorage.setItem('opf:filters', JSON.stringify({
+          start: params.get('start'), end: params.get('end'),
+          status: params.get('status'), normalize: params.get('normalize'),
+          receptors: params.get('receptors'),
+        }));
+      } catch (_) { }
       const area = document.querySelector('.main-content');
       if (area) area.classList.add('is-loading');
       try {
         await Promise.all([
-          updateChart1(params),
-          updateChart2(params),
-          updateChart3(params),
-          updateChartApiTime(params),
+          updateChart1(params, mySignal),
+          updateChart2(params, mySignal),
+          updateChart3(params, mySignal),
+          updateChartApiTime(params, mySignal),
         ]);
+      } catch (e) {
+        if (e?.name !== 'AbortError') console.error(e);
       } finally {
-        if (area) area.classList.remove('is-loading');
+        if (area && !mySignal.aborted) area.classList.remove('is-loading');
       }
     }
+    const refresh = debounce(_refreshNow, 120);
 
     /* ============================================================
        RELOAD BUTTON
@@ -2259,7 +2269,7 @@
     <path d="M10 6A4 4 0 112.5 3.5M2 1v3h3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
     </svg> Carregando…`;
       await loadStats();
-      await refresh();
+      await _refreshNow();
       this.disabled = false;
       this.innerHTML = `<svg width="12" height="12" viewBox="0 0 12 12" fill="none">
     <path d="M10 6A4 4 0 112.5 3.5M2 1v3h3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
@@ -2326,7 +2336,7 @@
       ]);
       const activeBtn = document.querySelector('.quick-btn.active');
       if (activeBtn) activeBtn.click();
-      else await refresh();
+      else await _refreshNow();
     }
 
     loadAll();

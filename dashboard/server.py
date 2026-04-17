@@ -11,11 +11,13 @@ import time as _time
 import uvicorn
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
+from functools import wraps
 from pathlib import Path
 
 import pandas as pd
+from cachetools import TTLCache
 from fastapi import FastAPI, Query, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 import config
@@ -95,6 +97,12 @@ def _build_color_map(receptors: list[str]) -> dict[str, str]:
 def _db_con() -> sqlite3.Connection:
     con = sqlite3.connect(str(config.DB_PATH))
     con.execute("PRAGMA cache_size = -4096")   # limita page cache do SQLite a 4 MB
+    # WAL + mmap + memory temp: read-only dashboard talks to a DB that the
+    # collector writes in WAL mode; setting here lets queries stream pages
+    # through mmap instead of syscalls, and keeps temp tables off disk.
+    con.execute("PRAGMA journal_mode = WAL")
+    con.execute("PRAGMA mmap_size = 268435456")
+    con.execute("PRAGMA temp_store = MEMORY")
     return con
 
 def _load_consents(start: date | None = None, end: date | None = None) -> pd.DataFrame:
@@ -185,6 +193,35 @@ _CACHE_WEEKS = 52
 _CACHE_TTL   = 300   # segundos entre recargas automáticas
 _CACHE: dict = {"consents": None, "api": None, "ts": 0.0, "cutoff": None}
 _CACHE_LOCK  = threading.Lock()
+
+# Response-level cache for hot dashboard endpoints. TTL is short (60s) —
+# long enough to absorb repeated refreshes from the same user during a
+# typical filter-tweak session, short enough that fresh data surfaces fast.
+_RESP_CACHE: TTLCache = TTLCache(maxsize=512, ttl=60)
+_RESP_LOCK: threading.Lock = threading.Lock()
+
+
+def cached_response(name: str):
+    """Cache an endpoint's serialized JSON body by (name, query params).
+
+    A hit skips re-computation and re-serialization. All dashboard query
+    params are scalar (str/int/None), so frozenset of items is hashable.
+    """
+    def deco(fn):
+        @wraps(fn)
+        def wrapper(**kwargs):
+            key = (name, frozenset(kwargs.items()))
+            with _RESP_LOCK:
+                hit = _RESP_CACHE.get(key)
+            if hit is not None:
+                return Response(content=hit, media_type="application/json")
+            resp = fn(**kwargs)
+            if isinstance(resp, JSONResponse):
+                with _RESP_LOCK:
+                    _RESP_CACHE[key] = resp.body
+            return resp
+        return wrapper
+    return deco
 
 
 def _refresh_cache(force: bool = False) -> None:
@@ -288,6 +325,28 @@ def _top10_with_bradesco(df: pd.DataFrame) -> list[str]:
 
 # ── FastAPI App ────────────────────────────────────────────────────────────────
 
+def _ensure_dashboard_indexes() -> None:
+    """Compound covering index the dashboard's consents queries need.
+
+    The collector's scrapers.py ships single-column indexes; without this,
+    queries filtered by (date, receptor_uuid) fall back to seek + row fetch.
+    Wait up to 3s if the collector holds a write lock rather than crash.
+    """
+    try:
+        con = _db_con()
+        try:
+            con.execute("PRAGMA busy_timeout = 3000")
+            con.execute(
+                "CREATE INDEX IF NOT EXISTS idx_consents_date_rec "
+                "ON unique_consents(date, receptor_uuid, total)"
+            )
+            con.commit()
+        finally:
+            con.close()
+    except Exception:
+        pass
+
+
 def _ensure_api_group_weekly():
     """Cria e popula api_group_weekly se vazio — compatibilidade com DBs antigos."""
     con = sqlite3.connect(str(config.DB_PATH))
@@ -364,6 +423,7 @@ def _warm_profile_cache() -> None:
 async def lifespan(app: FastAPI):
     # Garante que api_group_weekly exista e tenha dados (DBs antigos sem a tabela populada).
     _ensure_api_group_weekly()
+    _ensure_dashboard_indexes()
     # Pré-aquece cache em background — servidor aceita conexões imediatamente.
     threading.Thread(target=lambda: _refresh_cache(force=True), daemon=True).start()
     threading.Thread(target=_warm_profile_cache, daemon=True).start()
@@ -388,6 +448,7 @@ async def profile():
     return HTMLResponse(index_path.read_text(encoding="utf-8"))
 
 @app.get("/api/receptors", response_class=JSONResponse)
+@cached_response("receptors")
 def get_receptors():
     # Consulta leve: apenas totais agregados por receptor, sem filtro de data
     df = _load_consents()   # sem datas → retorna GROUP BY receptor (sem coluna date)
@@ -402,6 +463,7 @@ def get_receptors():
 
 
 @app.get("/api/consents", response_class=JSONResponse)
+@cached_response("consents")
 def get_consents(start: str = None, end: str = None, receptors: str = None):
     today = date.today()
     dt_start = _parse_date(start, today - timedelta(days=365))
@@ -503,6 +565,7 @@ def get_consents(start: str = None, end: str = None, receptors: str = None):
     })
 
 @app.get("/api/api-requests", response_class=JSONResponse)
+@cached_response("api-requests")
 def get_api_requests(start: str = None, end: str = None, receptors: str = None, status: str = "all", normalize: str = "0"):
     today = date.today()
     dt_start = _parse_date(start, today - timedelta(days=365))
@@ -615,17 +678,21 @@ def get_api_requests(start: str = None, end: str = None, receptors: str = None, 
                 .sum().reset_index()
             )
             if norm and not df_ep.empty:
-                # Reutiliza groupby já computado acima — sem nova chamada a _get_consents
-                ct_ep_total, ct_ep_cpf, ct_ep_cnpj = ct_total, ct_cpf, ct_cnpj
-                def _norm_ep(row):
-                    if row["api"] in _NORM_CPF_APIS:
-                        n = float(ct_ep_cpf.get(row["receptor"], 0))
-                    elif row["api"] in _NORM_CNPJ_APIS:
-                        n = float(ct_ep_cnpj.get(row["receptor"], 0))
-                    else:
-                        n = float(ct_ep_total.get(row["receptor"], 0))
-                    return (row["total"] / n) / 7 * 30 if n > 0 else 0.0
-                ep_pivot["total"] = ep_pivot.apply(_norm_ep, axis=1)
+                apis_arr = ep_pivot["api"].to_numpy()
+                recs_arr = ep_pivot["receptor"].to_numpy()
+                is_pf = pd.Series(apis_arr).isin(_NORM_CPF_APIS).to_numpy()
+                is_pj = pd.Series(apis_arr).isin(_NORM_CNPJ_APIS).to_numpy()
+                denoms = ct_total.reindex(recs_arr).to_numpy(dtype=float, na_value=0.0)
+                if is_pf.any():
+                    denoms[is_pf] = ct_cpf.reindex(recs_arr[is_pf]).to_numpy(dtype=float, na_value=0.0)
+                if is_pj.any():
+                    denoms[is_pj] = ct_cnpj.reindex(recs_arr[is_pj]).to_numpy(dtype=float, na_value=0.0)
+                totals = ep_pivot["total"].to_numpy(dtype=float)
+                safe = denoms > 0
+                out = totals.copy()
+                out[safe] = (totals[safe] / denoms[safe]) / 7.0 * 30.0
+                out[~safe] = 0.0
+                ep_pivot["total"] = out
 
             # Dict O(1) para lookup (api, receptor, endpoint_id) → total
             ep_dict: dict = (
@@ -670,6 +737,7 @@ def get_api_requests(start: str = None, end: str = None, receptors: str = None, 
     })
 
 @app.get("/api/api-requests-timeseries", response_class=JSONResponse)
+@cached_response("api-requests-timeseries")
 def get_api_requests_timeseries(
     start: str = None, end: str = None,
     receptors: str = None,
@@ -761,6 +829,7 @@ def get_api_requests_timeseries(
 
 
 @app.get("/api/resources", response_class=JSONResponse)
+@cached_response("resources")
 def get_resources(start: str = None, end: str = None, receptors: str = None, status: str = "all", normalize: str = "0"):
     today = date.today()
     dt_start = _parse_date(start, today - timedelta(days=365))
@@ -777,10 +846,11 @@ def get_resources(start: str = None, end: str = None, receptors: str = None, sta
 
     if df.empty: return JSONResponse({"receptors": [], "values": [], "colors": []})
 
+    df_cons = _get_consents(dt_start, dt_end) if (not sel or norm) else pd.DataFrame()
+
     if sel:
         top_reps = [r for r in sel if r in df["receptor"].values]
     else:
-        df_cons = _get_consents(dt_start, dt_end)
         base = df_cons if not df_cons.empty else df
         top_reps = [r for r in _top10_with_bradesco(base) if r in df["receptor"].values]
 
@@ -791,7 +861,6 @@ def get_resources(start: str = None, end: str = None, receptors: str = None, sta
     values = totals.values.astype(float)
 
     if norm:
-        df_cons = _get_consents(dt_start, dt_end)
         ct = df_cons.groupby("receptor")["total"].sum() if not df_cons.empty else pd.Series(dtype=float)
         for i, rec in enumerate(totals.index):
             n = float(ct.get(rec, 0))
@@ -815,6 +884,7 @@ def get_resources(start: str = None, end: str = None, receptors: str = None, sta
     })
 
 @app.get("/api/stats", response_class=JSONResponse)
+@cached_response("stats")
 def get_stats():
     try:
         con = sqlite3.connect(str(config.DB_PATH))
