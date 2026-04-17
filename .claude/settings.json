@@ -21,7 +21,8 @@
       "Bash(python -c \"import json; d=json.load\\(open\\('/tmp/r1.json'\\)\\); print\\('receptors:', len\\(d['receptors']\\), 'apis:', len\\(d['apis']\\), 'max_val:', d['max_val'], 'endpoint_max:', d['endpoint_max_val']\\)\")",
       "Bash(kill %1)",
       "Bash(awk '{print $2}')",
-      "Bash(xargs -r kill)"
+      "Bash(xargs -r kill)",
+      "Bash(python3 -c ' *)"
     ]
   }
 }

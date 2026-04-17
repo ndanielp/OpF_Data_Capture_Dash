@@ -536,7 +536,6 @@
       min-width: 0;
     }
 
-    .main-content.is-loading { opacity: 0.45; pointer-events: none; transition: opacity 0.15s; }
 
     .main-content::-webkit-scrollbar {
       width: 6px;
@@ -639,7 +638,23 @@
       padding: var(--s5);
       min-width: 0;
       flex-shrink: 0;
+      position: relative;
+      overflow: hidden;
     }
+    .chart-card.card-loading::after {
+      content: '';
+      position: absolute;
+      top: 0; left: -60%; width: 60%; height: 2px;
+      background: linear-gradient(90deg, transparent, var(--text-accent), transparent);
+      animation: card-sweep 1.1s linear infinite;
+      pointer-events: none;
+    }
+    @keyframes card-sweep {
+      to { left: 110%; }
+    }
+    .chart-card.card-loading canvas,
+    .chart-card.card-loading table,
+    .chart-card.card-loading .ranking-list { opacity: 0.35; transition: opacity 0.12s; }
 
     .chart-head {
       display: flex;
@@ -1171,7 +1186,7 @@
 
       <div class="top-row">
         <!-- Ranking PF -->
-        <div class="chart-card ranking-card" style="display: flex; flex-direction: column;">
+        <div id="card-ranking-pf" class="chart-card ranking-card" style="display: flex; flex-direction: column;">
           <div class="chart-head" style="margin-bottom:0; flex-shrink: 0;">
             <div>
               <div class="chart-title" style="font-size:var(--tx-md)">Ranking PF</div>
@@ -1193,7 +1208,7 @@
         </div>
 
         <!-- Ranking PJ -->
-        <div class="chart-card ranking-card" style="display: flex; flex-direction: column;">
+        <div id="card-ranking-pj" class="chart-card ranking-card" style="display: flex; flex-direction: column;">
           <div class="chart-head" style="margin-bottom:0; flex-shrink: 0;">
             <div>
               <div class="chart-title" style="font-size:var(--tx-md)">Ranking PJ</div>
@@ -1215,7 +1230,7 @@
         </div>
 
         <!-- Chart 1: Consentimentos Únicos -->
-        <div class="chart-card" style="flex: 2; min-width: 380px;">
+        <div id="card-consents" class="chart-card" style="flex: 2; min-width: 380px;">
           <div class="chart-head">
             <div>
               <div class="chart-title">Evolução Consentimentos</div>
@@ -1241,7 +1256,7 @@
       <div class="api-charts-row">
 
         <!-- Chart 2: Heatmap -->
-        <div class="chart-card api-heatmap-card">
+        <div id="card-heatmap" class="chart-card api-heatmap-card">
           <div class="chart-head">
             <div>
               <div class="chart-title">Intensidade de Uso das APIs</div>
@@ -1275,7 +1290,7 @@
       </div>
 
       <!-- Chart 3: Resources -->
-      <div class="chart-card">
+      <div id="card-resources" class="chart-card">
         <div class="chart-head">
           <div>
             <div class="chart-title">Resources por Receptor</div>
@@ -1459,6 +1474,10 @@
         clearTimeout(t);
         t = setTimeout(() => fn.apply(this, args), wait);
       };
+    }
+    function setCardLoading(id, on) {
+      const el = document.getElementById(id);
+      if (el) el.classList.toggle('card-loading', on);
     }
 
     let _refreshAbort = null;
@@ -1693,6 +1712,8 @@
     }
 
     async function updateChart1(params, signal) {
+      ['card-consents','card-ranking-pf','card-ranking-pj'].forEach(id => setCardLoading(id, true));
+      try {
       const resp = await fetch('/api/consents?' + params, { signal });
       const data = await resp.json();
       _consentsData = data;
@@ -1703,12 +1724,15 @@
       }
       empty.style.display = 'none'; canvas.style.display = '';
       renderConsentsView();
+      } finally { ['card-consents','card-ranking-pf','card-ranking-pj'].forEach(id => setCardLoading(id, false)); }
     }
 
     /* ============================================================
        CHART 2 — HEATMAP
        ============================================================ */
     async function updateChart2(params, signal) {
+      setCardLoading('card-heatmap', true);
+      try {
       const resp = await fetch('/api/api-requests?' + params, { signal });
       const data = await resp.json();
       _apiData = data;
@@ -1724,6 +1748,7 @@
 
       renderHeatmapTable(data);
       // updateChartApiTime é chamado pelo Promise.all em refresh() — não duplicar aqui
+      } finally { setCardLoading('card-heatmap', false); }
     }
 
     let _heatmapDelegated = false;
@@ -2002,6 +2027,8 @@
     }
 
     async function updateChart3(params, signal) {
+      setCardLoading('card-resources', true);
+      try {
       const resp = await fetch('/api/resources?' + params, { signal });
       const data = await resp.json();
       _resData = data;
@@ -2028,6 +2055,7 @@
         hSub.textContent = 'Volume absoluto acumulado no período';
       }
       barChart.update();
+      } finally { setCardLoading('card-resources', false); }
     }
 
     /* ============================================================
@@ -2144,6 +2172,8 @@
         return;
       }
       section.style.display = 'flex';
+      setCardLoading('api-time-section', true);
+      try {
 
       const p = new URLSearchParams(globalParams);
       p.set('receptors', [..._selectedHeatmapReceptors].join(','));
@@ -2201,6 +2231,7 @@
 
       document.getElementById('api-time-subtitle').textContent =
         data.filter_label || (data.normalize ? 'Chamadas por consentimento · semana' : 'Total de chamadas');
+      } finally { setCardLoading('api-time-section', false); }
     }
 
     /* ============================================================
