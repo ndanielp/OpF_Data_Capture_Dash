@@ -176,7 +176,7 @@ def _get_ep_ecosystem_stats(w1: str, w2: str, w3: str, w4: str) -> dict:
     return result
 
 
-def get_endpoint_depth(institution: str, from_date: str = "2000-01-01", to_date: str = "2100-01-01") -> dict:
+def get_endpoint_depth(institution: str, from_date: str = "2000-01-01", to_date: str = "2100-01-01", normalize: bool = True) -> dict:
     """Retorna profundidade de consumo por endpoint para a instituição e estatísticas do ecossistema."""
     con = sqlite3.connect(str(config.DB_PATH))
     con.row_factory = sqlite3.Row
@@ -201,6 +201,11 @@ def get_endpoint_depth(institution: str, from_date: str = "2000-01-01", to_date:
         con.close()
 
     # ── 1. Intensidades da instituição ──────────────────────────────────
+    def _ep_value(req_4w: float, consents: float) -> float:
+        if normalize:
+            return _ep_intensity(req_4w, consents)
+        return round(req_4w / 4.0, 1)  # média semanal bruta
+
     institution_endpoints: dict = {}
     _cust_req_total   = 0.0
     _cust_avg_c_total = 0.0
@@ -211,12 +216,11 @@ def get_endpoint_depth(institution: str, from_date: str = "2000-01-01", to_date:
             ep_l = ep.lower()
             sub  = "pj" if ("jurídica" in ep_l or "juridica" in ep_l) else "pf"
             cu   = float(row["avg_c_cnpj"] or 0) if sub == "pj" else float(row["avg_c_cpf"] or 0)
-            # Acumular para intensidade agregada da API com consentimento total
             _cust_req_total   += float(row["req_4w"])
             _cust_avg_c_total  = float(row["avg_c_total"] or 0)
         else:
             cu = _ep_consents(ep, row["avg_c_total"], row["avg_c_cpf"], row["avg_c_cnpj"])
-        val = _ep_intensity(float(row["req_4w"]), cu)
+        val = _ep_value(float(row["req_4w"]), cu)
 
         if api == "customers":
             institution_endpoints.setdefault("customers", {"pf": {}, "pj": {}})
@@ -225,10 +229,9 @@ def get_endpoint_depth(institution: str, from_date: str = "2000-01-01", to_date:
             institution_endpoints.setdefault(api, {})
             institution_endpoints[api][ep] = val
 
-    # Intensidade agregada da API customers usando consentimento total
     if "customers" in institution_endpoints:
         institution_endpoints["customers"]["api_intensity"] = \
-            _ep_intensity(_cust_req_total, _cust_avg_c_total)
+            _ep_value(_cust_req_total, _cust_avg_c_total)
 
     # ── 2. Estatísticas do ecossistema (cacheadas por conjunto de semanas) ──
     ecosystem_stats = _get_ep_ecosystem_stats(*padded)
@@ -457,7 +460,7 @@ def get_profile_header(institution: str, from_date: str = "2000-01-01", to_date:
     }
 
 
-def get_tornado_data(institution: str, from_date: str = "2000-01-01", to_date: str = "2100-01-01") -> dict:
+def get_tornado_data(institution: str, from_date: str = "2000-01-01", to_date: str = "2100-01-01", normalize: bool = True) -> dict:
     """Wrapper público para _get_tornado_data — abre sua própria conexão."""
     con = sqlite3.connect(str(config.DB_PATH))
     con.row_factory = sqlite3.Row
@@ -466,71 +469,100 @@ def get_tornado_data(institution: str, from_date: str = "2000-01-01", to_date: s
     rname = cur.fetchone()
     inst_name = rname["receptor"] if rname else institution
     inst_clean_name = LABEL_MAP.get(inst_name, inst_name.title())
-    result = _get_tornado_data(cur, institution, inst_clean_name, from_date, to_date)
+    result = _get_tornado_data(cur, institution, inst_clean_name, from_date, to_date, normalize)
     con.close()
     return result
 
 
-_strategic_map_cache = TTLCache(maxsize=4, ttl=3600)
+_strategic_map_cache = TTLCache(maxsize=8, ttl=3600)
 _strategic_map_lock  = threading.Lock()
 
 @cached(cache=_strategic_map_cache, lock=_strategic_map_lock)
-def _get_strategic_map(from_date: str, to_date: str) -> dict:
-    """Calcula o Mapa Estratégico: intensidade por grupo para todos os receptores.
-    Lê de api_group_weekly (pré-agregada) para evitar o JOIN pesado em tempo real.
+def _get_strategic_map(from_date: str, to_date: str, normalize: bool = True) -> dict:
+    """Calcula o Mapa Estratégico para todos os receptores.
+
+    normalize=True  → req / consentimento / 30d   (média das últimas 4 semanas)
+    normalize=False → total de requisições no período filtrado (sem normalização)
     """
     con = sqlite3.connect(str(config.DB_PATH))
     con.row_factory = sqlite3.Row
     cur = con.cursor()
 
-    # 1. Últimas 4 semanas com dados no período
-    cur.execute("""
-        SELECT DISTINCT date FROM api_group_weekly
-        WHERE date >= ? AND date <= ?
-        ORDER BY date DESC LIMIT 4
-    """, (from_date, to_date))
-    weeks = [r["date"] for r in cur.fetchall()]
-    if not weeks:
-        con.close()
-        return {"reference_weeks": [], "all_receptors": {}, "group_stats": {}}
-
-    ph = ",".join("?" * len(weeks))
-
-    # 2. Intensidade semanal por receptor_uuid e grupo — leitura direta da tabela pré-agregada
-    cur.execute(f"""
-        SELECT receptor_uuid, receptor, grp, req_week, consents_total
-        FROM api_group_weekly
-        WHERE date IN ({ph})
-    """, weeks)
-    rows = cur.fetchall()
-    con.close()
-
-    # 3. Agrupar por (receptor_uuid, grupo) → lista de intensidades semanais
-    weekly = defaultdict(lambda: defaultdict(list))
-    receptor_labels = {}
-    for row in rows:
-        cons = float(row["consents_total"] or 0)
-        if cons <= 0:
-            continue
-        intensity = (row["req_week"] / cons) * (30.0 / 7)
-        uid = row["receptor_uuid"]
-        weekly[uid][row["grp"]].append(intensity)
-        if uid not in receptor_labels:
-            receptor_labels[uid] = LABEL_MAP.get(row["receptor"], row["receptor"].title())
-
-    # 4. Média das 4 semanas por (receptor, grupo)
     GROUPS = ["Conta", "Cartao", "Investimento", "Credito", "Cambio", "Identidade", "Resource"]
-    all_receptors = {}  # keyed by display label
-    for uid, groups in weekly.items():
-        label = receptor_labels.get(uid, uid)
-        all_receptors[label] = {
-            grp: round(sum(vals) / len(vals), 2)
-            for grp, vals in groups.items()
-        }
+    _empty = {"reference_weeks": [], "all_receptors": {}, "group_stats": {}}
 
-    # 5. GROUP_STATS: mean, median, Q1, Q3, IQR, outlier_fence (Tukey)
-    group_stats = {}
-    outliers    = {}   # {grp: [{label, value}]}
+    receptor_vals: dict = defaultdict(lambda: defaultdict(float))  # label → grp → value
+    receptor_labels: dict = {}
+
+    if normalize:
+        # ── Modo normalizado: média de TODAS as semanas do período ─────────
+        cur.execute("""
+            SELECT receptor_uuid, receptor, grp, req_week, consents_total, date
+            FROM api_group_weekly
+            WHERE date >= ? AND date <= ?
+            ORDER BY date
+        """, (from_date, to_date))
+        rows = cur.fetchall()
+        con.close()
+
+        if not rows:
+            return _empty
+
+        # acumula intensidades semanais para fazer a média do período inteiro
+        weekly: dict = defaultdict(lambda: defaultdict(list))
+        all_dates: set = set()
+        for row in rows:
+            cons = float(row["consents_total"] or 0)
+            req  = float(row["req_week"]       or 0)
+            if cons <= 0:
+                continue
+            uid = row["receptor_uuid"]
+            weekly[uid][row["grp"]].append((req / cons) * (30.0 / 7))
+            all_dates.add(row["date"])
+            if uid not in receptor_labels:
+                receptor_labels[uid] = LABEL_MAP.get(row["receptor"], row["receptor"].title())
+
+        for uid, groups in weekly.items():
+            label = receptor_labels.get(uid, uid)
+            for grp, vals in groups.items():
+                receptor_vals[label][grp] = round(sum(vals) / len(vals), 2)
+
+        sorted_dates = sorted(all_dates)
+        reference_weeks = [sorted_dates[0], sorted_dates[-1]] if sorted_dates else []
+
+    else:
+        # ── Modo volume bruto: total de req no período filtrado ────────────
+        cur.execute("""
+            SELECT receptor_uuid, receptor, grp, SUM(req_week) AS total_req
+            FROM api_group_weekly
+            WHERE date >= ? AND date <= ?
+            GROUP BY receptor_uuid, receptor, grp
+        """, (from_date, to_date))
+        rows = cur.fetchall()
+        cur.execute("""
+            SELECT MIN(date) AS first_w, MAX(date) AS last_w
+            FROM api_group_weekly WHERE date >= ? AND date <= ?
+        """, (from_date, to_date))
+        wrange = cur.fetchone()
+        con.close()
+
+        if not rows:
+            return _empty
+
+        for row in rows:
+            uid = row["receptor_uuid"]
+            if uid not in receptor_labels:
+                receptor_labels[uid] = LABEL_MAP.get(row["receptor"], row["receptor"].title())
+            label = receptor_labels[uid]
+            receptor_vals[label][row["grp"]] = round(float(row["total_req"] or 0), 0)
+
+        reference_weeks = [wrange["first_w"], wrange["last_w"]] if wrange else []
+
+    all_receptors = {label: dict(grps) for label, grps in receptor_vals.items()}
+
+    # ── GROUP_STATS: mean, median, Q1, Q3, IQR, outlier_fence (Tukey) ──
+    group_stats: dict = {}
+    outliers:    dict = {}
     for grp in GROUPS:
         vals = sorted(all_receptors[rec].get(grp, 0.0) for rec in all_receptors)
         n = len(vals)
@@ -545,7 +577,7 @@ def _get_strategic_map(from_date: str, to_date: str) -> dict:
         q1_v     = statistics.median(lower) if lower else 0.0
         q3_v     = statistics.median(upper)
         iqr_v    = q3_v - q1_v
-        fence_v  = q3_v + 1.5 * iqr_v   # Tukey upper fence
+        fence_v  = q3_v + 1.5 * iqr_v
         group_stats[grp] = {
             "mean":          round(mean_v,   2),
             "median":        round(median_v, 2),
@@ -554,39 +586,47 @@ def _get_strategic_map(from_date: str, to_date: str) -> dict:
             "iqr":           round(iqr_v,    2),
             "outlier_fence": round(fence_v,  2),
         }
-        # Flag receptors above the fence
-        outliers[grp] = [
-            {"label": rec, "value": round(all_receptors[rec][grp], 1)}
+        if normalize:
+            outliers[grp] = [
+                {"label": rec, "value": round(all_receptors[rec][grp], 1)}
+                for rec in all_receptors
+                if all_receptors[rec].get(grp, 0.0) > fence_v
+            ]
+        else:
+            outliers[grp] = []   # modo bruto: todos os pontos visíveis, sem triângulos
+
+    if normalize:
+        groups_with_outliers = [(g, group_stats[g]["outlier_fence"]) for g in GROUPS if outliers.get(g)]
+        worst_case_group = max(groups_with_outliers, key=lambda t: t[1])[0] if groups_with_outliers else None
+        non_outlier_vals = [
+            all_receptors[rec].get(grp, 0.0)
+            for grp in GROUPS
             for rec in all_receptors
-            if all_receptors[rec].get(grp, 0.0) > fence_v
+            if all_receptors[rec].get(grp, 0.0) <= group_stats[grp]["outlier_fence"]
         ]
-
-    # worst_case_group: grupo com maior fence que tenha outliers
-    groups_with_outliers = [(g, group_stats[g]["outlier_fence"]) for g in GROUPS if outliers.get(g)]
-    worst_case_group = max(groups_with_outliers, key=lambda t: t[1])[0] if groups_with_outliers else None
-
-    # x_cap: maior valor não-outlier entre todos os grupos (ponto imediatamente antes dos outliers)
-    non_outlier_vals = [
-        all_receptors[rec].get(grp, 0.0)
-        for grp in GROUPS
-        for rec in all_receptors
-        if all_receptors[rec].get(grp, 0.0) <= group_stats[grp]["outlier_fence"]
-    ]
-    x_cap = round(max(non_outlier_vals) * 1.05, 1) if non_outlier_vals else 500.0
+        x_cap = round(max(non_outlier_vals) * 1.05, 1) if non_outlier_vals else 500.0
+    else:
+        worst_case_group = None
+        all_vals = [
+            all_receptors[rec].get(grp, 0.0)
+            for grp in GROUPS
+            for rec in all_receptors
+        ]
+        x_cap = round(max(all_vals) * 1.05, 0) if all_vals else 1e9
 
     return {
-        "reference_weeks":   weeks,
-        "all_receptors":     all_receptors,
-        "group_stats":       group_stats,
-        "outliers":          outliers,
-        "worst_case_group":  worst_case_group,
-        "x_cap":             x_cap,
+        "reference_weeks":  reference_weeks,
+        "all_receptors":    all_receptors,
+        "group_stats":      group_stats,
+        "outliers":         outliers,
+        "worst_case_group": worst_case_group,
+        "x_cap":            x_cap,
     }
 
 
 
 def _get_tornado_data(cur, institution_uuid: str, inst_display_name: str,
-                      from_date: str = "2000-01-01", to_date: str = "2100-01-01") -> dict:
+                      from_date: str = "2000-01-01", to_date: str = "2100-01-01", normalize: bool = True) -> dict:
     """Calcula o fluxo bilateral de requisições entre a instituição (por UUID) e cada par."""
     # 1. Semanas dentro do período
     cur.execute("SELECT COUNT(DISTINCT date) AS n_weeks, MIN(date) AS min_date, MAX(date) AS max_date FROM api_requests WHERE status=200 AND date >= ? AND date <= ?", (from_date, to_date))
@@ -596,7 +636,7 @@ def _get_tornado_data(cur, institution_uuid: str, inst_display_name: str,
         return {"reference_weeks": [], "scale_max": 0, "left_label": "", "right_label": "", "rows": []}
 
     weeks = [meta["min_date"], meta["max_date"]]  # só para period_label
-    norm = 30.0 / (n_weeks * 7.0)                 # normaliza para req/30d
+    norm = 30.0 / (n_weeks * 7.0) if normalize else 1.0 / n_weeks
 
     # 2. LEFT: institution_uuid como receptor — ela consulta transmissores
     cur.execute("""
@@ -683,10 +723,11 @@ def _get_tornado_data(cur, institution_uuid: str, inst_display_name: str,
 
 _TEMPORAL_GROUPS = ['Conta', 'Cartao', 'Investimento', 'Credito', 'Cambio', 'Identidade', 'Resource']
 
-def get_temporal_intensity(institution: str, from_date: str = "2000-01-01", to_date: str = "2100-01-01") -> dict:
+def get_temporal_intensity(institution: str, from_date: str = "2000-01-01", to_date: str = "2100-01-01", normalize: bool = True) -> dict:
     """
     Retorna todas as semanas disponíveis para a instituição dentro do período:
-      {"2025-06-06": {"Conta": 61.11, ..., "Identidade": 3.2}, ...}
+      normalize=True  → {"2025-06-06": {"Conta": 61.11, ...}}  (req/consent/30d)
+      normalize=False → {"2025-06-06": {"Conta": 12500, ...}}  (req_week bruto)
     Lê de api_group_weekly (pré-agregada) em vez do JOIN pesado em api_requests.
     """
     result: dict = {}
@@ -707,10 +748,13 @@ def get_temporal_intensity(institution: str, from_date: str = "2000-01-01", to_d
         grp  = row["grp"]
         req  = float(row["req_week"]      or 0)
         cons = float(row["consents_total"] or 0)
-        intensity = round((req / cons) * (30.0 / 7.0), 4) if cons > 0 else 0.0
+        if normalize:
+            value = round((req / cons) * (30.0 / 7.0), 4) if cons > 0 else 0.0
+        else:
+            value = round(req, 0)
         if date not in result:
             result[date] = {g: 0.0 for g in _TEMPORAL_GROUPS}
-        result[date][grp] = intensity
+        result[date][grp] = value
 
     return dict(sorted(result.items()))
 

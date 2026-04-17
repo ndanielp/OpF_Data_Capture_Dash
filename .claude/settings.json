@@ -27,7 +27,16 @@
       "Bash(curl -s http://localhost:8000/api/receptors)",
       "Bash(python -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\(f'Count: {len\\(d\\)}, first: {d[0] if d else None}'\\)\")",
       "Bash(.venv/Scripts/uvicorn.exe server:app --port 8000)",
-      "Bash(curl -s http://localhost:8000/profile)"
+      "Bash(curl -s http://localhost:8000/profile)",
+      "Bash(curl -s \"http://localhost:8000/api/of/receptor-profile/temporal?institution=926e3037-a685-553c-afa3-f7cb46ff8084&from=2025-01-01&to=2026-04-17&normalize=false\")",
+      "Bash(curl -s \"http://localhost:8000/api/of/receptor-profile/temporal?institution=926e3037-a685-553c-afa3-f7cb46ff8084&from=2025-01-01&to=2026-04-17&normalize=true\")",
+      "Bash(taskkill /F /IM uvicorn.exe)",
+      "Bash(curl -s \"http://localhost:8000/api/of/receptor-profile/temporal?institution=926e3037-a685-553c-afa3-f7cb46ff8084&from=2025-10-01&to=2025-11-30&normalize=true\")",
+      "Bash(python -c \"import json,sys; d=json.load\\(sys.stdin\\); k=list\\(d.keys\\(\\)\\)[0]; print\\('norm=true:', d[k]\\)\")",
+      "Bash(curl -s \"http://localhost:8000/api/of/receptor-profile/temporal?institution=926e3037-a685-553c-afa3-f7cb46ff8084&from=2025-10-01&to=2025-11-30&normalize=false\")",
+      "Bash(python -c \"import json,sys; d=json.load\\(sys.stdin\\); k=list\\(d.keys\\(\\)\\)[0]; print\\('norm=false:', d[k]\\)\")",
+      "PowerShell(Stop-Process -Force)",
+      "PowerShell(Invoke-RestMethod \"http://localhost:8000/api/of/receptor-profile/temporal?institution=926e3037-a685-553c-afa3-f7cb46ff8084&normalize=false\")"
     ]
   }
 }

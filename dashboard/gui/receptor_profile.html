@@ -303,8 +303,8 @@ canvas{display:block}
         <ul class="receptor-list" id="prof-receptor-list"></ul>
       </div>
 
-      <!-- Status API -->
-      <div class="sidebar-group">
+      <!-- Status API — desabilitado no perfil (sempre 200) -->
+      <div class="sidebar-group" style="opacity:0.4;pointer-events:none" title="Perfil Receptor analisa apenas requisições bem-sucedidas (200)">
         <div class="sidebar-group-header">
           <span class="sidebar-group-label">Status API</span>
         </div>
@@ -417,9 +417,9 @@ canvas{display:block}
         <div class="chart-head">
           <div>
             <div class="chart-title">Mapa Estratégico — Intensidade por Grupo</div>
-            <div class="chart-subtitle">Req / consentimento / 30 dias · Média das últimas 4 semanas · Todos os receptores · Excl. consents</div>
+            <div class="chart-subtitle" id="smap-subtitle">Req / consentimento / 30 dias · Média das últimas 4 semanas · Todos os receptores · Excl. consents</div>
           </div>
-          <div class="chart-badge">req/consent/30d</div>
+          <div class="chart-badge" id="smap-badge">req/consent/30d</div>
         </div>
         <div style="position:relative;height:340px">
           <canvas id="dotChart"></canvas>
@@ -439,7 +439,7 @@ canvas{display:block}
         <div class="chart-head">
           <div>
             <div class="chart-title">Rede de Transmissores — Tornado</div>
-            <div class="chart-subtitle">Média 30 dias (últimas 4 semanas) · Requisições em milhões</div>
+            <div class="chart-subtitle" id="tornado-subtitle">Média 30 dias (últimas 4 semanas) · Requisições em milhões</div>
           </div>
         </div>
         <div class="annotation" id="tornado-annotation">
@@ -495,9 +495,9 @@ canvas{display:block}
     <!-- ENDPOINT DEPTH -->
     <div class="section-label">Profundidade de Consumo por API</div>
     <div style="display:flex;align-items:center;justify-content:space-between;margin-top:-12px;margin-bottom:var(--s4);flex-wrap:wrap;gap:var(--s3)">
-      <div style="font-size:var(--tx-xs);color:var(--text-secondary)">
+      <div id="depth-subtitle" style="font-size:var(--tx-xs);color:var(--text-secondary)">
         Intensidade média por endpoint · Req / consentimento / 30 dias (média do período) · Excl. Resource
-</div>
+      </div>
       <div style="display:flex;gap:var(--s5);flex-shrink:0">
         <div style="display:flex;align-items:center;gap:5px;font-size:var(--tx-xs);color:var(--text-muted)">
           <div style="width:12px;height:2px;background:#F5A623;border-radius:1px"></div>Mediana ecossistema
@@ -650,6 +650,7 @@ document.getElementById('prof-toggle-escala').addEventListener('click', function
     const prev = JSON.parse(sessionStorage.getItem('opf:filters') || '{}');
     sessionStorage.setItem('opf:filters', JSON.stringify({...prev, normalize: this.classList.contains('on') ? '1' : '0'}));
   } catch (_) {}
+  if (_currentInstitution) loadProfile(_currentInstitution);
 });
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -680,9 +681,11 @@ async function _loadProfileNow(institutionId){
     const prev = JSON.parse(sessionStorage.getItem('opf:filters') || '{}');
     sessionStorage.setItem('opf:filters', JSON.stringify({ ...prev, start: fromDate, end: toDate, institution: institutionId }));
   } catch (_) { /* sessionStorage unavailable — ignore */ }
+  const norm = document.getElementById('prof-toggle-escala').classList.contains('on');
   const base = '/api/of/receptor-profile';
   const qs   = `institution=${encodeURIComponent(institutionId)}&from=${fromDate}&to=${toDate}`;
   const qsMap = `from=${fromDate}&to=${toDate}`;
+  const qsNorm = `${qs}&normalize=${norm}`;
 
   // 1. Header primeiro → UX imediata
   try{
@@ -713,31 +716,31 @@ async function _loadProfileNow(institutionId){
   // 2. Charts em paralelo — falha isolada por seção
   const instLabel = document.getElementById('hdr-name').textContent;
   const [smRes, tsRes, tornadoRes, depthRes] = await Promise.allSettled([
-    fetch(`${base}/strategic-map?${qsMap}`, { signal }),
-    fetch(`${base}/temporal?${qs}`, { signal }),
-    fetch(`${base}/tornado?${qs}`, { signal }),
-    fetch(`${base}/depth?${qs}`, { signal }),
+    fetch(`${base}/strategic-map?${qsMap}&normalize=${norm}`, { signal }),
+    fetch(`${base}/temporal?${qsNorm}`, { signal }),
+    fetch(`${base}/tornado?${qsNorm}`, { signal }),
+    fetch(`${base}/depth?${qsNorm}`, { signal }),
   ]);
   if (signal.aborted) return;
 
   if(smRes.status==='fulfilled' && smRes.value.ok)
-    renderStrategicMap(await smRes.value.json(), {label: instLabel});
+    renderStrategicMap(await smRes.value.json(), {label: instLabel}, norm);
   else console.warn('strategic-map falhou', smRes);
   _setCardLoading('card-smap', false);
 
   if(tsRes.status==='fulfilled' && tsRes.value.ok)
-    renderTemporalIntensity(await tsRes.value.json());
+    renderTemporalIntensity(await tsRes.value.json(), norm);
   else console.warn('temporal falhou', tsRes);
   _setCardLoading('card-temporal', false);
   _setCardLoading('card-resource-chart', false);
 
   if(tornadoRes.status==='fulfilled' && tornadoRes.value.ok)
-    renderTornadoChart(await tornadoRes.value.json());
+    renderTornadoChart(await tornadoRes.value.json(), norm);
   else console.warn('tornado falhou', tornadoRes);
   _setCardLoading('card-tornado', false);
 
   if(depthRes.status==='fulfilled' && depthRes.value.ok)
-    renderEndpointDepth(await depthRes.value.json());
+    renderEndpointDepth(await depthRes.value.json(), norm);
   else { if (depthSec) depthSec.innerHTML = ''; console.warn('depth falhou', depthRes); }
 }
 
@@ -877,7 +880,7 @@ const SM_GROUPS   = ['Conta','Cartao','Investimento','Credito','Cambio','Identid
 const SM_LABELS   = {Conta:'Contas',Cartao:'Cartão de Crédito',Investimento:'Investimentos',Credito:'Empréstimos',Cambio:'Câmbio',Identidade:'Cadastro',Resource:'Resource'};
 const SM_COLORS   = {Conta:'#4A9EFF',Cartao:'#8B5CF6',Investimento:'#2ECC7F',Credito:'#FF6B6B',Cambio:'#A855F7',Identidade:'#F5A623',Resource:'#14B8A6'};
 
-function renderStrategicMap(sm, institution) {
+function renderStrategicMap(sm, institution, normalize = true) {
   if(!sm || !sm.all_receptors || !sm.group_stats) return;
 
   const allRec      = sm.all_receptors;
@@ -887,6 +890,30 @@ function renderStrategicMap(sm, institution) {
   const worstGroup  = sm.worst_case_group || null;
   const instLabel   = institution.label;
   const instColor = document.getElementById('hdr-logo').style.background || '#4A9EFF';
+
+  const smUnit  = normalize ? 'req/consent/30d' : 'total no período';
+  const fmtSmap = normalize
+    ? v => v.toFixed(1)
+    : v => v >= 1e9 ? (v/1e9).toFixed(2).replace('.',',')+'B'
+         : v >= 1e6 ? (v/1e6).toFixed(1).replace('.',',')+'M'
+         : v >= 1e3 ? (v/1e3).toFixed(0)+'k'
+         : v.toFixed(0);
+
+  // Badge: period range for total mode, unit for normalized
+  const smBadge = document.getElementById('smap-badge');
+  if(smBadge){
+    if(sm.reference_weeks?.length >= 2){
+      const first = sm.reference_weeks[0], last = sm.reference_weeks[sm.reference_weeks.length - 1];
+      smBadge.textContent = `${fmtDate(first)} – ${fmtDate(last)}`;
+    } else {
+      smBadge.textContent = smUnit;
+    }
+  }
+
+  const smSub = document.getElementById('smap-subtitle');
+  if(smSub) smSub.textContent = normalize
+    ? 'Req / consentimento / 30 dias · Média do período filtrado · Todos os receptores · Excl. consents'
+    : 'Total de requisições no período filtrado · Todos os receptores · Excl. consents';
 
   // Update legend institution label
   const li = document.getElementById('dot-legend-inst');
@@ -1032,8 +1059,8 @@ function renderStrategicMap(sm, institution) {
         x: {
           min: 0, max: xCap,
           grid: { color: '#252A3A' },
-          title: { display: true, text: 'req / consentimento / 30 dias  (▶ = fora da escala · ⚠ = outlier estatístico · valor real no tooltip)', color: '#4A5270', font: { size: 10 } },
-          ticks: { color: '#4A5270', font: { size: 10 } }
+          title: { display: true, text: `${smUnit}  (▶ = fora da escala · ⚠ = outlier estatístico · valor real no tooltip)`, color: '#4A5270', font: { size: 10 } },
+          ticks: { color: '#4A5270', font: { size: 10 }, callback: v => fmtSmap(v) }
         },
         y: {
           min: -0.6, max: SM_GROUPS.length - 0.4,
@@ -1068,17 +1095,18 @@ function renderStrategicMap(sm, institution) {
               const ds  = item.dataset;
               const lb  = ds.label;
               const grp = SM_GROUPS[Math.round(item.parsed.y)];
-              const val = item.parsed.x.toFixed(1);
-              if(lb.startsWith('median_')) return `Mediana ecossistema: ${val}`;
-              if(lb.startsWith('q3_'))     return `3º Quartil (top 25%): ${val}`;
+              if(lb.startsWith('median_')) return `Mediana ecossistema: ${fmtSmap(item.parsed.x)}`;
+              if(lb.startsWith('q3_'))     return `3º Quartil (top 25%): ${fmtSmap(item.parsed.x)}`;
               if(lb.startsWith('outlier__')) {
-                const fence = (stats[grp]?.outlier_fence || 0).toFixed(1);
-                return [`${SM_LABELS[grp]}: ${ds._realVal ?? '?'} req/consent/30d`, `Fence Tukey: ${fence}`];
+                const fence = fmtSmap(stats[grp]?.outlier_fence || 0);
+                const rv = ds._realVal != null ? fmtSmap(ds._realVal) : '?';
+                return [`${SM_LABELS[grp]}: ${rv} ${smUnit}`, `Fence Tukey: ${fence}`];
               }
               if(lb.startsWith('offscale__')) {
-                return `${ds._receptor} — ${SM_LABELS[grp]}: ${ds._realVal ?? '?'} req/consent/30d`;
+                const rv = ds._realVal != null ? fmtSmap(ds._realVal) : '?';
+                return `${ds._receptor} — ${SM_LABELS[grp]}: ${rv} ${smUnit}`;
               }
-              return `${SM_LABELS[grp]}: ${val} req/consent/30d`;
+              return `${SM_LABELS[grp]}: ${fmtSmap(item.parsed.x)} ${smUnit}`;
             }
           }
         }
@@ -1099,10 +1127,16 @@ function barWidth(value, scaleMax){
   return Math.max(2, Math.round((value/scaleMax)*160));
 }
 
-function renderTornadoChart(tornadoData){
+function renderTornadoChart(tornadoData, normalize = true){
   const container=document.getElementById('tornadoContainer');
   if(!container) return;
   container.innerHTML='';
+
+  const torUnit = normalize ? 'req/30d' : 'req/semana';
+  const torSubEl = document.getElementById('tornado-subtitle');
+  if(torSubEl) torSubEl.textContent = normalize
+    ? 'Média 30 dias (últimas 4 semanas) · Requisições em milhões'
+    : 'Média semanal (volume bruto) · Requisições em milhões';
 
   if(!tornadoData||!tornadoData.rows||tornadoData.rows.length===0){
     container.innerHTML='<div style="padding:var(--s4);color:var(--text-muted);font-size:var(--tx-xs);text-align:center">Nenhuma relação de transmissão encontrada para este período.</div>';
@@ -1141,8 +1175,8 @@ function renderTornadoChart(tornadoData){
       :'<span class="tornado-missing">—</span>';
 
     // Tooltip
-    const leftStr=d.left!==null?`${tornadoData.left_label}: ${fmtTornado(d.left)} req/30d`:'Sem dados (esquerda)';
-    const rightStr=d.right!==null?`${tornadoData.right_label}: ${fmtTornado(d.right)} req/30d`:'Sem dados (direita)';
+    const leftStr=d.left!==null?`${tornadoData.left_label}: ${fmtTornado(d.left)} ${torUnit}`:'Sem dados (esquerda)';
+    const rightStr=d.right!==null?`${tornadoData.right_label}: ${fmtTornado(d.right)} ${torUnit}`:'Sem dados (direita)';
     const tooltip=`${d.label}\n${leftStr}\n${rightStr}${periodLabel?'\nReferência: '+periodLabel:''}`;
 
     row.title=tooltip;
@@ -1164,15 +1198,19 @@ const _TS_STACK_GROUPS = [
   {key:'Cambio',       label:'Câmbio',             color:'#A855F7'},
 ];
 
-function renderTemporalIntensity(tsIntensity) {
+function renderTemporalIntensity(tsIntensity, normalize = true) {
   if(!tsIntensity || !Object.keys(tsIntensity).length) return;
 
   const dates  = Object.keys(tsIntensity);
   const labels = dates.map(fmtDate);
+  const yLabel  = normalize ? 'req/consent/30d' : 'req / semana';
+  const fmtVal  = normalize
+    ? v => v.toFixed(1)
+    : v => v >= 1e6 ? (v/1e6).toFixed(1)+'M' : v >= 1e3 ? (v/1e3).toFixed(0)+'k' : v.toFixed(0);
 
-  // Badge: period range
+  // Badge: period range + escala
   const badge = document.getElementById('stacked-badge');
-  if(badge && dates.length) badge.textContent = `${fmtDate(dates[0])} – ${fmtDate(dates[dates.length-1])}`;
+  if(badge && dates.length) badge.textContent = `${fmtDate(dates[0])} – ${fmtDate(dates[dates.length-1])} · ${normalize ? 'Normalizado' : 'Volume bruto'}`;
 
   // ── Stacked area (excl. Resource) ─────────────────────────────────
   const stackDatasets = _TS_STACK_GROUPS.map(g => ({
@@ -1192,6 +1230,8 @@ function renderTemporalIntensity(tsIntensity) {
     if (activeCharts.stacked) {
       activeCharts.stacked.data.labels = labels;
       activeCharts.stacked.data.datasets = stackDatasets;
+      activeCharts.stacked.options.scales.y.title.text = yLabel;
+      activeCharts.stacked.options.plugins.tooltip.callbacks.label = ctx => ' ' + ctx.dataset.label + ': ' + fmtVal(ctx.raw);
       activeCharts.stacked.update('none');
     } else {
       activeCharts.stacked = new Chart(ctxS, {
@@ -1203,12 +1243,12 @@ function renderTemporalIntensity(tsIntensity) {
           scales: {
             x: { grid: { color: '#252A3A' }, ticks: { maxRotation: 0, maxTicksLimit: 13 } },
             y: { stacked: true, grid: { color: '#252A3A' }, min: 0,
-                 ticks: { callback: v => v.toFixed(0) },
-                 title: { display: true, text: 'req/consent/30d', color: '#4A5270', font: { size: 10 } } }
+                 ticks: { callback: v => fmtVal(v) },
+                 title: { display: true, text: yLabel, color: '#4A5270', font: { size: 10 } } }
           },
           plugins: {
             legend: { display: false },
-            tooltip: { ...TT, callbacks: { label: ctx => ' ' + ctx.dataset.label + ': ' + ctx.raw.toFixed(1) } }
+            tooltip: { ...TT, callbacks: { label: ctx => ' ' + ctx.dataset.label + ': ' + fmtVal(ctx.raw) } }
           }
         }
       });
@@ -1222,6 +1262,8 @@ function renderTemporalIntensity(tsIntensity) {
     if (activeCharts.resource) {
       activeCharts.resource.data.labels = labels;
       activeCharts.resource.data.datasets[0].data = resourceData;
+      activeCharts.resource.options.scales.y.title.text = yLabel;
+      activeCharts.resource.options.plugins.tooltip.callbacks.label = ctx => ' Resource: ' + fmtVal(ctx.raw);
       activeCharts.resource.update('none');
     } else {
       activeCharts.resource = new Chart(ctxR, {
@@ -1246,12 +1288,12 @@ function renderTemporalIntensity(tsIntensity) {
           scales: {
             x: { grid: { color: '#252A3A' }, ticks: { maxRotation: 0, maxTicksLimit: 13 } },
             y: { grid: { color: '#252A3A' }, min: 0,
-                 ticks: { callback: v => v.toFixed(0) },
-                 title: { display: true, text: 'req/consent/30d', color: '#4A5270', font: { size: 10 } } }
+                 ticks: { callback: v => fmtVal(v) },
+                 title: { display: true, text: yLabel, color: '#4A5270', font: { size: 10 } } }
           },
           plugins: {
             legend: { display: false },
-            tooltip: { ...TT, callbacks: { label: ctx => ' Resource: ' + ctx.raw.toFixed(1) } }
+            tooltip: { ...TT, callbacks: { label: ctx => ' Resource: ' + fmtVal(ctx.raw) } }
           }
         }
       });
@@ -1325,7 +1367,7 @@ function buildEpData(institutionEndpoints) {
   return result;
 }
 
-function renderEndpointDepth(endpointDepth) {
+function renderEndpointDepth(endpointDepth, normalize = true) {
   const section = document.getElementById('endpointSection');
   if (!section) return;
   section.innerHTML = '';
@@ -1357,7 +1399,15 @@ function renderEndpointDepth(endpointDepth) {
   });
   const GLOBAL_MAX = Math.max(...Object.values(groupTotals), 0.01);
 
-  function fmtVal(v) { return v < 0.01 ? v.toFixed(4) : v < 0.1 ? v.toFixed(3) : v.toFixed(2); }
+  const epUnit = normalize ? 'req/consent/30d' : 'req/sem';
+  const depthSub = document.getElementById('depth-subtitle');
+  if (depthSub) depthSub.textContent = normalize
+    ? 'Intensidade média por endpoint · Req / consentimento / 30 dias (média do período) · Excl. Resource'
+    : 'Volume médio por endpoint · Requisições / semana (média das últimas 4 semanas) · Excl. Resource';
+  function fmtVal(v) {
+    if (!normalize) return v >= 1e6 ? (v/1e6).toFixed(1)+'M' : v >= 1e3 ? (v/1e3).toFixed(0)+'k' : v.toFixed(0);
+    return v < 0.01 ? v.toFixed(4) : v < 0.1 ? v.toFixed(3) : v.toFixed(2);
+  }
 
   function intensityBar(total, color, trackW, height) {
     const fillW = Math.max(1, Math.round((total / GLOBAL_MAX) * trackW));

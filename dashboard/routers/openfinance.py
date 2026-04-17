@@ -66,12 +66,13 @@ def receptor_header(
 def receptor_strategic_map(
     from_date: Optional[str] = Query("2000-01-01", alias="from"),
     to_date:   Optional[str] = Query("2100-01-01", alias="to"),
+    normalize: bool = Query(True),
 ):
     cache = get_cache()
-    key = f"smap:{from_date}:{to_date}"
+    key = f"smap:{from_date}:{to_date}:{normalize}"
     if key not in cache:
         try:
-            cache[key] = of_analytics._get_strategic_map(from_date, to_date)
+            cache[key] = of_analytics._get_strategic_map(from_date, to_date, normalize)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
     return cache[key]
@@ -81,12 +82,13 @@ def receptor_temporal(
     institution: str = Query(...),
     from_date: Optional[str] = Query("2000-01-01", alias="from"),
     to_date:   Optional[str] = Query("2100-01-01", alias="to"),
+    normalize: bool = Query(True),
 ):
     cache = get_cache()
-    key = f"temporal:{institution}:{from_date}:{to_date}"
+    key = f"temporal:{institution}:{from_date}:{to_date}:{normalize}"
     if key not in cache:
         try:
-            cache[key] = of_analytics.get_temporal_intensity(institution, from_date, to_date)
+            cache[key] = of_analytics.get_temporal_intensity(institution, from_date, to_date, normalize)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
     return cache[key]
@@ -96,12 +98,13 @@ def receptor_tornado(
     institution: str = Query(...),
     from_date: Optional[str] = Query("2000-01-01", alias="from"),
     to_date:   Optional[str] = Query("2100-01-01", alias="to"),
+    normalize: bool = Query(True),
 ):
     cache = get_cache()
-    key = f"tornado:{institution}:{from_date}:{to_date}"
+    key = f"tornado:{institution}:{from_date}:{to_date}:{normalize}"
     if key not in cache:
         try:
-            cache[key] = of_analytics.get_tornado_data(institution, from_date, to_date)
+            cache[key] = of_analytics.get_tornado_data(institution, from_date, to_date, normalize)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
     return cache[key]
@@ -111,12 +114,13 @@ def receptor_depth(
     institution: str = Query(...),
     from_date: Optional[str] = Query("2000-01-01", alias="from"),
     to_date:   Optional[str] = Query("2100-01-01", alias="to"),
+    normalize: bool = Query(True),
 ):
     cache = get_cache()
-    key = f"depth:{institution}:{from_date}:{to_date}"
+    key = f"depth:{institution}:{from_date}:{to_date}:{normalize}"
     if key not in cache:
         try:
-            cache[key] = of_analytics.get_endpoint_depth(institution, from_date, to_date)
+            cache[key] = of_analytics.get_endpoint_depth(institution, from_date, to_date, normalize)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
     return cache[key]
