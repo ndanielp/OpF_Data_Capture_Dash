@@ -25,12 +25,71 @@
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;
   background:var(--bg-base);color:var(--text-primary);font-size:var(--tx-base);
-  line-height:1.5;-webkit-font-smoothing:antialiased;min-height:100vh}
+  line-height:1.5;-webkit-font-smoothing:antialiased;
+  height:100vh;display:flex;flex-direction:column;overflow:hidden}
 
 /* TITLEBAR */
 .titlebar{background:var(--bg-elevated);border-bottom:1px solid var(--border-subtle);
   height:38px;display:flex;align-items:center;padding:0 var(--s4);gap:var(--s2);
-  position:sticky;top:0;z-index:100}
+  flex-shrink:0;z-index:100}
+
+/* LAYOUT */
+.app-body{flex:1;display:flex;overflow:hidden;min-height:0}
+
+/* SIDEBAR */
+.sidebar{width:224px;background:var(--bg-surface);border-right:1px solid var(--border-subtle);
+  display:flex;flex-direction:column;overflow:hidden;flex-shrink:0}
+.sidebar-inner{flex:1;overflow-y:auto;overflow-x:hidden}
+.sidebar-inner::-webkit-scrollbar{width:4px}
+.sidebar-inner::-webkit-scrollbar-thumb{background:var(--border-default);border-radius:4px}
+.sidebar-group{padding:var(--s4);border-bottom:1px solid var(--border-subtle)}
+.sidebar-group-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:var(--s3)}
+.sidebar-group-label{font-size:var(--tx-xs);font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.1em}
+.sidebar-group-badge{font-size:var(--tx-xs);color:var(--text-muted);background:var(--bg-elevated);padding:1px 6px;border-radius:10px}
+.sidebar-search{width:100%;background:var(--bg-elevated);border:1px solid var(--border-default);border-radius:var(--r-sm);
+  color:var(--text-primary);font-size:var(--tx-sm);font-family:inherit;padding:5px var(--s2);
+  outline:none;margin-bottom:var(--s2);transition:border-color 0.15s}
+.sidebar-search::placeholder{color:var(--text-muted)}
+.sidebar-search:focus{border-color:var(--text-accent)}
+.receptor-list{list-style:none;max-height:240px;overflow-y:auto}
+.receptor-list::-webkit-scrollbar{width:3px}
+.receptor-list::-webkit-scrollbar-thumb{background:var(--border-default);border-radius:3px}
+.receptor-item{display:flex;align-items:center;gap:var(--s2);padding:5px var(--s2);border-radius:var(--r-sm);
+  cursor:pointer;font-size:var(--tx-sm);color:var(--text-primary);transition:background 0.12s;white-space:nowrap;overflow:hidden}
+.receptor-item:hover{background:var(--bg-hover)}
+.receptor-item.selected{background:rgba(74,158,255,0.1)}
+.receptor-item.inactive{color:var(--text-muted)}
+.receptor-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.receptor-item.inactive .receptor-dot{background:var(--border-default) !important}
+.receptor-name{overflow:hidden;text-overflow:ellipsis}
+.filter-options{display:flex;flex-direction:column;gap:2px}
+.filter-option{display:flex;align-items:center;gap:var(--s2);padding:5px var(--s2);border-radius:var(--r-sm);
+  cursor:pointer;font-size:var(--tx-sm);color:var(--text-secondary);transition:background 0.12s}
+.filter-option:hover{background:var(--bg-hover)}
+.filter-option.active{color:var(--text-primary)}
+.radio-indicator{width:14px;height:14px;border-radius:50%;border:2px solid var(--border-default);
+  display:grid;place-items:center;flex-shrink:0;transition:border-color 0.15s}
+.filter-option.active .radio-indicator{border-color:var(--text-accent)}
+.radio-fill{width:6px;height:6px;border-radius:50%;background:var(--text-accent);display:none}
+.filter-option.active .radio-fill{display:block}
+.badge-200{margin-left:auto;font-size:var(--tx-xs);color:#2ECC7F;background:rgba(46,204,127,0.12);padding:1px 5px;border-radius:10px}
+.badge-500{margin-left:auto;font-size:var(--tx-xs);color:#FF4D4D;background:rgba(255,77,77,0.12);padding:1px 5px;border-radius:10px}
+.toggle-row{display:flex;align-items:flex-start;gap:var(--s2)}
+.toggle-info{flex:1}
+.toggle-info-label{font-size:var(--tx-sm);color:var(--text-secondary)}
+.toggle-info-desc{font-size:var(--tx-xs);color:var(--text-muted);margin-top:3px;line-height:1.4}
+.toggle-switch{width:32px;height:18px;background:var(--border-default);border-radius:9px;position:relative;
+  cursor:pointer;flex-shrink:0;margin-top:2px;transition:background 0.2s}
+.toggle-switch.on{background:var(--text-accent)}
+.toggle-knob{position:absolute;width:14px;height:14px;background:white;border-radius:50%;top:2px;left:2px;
+  transition:transform 0.2s;box-shadow:0 1px 3px rgba(0,0,0,0.35)}
+.toggle-switch.on .toggle-knob{transform:translateX(14px)}
+
+/* MAIN CONTENT */
+.main-content{flex:1;overflow-y:auto;overflow-x:hidden;padding:var(--s5);
+  display:flex;flex-direction:column;gap:var(--s5);min-width:0}
+.main-content::-webkit-scrollbar{width:6px}
+.main-content::-webkit-scrollbar-thumb{background:var(--border-default);border-radius:6px}
 .titlebar-logo{width:20px;height:20px;background:var(--text-accent);border-radius:var(--r-sm);
   display:grid;place-items:center;font-size:10px;font-weight:700;color:white}
 .titlebar-name{font-size:var(--tx-sm);font-weight:600}
@@ -44,7 +103,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-seri
   padding:3px 10px;border-radius:10px;border:1px solid var(--border-subtle);transition:all 0.15s}
 .titlebar-nav a:hover,.titlebar-nav a.active{color:var(--text-accent);border-color:var(--text-accent);background:rgba(74,158,255,0.08)}
 
-.page{max-width:1420px;margin:0 auto;padding:var(--s6);display:flex;flex-direction:column;gap:var(--s5)}
+.page{padding:0;display:flex;flex-direction:column;gap:var(--s5)}
 
 /* HEADER */
 .receptor-header{background:var(--bg-surface);border:1px solid var(--border-subtle);
@@ -179,20 +238,25 @@ canvas{display:block}
 .theme-btn:hover{background:var(--bg-hover)}
 
 /* DATE BAR */
-.date-bar{display:flex;align-items:center;gap:var(--s3);padding:var(--s3) var(--s4);
-  background:var(--bg-panel,var(--bg-surface));border-bottom:1px solid var(--border-subtle);flex-wrap:wrap}
-.date-bar-label{font-size:var(--tx-xs);color:var(--text-muted);white-space:nowrap}
+.date-bar{background:var(--bg-elevated);border:1px solid var(--border-subtle);border-radius:var(--r-md);
+  padding:var(--s2) var(--s4);display:flex;align-items:center;gap:var(--s4);flex-wrap:wrap;flex-shrink:0;
+  position:sticky;top:0;z-index:10}
+.date-bar-label{font-size:var(--tx-xs);font-weight:700;color:var(--text-muted);text-transform:uppercase;
+  letter-spacing:0.08em;white-space:nowrap}
 .date-inputs{display:flex;align-items:center;gap:var(--s2)}
-.date-field{background:var(--bg-base);border:1px solid var(--border-default);color:var(--text-primary);
-  border-radius:6px;padding:4px 8px;font-size:var(--tx-sm);color-scheme:dark}
+.date-field{background:var(--bg-surface);border:1px solid var(--border-default);border-radius:var(--r-sm);
+  color:var(--text-primary);font-size:var(--tx-sm);font-family:inherit;padding:4px var(--s2);
+  outline:none;transition:border-color 0.15s;color-scheme:dark}
+.date-field:focus{border-color:var(--text-accent)}
 [data-theme="light"] .date-field{color-scheme:light}
-.date-arrow{color:var(--text-muted);font-size:var(--tx-xs)}
+.date-arrow{color:var(--text-muted);font-size:13px}
 .date-spacer{flex:1}
-.quick-ranges{display:flex;gap:var(--s2);flex-wrap:wrap}
+.quick-ranges{display:flex;gap:var(--s1)}
 .quick-btn{background:transparent;border:1px solid var(--border-default);color:var(--text-secondary);
-  border-radius:6px;padding:4px 10px;font-size:var(--tx-xs);cursor:pointer;transition:.15s}
+  font-size:var(--tx-xs);font-family:inherit;padding:3px var(--s2);border-radius:var(--r-sm);
+  cursor:pointer;transition:all 0.12s;white-space:nowrap}
 .quick-btn:hover{background:var(--bg-hover);color:var(--text-primary)}
-.quick-btn.active{background:var(--text-accent);border-color:var(--text-accent);color:#fff}
+.quick-btn.active{background:var(--text-accent);border-color:var(--text-accent);color:white}
 
 /* Responsive — breakpoints aligned with dashboard.html (small-desktop / tablet / mobile) */
 @media(max-width:1280px){.kpi-card{min-width:30%}}
@@ -223,42 +287,92 @@ canvas{display:block}
   <button id="theme-toggle" class="theme-btn" title="Alternar Tema">☀️/🌙</button>
 </div>
 
-<div class="date-bar" id="date-bar" style="display:none">
-  <span class="date-bar-label">Período</span>
-  <div class="date-inputs">
-    <input class="date-field" type="date" id="prof-date-start">
-    <span class="date-arrow">→</span>
-    <input class="date-field" type="date" id="prof-date-end">
-  </div>
-  <div class="date-spacer"></div>
-  <div class="quick-ranges">
-    <button class="quick-btn" data-months="0.25">7d</button>
-    <button class="quick-btn" data-months="1">30d</button>
-    <button class="quick-btn" data-months="3">3m</button>
-    <button class="quick-btn" data-months="6">6m</button>
-    <button class="quick-btn active" data-months="12">1a</button>
-    <button class="quick-btn" data-months="ytd">Ano atual</button>
-    <button class="quick-btn" data-months="0">Tudo</button>
-  </div>
-</div>
+<div class="app-body">
+
+  <!-- SIDEBAR -->
+  <aside class="sidebar">
+    <div class="sidebar-inner">
+
+      <!-- Receptores -->
+      <div class="sidebar-group">
+        <div class="sidebar-group-header">
+          <span class="sidebar-group-label">Receptores</span>
+          <span class="sidebar-group-badge" id="prof-receptor-count">—</span>
+        </div>
+        <input class="sidebar-search" type="text" placeholder="Filtrar receptores…" id="prof-receptor-search">
+        <ul class="receptor-list" id="prof-receptor-list"></ul>
+      </div>
+
+      <!-- Status API -->
+      <div class="sidebar-group">
+        <div class="sidebar-group-header">
+          <span class="sidebar-group-label">Status API</span>
+        </div>
+        <div class="filter-options" id="prof-status-options">
+          <div class="filter-option active" data-status="200">
+            <div class="radio-indicator"><div class="radio-fill"></div></div>
+            <span>200 — Sucesso</span>
+            <span class="badge-200">OK</span>
+          </div>
+          <div class="filter-option" data-status="500">
+            <div class="radio-indicator"><div class="radio-fill"></div></div>
+            <span>500 — Erro</span>
+            <span class="badge-500">ERR</span>
+          </div>
+          <div class="filter-option" data-status="all">
+            <div class="radio-indicator"><div class="radio-fill"></div></div>
+            <span>Todos</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Escala API -->
+      <div class="sidebar-group">
+        <div class="sidebar-group-header">
+          <span class="sidebar-group-label">Escala API</span>
+        </div>
+        <div class="toggle-row">
+          <div class="toggle-info">
+            <div class="toggle-info-label">Média mensal (30d)</div>
+            <div class="toggle-info-desc">Uso proporcional por consentimento</div>
+          </div>
+          <div class="toggle-switch on" id="prof-toggle-escala">
+            <div class="toggle-knob"></div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </aside>
+
+  <!-- MAIN CONTENT -->
+  <div class="main-content">
+
+    <div class="date-bar" id="date-bar">
+      <span class="date-bar-label">Período</span>
+      <div class="date-inputs">
+        <input class="date-field" type="date" id="prof-date-start">
+        <span class="date-arrow">→</span>
+        <input class="date-field" type="date" id="prof-date-end">
+      </div>
+      <div class="date-spacer"></div>
+      <div class="quick-ranges">
+        <button class="quick-btn" data-months="0.25">7d</button>
+        <button class="quick-btn" data-months="1">30d</button>
+        <button class="quick-btn" data-months="3">3m</button>
+        <button class="quick-btn" data-months="6">6m</button>
+        <button class="quick-btn active" data-months="12">1a</button>
+        <button class="quick-btn" data-months="ytd">Ano atual</button>
+        <button class="quick-btn" data-months="0">Tudo</button>
+      </div>
+    </div>
 
 <div class="page">
-
-  <!-- INSTITUTION SELECTOR -->
-  <div id="institution-selector" style="background:var(--bg-surface);padding:var(--s4);border-radius:var(--r-md);border:1px solid var(--border-subtle);display:flex;align-items:center;gap:var(--s3);position:relative;z-index:100">
-    <label for="inst-search" style="font-weight:600">Instituição:</label>
-    <div style="position:relative;width:300px">
-      <input type="text" id="inst-search" placeholder="Buscar instituição..." autocomplete="off"
-        style="width:100%;background:var(--bg-elevated);border:1px solid var(--border-default);color:var(--text-primary);padding:8px 12px;border-radius:var(--r-sm);font-size:var(--tx-sm);outline:none">
-      <ul id="inst-dropdown" hidden
-        style="position:absolute;top:100%;left:0;width:100%;background:var(--bg-elevated);border:1px solid var(--border-default);list-style:none;margin:4px 0 0;padding:0;border-radius:var(--r-sm);max-height:200px;overflow-y:auto;box-shadow:0 4px 12px rgba(0,0,0,0.5)"></ul>
-    </div>
-  </div>
 
   <!-- EMPTY STATE -->
   <div id="empty-state" style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:100px 20px;background:var(--bg-surface);border-radius:var(--r-lg);border:1px dashed var(--border-subtle)">
     <div style="font-size:48px;margin-bottom:20px;opacity:0.6">🏢</div>
-    <div style="font-size:18px;font-weight:600;color:var(--text-secondary)">Selecione uma instituição acima para visualizar o perfil detalhado</div>
+    <div style="font-size:18px;font-weight:600;color:var(--text-secondary)">Selecione uma instituição na coluna lateral</div>
   </div>
 
   <!-- ERROR STATE -->
@@ -398,6 +512,9 @@ canvas{display:block}
   </div><!-- /profile-content -->
 </div><!-- /page -->
 
+  </div><!-- /main-content -->
+</div><!-- /app-body -->
+
 <script>
 // ─── GLOBALS ──────────────────────────────────────────────────────────
 Chart.defaults.font.family="-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif";
@@ -457,44 +574,87 @@ function fmtDate(d){
   return ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'][+m-1]+'/'+y.slice(2);
 }
 
-// ─── INSTITUTION SELECTOR ─────────────────────────────────────────────
-document.addEventListener("DOMContentLoaded", async()=>{
-  try{
-    const res=await fetch('/api/of/institutions');
-    const data=await res.json();
-    const drop=document.getElementById('inst-dropdown');
-    data.institutions.forEach(inst=>{
-      const li=document.createElement('li');
-      li.style.cssText="padding:8px 12px;cursor:pointer;color:var(--text-secondary);transition:background 0.1s";
-      li.textContent=inst.label;
-      li.addEventListener('mouseenter',()=>li.style.background='var(--bg-hover)');
-      li.addEventListener('mouseleave',()=>li.style.background='transparent');
-      li.addEventListener('click',()=>{
-        document.getElementById('inst-search').value=inst.label;
-        drop.hidden=true;
-        history.replaceState(null,'',`?institution=${encodeURIComponent(inst.id)}`);
-        loadProfile(inst.id);
-      });
-      drop.appendChild(li);
+// ─── SIDEBAR ──────────────────────────────────────────────────────────
+let _currentInstitution = null;
+
+async function loadSidebarReceptors() {
+  try {
+    const resp = await fetch('/api/receptors');
+    const receptors = await resp.json();
+    buildProfileSidebar(receptors);
+  } catch (err) { console.error('Erro ao carregar receptores', err); }
+}
+
+function buildProfileSidebar(receptors) {
+  const ul = document.getElementById('prof-receptor-list');
+  const search = document.getElementById('prof-receptor-search');
+  ul.innerHTML = '';
+  let saved = null;
+  try { saved = JSON.parse(sessionStorage.getItem('opf:filters') || 'null'); } catch (_) {}
+
+  receptors.forEach(rec => {
+    const li = document.createElement('li');
+    li.className = 'receptor-item' + (rec.top ? '' : ' inactive');
+    li.dataset.label = rec.label;
+    li.dataset.uuid = rec.uuid || '';
+    li.title = rec.label;
+    li.innerHTML = `<div class="receptor-dot" style="background:${rec.top ? rec.color : ''}"></div>
+                    <span class="receptor-name">${rec.label}</span>`;
+    li.addEventListener('click', () => {
+      ul.querySelectorAll('.receptor-item').forEach(el => el.classList.remove('selected'));
+      li.classList.add('selected');
+      _currentInstitution = rec.uuid;
+      loadProfile(rec.uuid);
     });
-    const input=document.getElementById('inst-search');
-    input.addEventListener('focus',()=>drop.hidden=false);
-    input.addEventListener('input',e=>{
-      const val=e.target.value.toLowerCase();
-      Array.from(drop.children).forEach(li=>{li.style.display=li.textContent.toLowerCase().includes(val)?'block':'none'});
+    ul.appendChild(li);
+  });
+
+  document.getElementById('prof-receptor-count').textContent = receptors.length;
+
+  if (saved?.status) {
+    document.querySelectorAll('#prof-status-options .filter-option')
+      .forEach(f => f.classList.toggle('active', f.dataset.status === saved.status));
+  }
+  if (saved && typeof saved.normalize === 'string') {
+    document.getElementById('prof-toggle-escala').classList.toggle('on', saved.normalize === '1');
+  }
+
+  const instId = saved?.institution;
+  if (instId) {
+    const li = ul.querySelector(`[data-uuid="${instId}"]`);
+    if (li) { li.classList.add('selected'); _currentInstitution = instId; loadProfile(instId); }
+  }
+
+  search.addEventListener('input', () => {
+    const q = search.value.toLowerCase();
+    ul.querySelectorAll('.receptor-item').forEach(el => {
+      el.style.display = el.dataset.label.toLowerCase().includes(q) ? '' : 'none';
     });
-    document.addEventListener('click',e=>{
-      if(!document.getElementById('institution-selector').contains(e.target)) drop.hidden=true;
-    });
-    // Auto-load from URL
-    const params=new URLSearchParams(window.location.search);
-    const instId=params.get('institution');
-    if(instId){
-      const match=data.institutions.find(i=>i.id===instId);
-      if(match) input.value=match.label;
-      loadProfile(instId);
-    }
-  }catch(err){console.error(err)}
+  });
+}
+
+document.querySelectorAll('#prof-status-options .filter-option').forEach(opt => {
+  opt.addEventListener('click', () => {
+    document.querySelectorAll('#prof-status-options .filter-option').forEach(f => f.classList.remove('active'));
+    opt.classList.add('active');
+    try {
+      const prev = JSON.parse(sessionStorage.getItem('opf:filters') || '{}');
+      sessionStorage.setItem('opf:filters', JSON.stringify({...prev, status: opt.dataset.status}));
+    } catch (_) {}
+  });
+});
+
+document.getElementById('prof-toggle-escala').addEventListener('click', function () {
+  this.classList.toggle('on');
+  try {
+    const prev = JSON.parse(sessionStorage.getItem('opf:filters') || '{}');
+    sessionStorage.setItem('opf:filters', JSON.stringify({...prev, normalize: this.classList.contains('on') ? '1' : '0'}));
+  } catch (_) {}
+});
+
+document.addEventListener('DOMContentLoaded', () => {
+  loadSidebarReceptors();
+  initPeriodFilter();
 });
 
 // ─── LOAD PROFILE ─────────────────────────────────────────────────────
@@ -508,7 +668,6 @@ async function _loadProfileNow(institutionId){
   document.getElementById('error-state').style.display='none';
   document.getElementById('profile-content').style.display='block';
   document.getElementById('loading-state').style.display='block';
-  document.getElementById('date-bar').style.display='flex';
   loadSkeleton();
   ['card-smap','card-tornado','card-temporal','card-resource-chart'].forEach(id => _setCardLoading(id, true));
   const depthSec = document.getElementById('endpointSection');
@@ -519,7 +678,7 @@ async function _loadProfileNow(institutionId){
   // Persist current filters so Ecossistema reopens with the same period.
   try {
     const prev = JSON.parse(sessionStorage.getItem('opf:filters') || '{}');
-    sessionStorage.setItem('opf:filters', JSON.stringify({ ...prev, start: fromDate, end: toDate }));
+    sessionStorage.setItem('opf:filters', JSON.stringify({ ...prev, start: fromDate, end: toDate, institution: institutionId }));
   } catch (_) { /* sessionStorage unavailable — ignore */ }
   const base = '/api/of/receptor-profile';
   const qs   = `institution=${encodeURIComponent(institutionId)}&from=${fromDate}&to=${toDate}`;
@@ -539,6 +698,9 @@ async function _loadProfileNow(institutionId){
     const header = await headerRes.json();
     document.getElementById('loading-state').style.display='none';
     renderHeader(header);
+    document.querySelectorAll('#prof-receptor-list .receptor-item').forEach(el => {
+      el.classList.toggle('selected', el.dataset.uuid === institutionId);
+    });
   }catch(err){
     if (err?.name === 'AbortError') return;
     ['card-smap','card-tornado','card-temporal','card-resource-chart'].forEach(id => _setCardLoading(id, false));
@@ -587,46 +749,57 @@ function _setCardLoading(id, on) {
 }
 
 // ─── PERIOD FILTER ────────────────────────────────────────────────────
-(function initPeriodFilter() {
-  const today = new Date().toISOString().slice(0,10);
-  const oneYearAgo = new Date(Date.now() - 365*24*3600*1000).toISOString().slice(0,10);
-  // Hydrate from sessionStorage (set by Ecossistema) so the period carries across tabs.
+function initPeriodFilter() {
+  const _today = new Date().toISOString().slice(0, 10);
+  const oneYearAgo = new Date(Date.now() - 365*24*3600*1000).toISOString().slice(0, 10);
   let saved = null;
-  try { saved = JSON.parse(sessionStorage.getItem('opf:filters') || 'null'); } catch (_) { saved = null; }
+  try { saved = JSON.parse(sessionStorage.getItem('opf:filters') || 'null'); } catch (_) {}
   document.getElementById('prof-date-start').value = saved?.start || oneYearAgo;
-  document.getElementById('prof-date-end').value   = saved?.end   || today;
+  document.getElementById('prof-date-end').value   = saved?.end   || _today;
+
+  function _saveAndReload() {
+    try {
+      const prev = JSON.parse(sessionStorage.getItem('opf:filters') || '{}');
+      sessionStorage.setItem('opf:filters', JSON.stringify({
+        ...prev,
+        start: document.getElementById('prof-date-start').value,
+        end:   document.getElementById('prof-date-end').value,
+      }));
+    } catch (_) {}
+    if (_currentInstitution) loadProfile(_currentInstitution);
+  }
 
   document.querySelectorAll('#date-bar .quick-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       document.querySelectorAll('#date-bar .quick-btn').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       const action = btn.dataset.months;
-      const endDate = new Date().toISOString().slice(0,10);
+      const endDate = _today;
       let startDate;
       if (action === '0') {
-        startDate = '2000-01-01';
+        startDate = '2020-01-01';
       } else if (action === 'ytd') {
         startDate = new Date().getFullYear() + '-01-01';
       } else {
-        const d = new Date();
-        d.setDate(d.getDate() - Math.round(parseFloat(action) * 30.44));
-        startDate = d.toISOString().slice(0,10);
+        const months = parseFloat(action);
+        const d = new Date(endDate + 'T12:00:00');
+        if (months < 1) { d.setDate(d.getDate() - Math.round(months * 30)); }
+        else { d.setMonth(d.getMonth() - months); }
+        startDate = d.toISOString().slice(0, 10);
       }
       document.getElementById('prof-date-start').value = startDate;
       document.getElementById('prof-date-end').value   = endDate;
-      const instId = new URLSearchParams(window.location.search).get('institution');
-      if (instId) loadProfile(instId);
+      _saveAndReload();
     });
   });
 
-  ['prof-date-start','prof-date-end'].forEach(id => {
+  ['prof-date-start', 'prof-date-end'].forEach(id => {
     document.getElementById(id).addEventListener('change', () => {
       document.querySelectorAll('#date-bar .quick-btn').forEach(b => b.classList.remove('active'));
-      const instId = new URLSearchParams(window.location.search).get('institution');
-      if (instId) loadProfile(instId);
+      _saveAndReload();
     });
   });
-})();
+}
 
 // ─── SKELETON ─────────────────────────────────────────────────────────
 function loadSkeleton(){

@@ -22,7 +22,12 @@
       "Bash(kill %1)",
       "Bash(awk '{print $2}')",
       "Bash(xargs -r kill)",
-      "Bash(python3 -c ' *)"
+      "Bash(python3 -c ' *)",
+      "Bash(uvicorn server:app --port 8000)",
+      "Bash(curl -s http://localhost:8000/api/receptors)",
+      "Bash(python -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\(f'Count: {len\\(d\\)}, first: {d[0] if d else None}'\\)\")",
+      "Bash(.venv/Scripts/uvicorn.exe server:app --port 8000)",
+      "Bash(curl -s http://localhost:8000/profile)"
     ]
   }
 }

@@ -116,8 +116,8 @@ def _load_consents(start: date | None = None, end: date | None = None) -> pd.Dat
             )
         else:
             df = pd.read_sql(
-                "SELECT receptor, SUM(total) AS total, SUM(cpf) AS cpf, SUM(cnpj) AS cnpj"
-                " FROM unique_consents GROUP BY receptor",
+                "SELECT receptor_uuid, receptor, SUM(total) AS total, SUM(cpf) AS cpf, SUM(cnpj) AS cnpj"
+                " FROM unique_consents GROUP BY receptor_uuid, receptor",
                 con,
             )
         con.close()
@@ -468,14 +468,18 @@ async def profile():
 @cached_response("receptors")
 def get_receptors():
     # Consulta leve: apenas totais agregados por receptor, sem filtro de data
-    df = _load_consents()   # sem datas → retorna GROUP BY receptor (sem coluna date)
+    df = _load_consents()   # sem datas → retorna GROUP BY receptor_uuid, receptor
     if df.empty: return JSONResponse([])
-    all_recs = df.sort_values("total", ascending=False)["receptor"].tolist()
+    df = df.sort_values("total", ascending=False)
+    if "receptor_uuid" in df.columns:
+        df["receptor_uuid"] = df["receptor_uuid"].fillna("")
+    all_recs = df["receptor"].tolist()
     colors = _build_color_map(all_recs)
     top10 = set(_top10_with_bradesco(df))
     return JSONResponse([
-        {"label": r, "color": colors.get(r, "#4A5270"), "top": r in top10}
-        for r in all_recs
+        {"label": row["receptor"], "uuid": row.get("receptor_uuid", "") or "",
+         "color": colors.get(row["receptor"], "#4A5270"), "top": row["receptor"] in top10}
+        for _, row in df.iterrows()
     ])
 
 

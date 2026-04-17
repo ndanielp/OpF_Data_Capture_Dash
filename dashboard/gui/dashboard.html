@@ -1526,6 +1526,7 @@
         const li = document.createElement('li');
         li.className = 'receptor-item' + (rec.top ? '' : ' inactive') + (preselected.has(rec.label) ? ' selected' : '');
         li.dataset.label = rec.label;
+        li.dataset.uuid = rec.uuid || '';
         li.title = rec.label;
         li.innerHTML = `<div class="receptor-dot" style="background:${rec.top ? rec.color : ''}"></div>
                     <span class="receptor-name">${rec.label}</span>`;
@@ -2369,6 +2370,17 @@
       if (activeBtn) activeBtn.click();
       else await _refreshNow();
     }
+
+    // Salva uuid do receptor selecionado ao navegar para o Perfil
+    document.querySelector('a[href="/profile"]').addEventListener('click', () => {
+      const selected = [...document.querySelectorAll('.receptor-item.selected')];
+      if (selected.length === 1 && selected[0].dataset.uuid) {
+        try {
+          const prev = JSON.parse(sessionStorage.getItem('opf:filters') || '{}');
+          sessionStorage.setItem('opf:filters', JSON.stringify({...prev, institution: selected[0].dataset.uuid}));
+        } catch (_) {}
+      }
+    });
 
     loadAll();
   </script>
