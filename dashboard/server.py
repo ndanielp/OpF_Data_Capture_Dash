@@ -341,15 +341,50 @@ def _ensure_api_group_weekly():
         con.close()
 
 
+def _get_latest_weeks(n: int) -> list[str]:
+    """Retorna as N datas mais recentes em api_requests com status=200, preenchendo até n."""
+    con = sqlite3.connect(str(config.DB_PATH))
+    try:
+        rows = con.execute(
+            "SELECT DISTINCT date FROM api_requests WHERE status=200 ORDER BY date DESC LIMIT ?",
+            (n,),
+        ).fetchall()
+    finally:
+        con.close()
+    weeks = [r[0] for r in rows]
+    while len(weeks) < n:
+        weeks.append(weeks[-1] if weeks else "1900-01-01")
+    return weeks
+
+
+def _warm_profile_cache() -> None:
+    """Pré-carrega dados institution-independent nos TTLCaches de of_analytics."""
+    try:
+        of_analytics._get_strategic_map("2024-01-01", "2100-01-01")
+    except Exception:
+        pass
+    try:
+        of_analytics._get_ecosystem_rankings("2024-01-01", "2100-01-01")
+    except Exception:
+        pass
+    try:
+        weeks = _get_latest_weeks(4)
+        of_analytics._get_ep_ecosystem_stats(*weeks)
+    except Exception:
+        pass
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Garante que api_group_weekly exista e tenha dados (DBs antigos sem a tabela populada).
     _ensure_api_group_weekly()
     # Pré-aquece cache em background — servidor aceita conexões imediatamente.
     threading.Thread(target=lambda: _refresh_cache(force=True), daemon=True).start()
+    threading.Thread(target=_warm_profile_cache, daemon=True).start()
     yield
 
 from routers import openfinance
+import services.of_analytics as of_analytics
 
 app = FastAPI(title="OPF Batch Dashboard", lifespan=lifespan)
 app.include_router(openfinance.router, prefix="/api/of")
@@ -505,10 +540,12 @@ def get_api_requests(start: str = None, end: str = None, receptors: str = None, 
     if df.empty:
         return JSONResponse({"groups": [], "apis": [], "receptors": [], "values": [], "max_val": 0})
 
+    # Buscar df_cons UMA VEZ — reutilizado em top_reps, normalização heatmap e normalização endpoint
+    df_cons = _get_consents(dt_start, dt_end) if (not sel or norm) else pd.DataFrame()
+
     if sel:
         top_reps = [r for r in sel if r in df["receptor"].values]
     else:
-        df_cons = _get_consents(dt_start, dt_end)
         base = df_cons if not df_cons.empty else df
         top_reps = [r for r in _top10_with_bradesco(base) if r in df["receptor"].values]
 
@@ -527,16 +564,13 @@ def get_api_requests(start: str = None, end: str = None, receptors: str = None, 
     )
     data     = pivot.values.astype(float)
     data_raw = data.copy()              # chamadas brutas — usadas para a coluna Total
-    ct_total = pd.Series(dtype=float)  # populado dentro do bloco norm; visível depois
+    ct_total = ct_cpf = ct_cnpj = pd.Series(dtype=float)  # populados abaixo se norm
 
     if norm:
-        df_cons = _get_consents(dt_start, dt_end)
         if not df_cons.empty:
             ct_total = df_cons.groupby("receptor")["total"].sum()
             ct_cpf   = df_cons.groupby("receptor")["cpf"].sum()
             ct_cnpj  = df_cons.groupby("receptor")["cnpj"].sum()
-        else:
-            ct_cpf = ct_cnpj = pd.Series(dtype=float)
         # Converte de semanal para mensal; Cadastro PF/PJ usam denominadores específicos
         for i, rec in enumerate(pivot.index):
             for j, col in enumerate(ordered_cols):
@@ -595,13 +629,8 @@ def get_api_requests(start: str = None, end: str = None, receptors: str = None, 
                 .sum().reset_index()
             )
             if norm and not df_ep.empty:
-                df_cons_ep = _get_consents(dt_start, dt_end)
-                if not df_cons_ep.empty:
-                    ct_ep_total = df_cons_ep.groupby("receptor")["total"].sum()
-                    ct_ep_cpf   = df_cons_ep.groupby("receptor")["cpf"].sum()
-                    ct_ep_cnpj  = df_cons_ep.groupby("receptor")["cnpj"].sum()
-                else:
-                    ct_ep_total = ct_ep_cpf = ct_ep_cnpj = pd.Series(dtype=float)
+                # Reutiliza groupby já computado acima — sem nova chamada a _get_consents
+                ct_ep_total, ct_ep_cpf, ct_ep_cnpj = ct_total, ct_cpf, ct_cnpj
                 def _norm_ep(row):
                     if row["api"] in _NORM_CPF_APIS:
                         n = float(ct_ep_cpf.get(row["receptor"], 0))
@@ -612,27 +641,30 @@ def get_api_requests(start: str = None, end: str = None, receptors: str = None, 
                     return (row["total"] / n) / 7 * 30 if n > 0 else 0.0
                 ep_pivot["total"] = ep_pivot.apply(_norm_ep, axis=1)
 
+            # Dict O(1) para lookup (api, receptor, endpoint_id) → total
+            ep_dict: dict = (
+                ep_pivot.set_index(["api", "receptor", "endpoint_id"])["total"]
+                .to_dict()
+            )
+
             for api_id in ordered_cols:
-                api_ep = ep_pivot[ep_pivot["api"] == api_id]
-                if api_ep.empty:
+                api_rows = ep_pivot[ep_pivot["api"] == api_id]
+                if api_rows.empty:
                     continue
                 # Headers: endpoint_ids únicos ordenados por id
-                ep_headers = (
-                    api_ep[["endpoint_id", "endpoint"]]
+                ep_headers_df = (
+                    api_rows[["endpoint_id", "endpoint"]]
                     .drop_duplicates()
                     .sort_values("endpoint_id")
                 )
-                headers = [{"id": int(r["endpoint_id"]), "label": r["endpoint"]} for _, r in ep_headers.iterrows()]
+                headers = [{"id": int(r["endpoint_id"]), "label": r["endpoint"]}
+                           for _, r in ep_headers_df.iterrows()]
                 ep_ids = [h["id"] for h in headers]
-                # Valores: [receptor][endpoint]
-                values_ep = []
-                for rec in top_reps:
-                    row_vals = []
-                    rec_ep = api_ep[api_ep["receptor"] == rec]
-                    for ep_id in ep_ids:
-                        match = rec_ep[rec_ep["endpoint_id"] == ep_id]["total"]
-                        row_vals.append(float(match.iloc[0]) if not match.empty else 0.0)
-                    values_ep.append(row_vals)
+                # Valores: [receptor][endpoint] — lookup O(1) por (api, receptor, endpoint_id)
+                values_ep = [
+                    [float(ep_dict.get((api_id, rec, ep_id), 0.0)) for ep_id in ep_ids]
+                    for rec in top_reps
+                ]
                 endpoints_by_api[api_id] = {"headers": headers, "values": values_ep}
                 local_max = max((v for row in values_ep for v in row), default=0.0)
                 if local_max > endpoint_max_val:

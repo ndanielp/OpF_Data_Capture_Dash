@@ -25,18 +25,81 @@ def ecosystem_stats():
             raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
     return cache["ecosystem_stats"]
 
-@router.get("/receptor-profile")
-def receptor_profile(institution: str = Query(...), from_date: Optional[str] = Query("2000-01-01", alias="from"), to_date: Optional[str] = Query("2100-01-01", alias="to")):
+@router.get("/receptor-profile/header")
+def receptor_header(
+    institution: str = Query(...),
+    from_date: Optional[str] = Query("2000-01-01", alias="from"),
+    to_date:   Optional[str] = Query("2100-01-01", alias="to"),
+):
     cache = get_cache()
-    cache_key = f"profile:{institution}:{from_date}:{to_date}"
-    if cache_key not in cache:
+    key = f"header:{institution}:{from_date}:{to_date}"
+    if key not in cache:
         try:
-            profile = of_analytics.get_receptor_profile(institution, from_date, to_date)
-            if not profile:
+            result = of_analytics.get_profile_header(institution, from_date, to_date)
+            if not result:
                 raise HTTPException(status_code=404, detail=f"Institution '{institution}' not found or no data in period")
-            cache[cache_key] = profile
+            cache[key] = result
         except HTTPException:
             raise
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
-    return cache[cache_key]
+    return cache[key]
+
+@router.get("/receptor-profile/strategic-map")
+def receptor_strategic_map(
+    from_date: Optional[str] = Query("2000-01-01", alias="from"),
+    to_date:   Optional[str] = Query("2100-01-01", alias="to"),
+):
+    cache = get_cache()
+    key = f"smap:{from_date}:{to_date}"
+    if key not in cache:
+        try:
+            cache[key] = of_analytics._get_strategic_map(from_date, to_date)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+    return cache[key]
+
+@router.get("/receptor-profile/temporal")
+def receptor_temporal(
+    institution: str = Query(...),
+    from_date: Optional[str] = Query("2000-01-01", alias="from"),
+    to_date:   Optional[str] = Query("2100-01-01", alias="to"),
+):
+    cache = get_cache()
+    key = f"temporal:{institution}:{from_date}:{to_date}"
+    if key not in cache:
+        try:
+            cache[key] = of_analytics.get_temporal_intensity(institution, from_date, to_date)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+    return cache[key]
+
+@router.get("/receptor-profile/tornado")
+def receptor_tornado(
+    institution: str = Query(...),
+    from_date: Optional[str] = Query("2000-01-01", alias="from"),
+    to_date:   Optional[str] = Query("2100-01-01", alias="to"),
+):
+    cache = get_cache()
+    key = f"tornado:{institution}:{from_date}:{to_date}"
+    if key not in cache:
+        try:
+            cache[key] = of_analytics.get_tornado_data(institution, from_date, to_date)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+    return cache[key]
+
+@router.get("/receptor-profile/depth")
+def receptor_depth(
+    institution: str = Query(...),
+    from_date: Optional[str] = Query("2000-01-01", alias="from"),
+    to_date:   Optional[str] = Query("2100-01-01", alias="to"),
+):
+    cache = get_cache()
+    key = f"depth:{institution}:{from_date}:{to_date}"
+    if key not in cache:
+        try:
+            cache[key] = of_analytics.get_endpoint_depth(institution, from_date, to_date)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+    return cache[key]

@@ -528,6 +528,8 @@
       min-width: 0;
     }
 
+    .main-content.is-loading { opacity: 0.45; pointer-events: none; transition: opacity 0.15s; }
+
     .main-content::-webkit-scrollbar {
       width: 6px;
     }
@@ -2209,12 +2211,18 @@
        ============================================================ */
     async function refresh() {
       const params = buildParams();
-      await Promise.all([
-        updateChart1(params),
-        updateChart2(params),
-        updateChart3(params),
-        updateChartApiTime(params),
-      ]);
+      const area = document.querySelector('.main-content');
+      if (area) area.classList.add('is-loading');
+      try {
+        await Promise.all([
+          updateChart1(params),
+          updateChart2(params),
+          updateChart3(params),
+          updateChartApiTime(params),
+        ]);
+      } finally {
+        if (area) area.classList.remove('is-loading');
+      }
     }
 
     /* ============================================================
@@ -2283,14 +2291,14 @@
       initLineChart();
       initBarChart();
       initChartApiTime();
-      await loadStats();
-      try {
-        const resp = await fetch('/api/receptors');
-        const recs = await resp.json();
-        buildReceptorList(recs);
-      } catch (e) {
-        console.error('Erro ao carregar receptores', e);
-      }
+      // Stats e receptors em paralelo — sem dependência entre si
+      await Promise.all([
+        loadStats(),
+        fetch('/api/receptors')
+          .then(r => r.json())
+          .then(recs => buildReceptorList(recs))
+          .catch(e => console.error('Erro ao carregar receptores', e)),
+      ]);
       const activeBtn = document.querySelector('.quick-btn.active');
       if (activeBtn) activeBtn.click();
       else await refresh();

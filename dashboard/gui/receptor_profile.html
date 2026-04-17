@@ -509,30 +509,56 @@ async function loadProfile(institutionId){
   document.getElementById('date-bar').style.display='flex';
   loadSkeleton();
 
+  const fromDate = document.getElementById('prof-date-start').value || '2000-01-01';
+  const toDate   = document.getElementById('prof-date-end').value   || '2100-01-01';
+  const base = '/api/of/receptor-profile';
+  const qs   = `institution=${encodeURIComponent(institutionId)}&from=${fromDate}&to=${toDate}`;
+  const qsMap = `from=${fromDate}&to=${toDate}`;
+
+  // 1. Header primeiro → UX imediata
   try{
-    const fromDate = document.getElementById('prof-date-start').value || '2000-01-01';
-    const toDate   = document.getElementById('prof-date-end').value   || '2100-01-01';
-    const profileRes=await fetch(`/api/of/receptor-profile?institution=${encodeURIComponent(institutionId)}&from=${fromDate}&to=${toDate}`);
-    if(!profileRes.ok){
+    const headerRes = await fetch(`${base}/header?${qs}`);
+    if(!headerRes.ok){
       document.getElementById('profile-content').style.display='none';
       document.getElementById('error-state').style.display='block';
-      document.getElementById('error-state').textContent=`Erro (${profileRes.status}): Instituição não encontrada ou sem volume.`;
+      document.getElementById('error-state').textContent=`Erro (${headerRes.status}): Instituição não encontrada ou sem volume.`;
       document.getElementById('loading-state').style.display='none';
       return;
     }
-    const profile=await profileRes.json();
+    const header = await headerRes.json();
     document.getElementById('loading-state').style.display='none';
-
-    renderHeader(profile);
-    renderStrategicMap(profile.strategic_map, profile.institution);
-    renderTornadoChart(profile.tornado_data);
-    renderTemporalIntensity(profile.ts_intensity);
-    renderEndpointDepth(profile.endpoint_depth);
+    renderHeader(header);
   }catch(err){
     console.error(err);
     document.getElementById('error-state').style.display='block';
     document.getElementById('loading-state').style.display='none';
+    return;
   }
+
+  // 2. Charts em paralelo — falha isolada por seção
+  const instLabel = document.getElementById('hdr-name').textContent;
+  const [smRes, tsRes, tornadoRes, depthRes] = await Promise.allSettled([
+    fetch(`${base}/strategic-map?${qsMap}`),
+    fetch(`${base}/temporal?${qs}`),
+    fetch(`${base}/tornado?${qs}`),
+    fetch(`${base}/depth?${qs}`),
+  ]);
+
+  if(smRes.status==='fulfilled' && smRes.value.ok)
+    renderStrategicMap(await smRes.value.json(), {label: instLabel});
+  else console.warn('strategic-map falhou', smRes);
+
+  if(tsRes.status==='fulfilled' && tsRes.value.ok)
+    renderTemporalIntensity(await tsRes.value.json());
+  else console.warn('temporal falhou', tsRes);
+
+  if(tornadoRes.status==='fulfilled' && tornadoRes.value.ok)
+    renderTornadoChart(await tornadoRes.value.json());
+  else console.warn('tornado falhou', tornadoRes);
+
+  if(depthRes.status==='fulfilled' && depthRes.value.ok)
+    renderEndpointDepth(await depthRes.value.json());
+  else console.warn('depth falhou', depthRes);
 }
 
 // ─── PERIOD FILTER ────────────────────────────────────────────────────
