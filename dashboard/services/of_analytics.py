@@ -7,23 +7,7 @@ import statistics
 from collections import defaultdict
 from cachetools import TTLCache, cached
 import config
-
-API_GROUPS = {
-    "Conta": {"color": "#4A9EFF", "apis": ["accounts", "credit-cards-accounts"]},
-    "Crédito": {"color": "#FF6B6B", "apis": ["loans", "financings", "invoice-financings", "unarranged-accounts-overdraft"]},
-    "Investimentos": {"color": "#2ECC7F", "apis": ["bank-fixed-incomes", "credit-fixed-incomes", "variable-incomes", "funds", "treasure-titles"]},
-    "Identidade": {"color": "#F5A623", "apis": ["customers"]},
-    "Câmbio": {"color": "#A855F7", "apis": ["exchanges"]},
-}
-
-API_LABELS = {
-    "accounts": "Contas", "credit-cards-accounts": "Cartão de Crédito",
-    "loans": "Empréstimos", "financings": "Financiamentos",
-    "invoice-financings": "Financiamentos de Faturas", "unarranged-accounts-overdraft": "Cheque Especial",
-    "bank-fixed-incomes": "Renda Fixa Bancária", "credit-fixed-incomes": "Renda Fixa Crédito",
-    "variable-incomes": "Renda Variável", "funds": "Fundos", "treasure-titles": "Títulos do Tesouro",
-    "customers": "Dados Cadastrais", "exchanges": "Câmbio",
-}
+from services.constants import API_GROUPS, API_LABELS, DB_GROUP_TO_DISPLAY, BRAND_COLORS
 
 LABEL_MAP = {
     "ITAÚ UNIBANCO": "Itaú Unibanco", "CAIXA ECONOMICA FEDERAL": "Caixa Econômica Federal",
@@ -32,7 +16,14 @@ LABEL_MAP = {
 }
 
 AVATAR_MAP = {"BRADESCO":"BDC","NUBANK":"NU","ITAÚ UNIBANCO":"ITÁ","BANCO DO BRASIL":"BB","CAIXA ECONOMICA FEDERAL":"CEF","MERCADO PAGO":"MP","SANTANDER BRASIL":"SAN"}
-AVATAR_COLORS = {"BRADESCO":"#C8102E","NUBANK":"#820AD1","ITAÚ UNIBANCO":"#EC7000","BANCO DO BRASIL":"#FBBA00","CAIXA ECONOMICA FEDERAL":"#005CA9","MERCADO PAGO":"#009EE3","SANTANDER BRASIL":"#EC0000"}
+
+def _brand_color(receptor_name: str) -> str | None:
+    """Substring lookup against the canonical BRAND_COLORS list (shared with Ecossistema)."""
+    name = (receptor_name or "").lower()
+    for key, color in BRAND_COLORS:
+        if key in name:
+            return color
+    return None
 
 def avatar_color_fallback(institution_id: str) -> str:
     h = int(hashlib.md5(institution_id.encode()).hexdigest()[:4], 16)
@@ -303,13 +294,16 @@ def _get_ecosystem_rankings(from_date: str, to_date: str) -> list[dict]:
 
 
 def classify_archetype(c: dict):
-    if c.get("Crédito", 0) > 0.45: return "FOCO EM CRÉDITO", "Consumo dominado por APIs de crédito."
+    if c.get("Empréstimos", 0) > 0.45: return "FOCO EM CRÉDITO", "Consumo dominado por APIs de crédito."
     if c.get("Investimentos", 0) > 0.40: return "FOCO EM INVESTIMENTOS", "Consumo concentrado em renda fixa, variável e fundos."
-    if c.get("Conta", 0) > 0.50: return "FOCO EM CONTA CORRENTE", "Consumo predominante de dados de conta."
-    if c.get("Crédito", 0) > 0.30 and c.get("Conta", 0) > 0.25: return "CRÉDITO & CONTA", "Mix equilibrado."
-    if c.get("Investimentos", 0) > 0.25 and c.get("Crédito", 0) > 0.25: return "CRÉDITO & INVEST", "Combinação relevante."
-    if c.get("Identidade", 0) > 0.30: return "FOCO EM IDENTIDADE", "Alta proporção cadastral."
+    if c.get("Contas", 0) > 0.50: return "FOCO EM CONTA CORRENTE", "Consumo predominante de dados de conta."
+    if c.get("Empréstimos", 0) > 0.30 and c.get("Contas", 0) > 0.25: return "CRÉDITO & CONTA", "Mix equilibrado."
+    if c.get("Investimentos", 0) > 0.25 and c.get("Empréstimos", 0) > 0.25: return "CRÉDITO & INVEST", "Combinação relevante."
+    if c.get("Cadastro", 0) > 0.30: return "FOCO EM IDENTIDADE", "Alta proporção cadastral."
     return "PERFIL DIVERSIFICADO", "Consumo distribuído."
+
+# Note: classify_archetype keys must match API_GROUPS names in services.constants
+# (used by get_profile_header when computing category_shares via group_info["apis"]).
 
 def get_profile_header(institution: str, from_date: str = "2000-01-01", to_date: str = "2100-01-01") -> dict | None:
     """KPIs, rankings, archetype, summary e period. ~8 queries rápidas, todas indexadas por receptor_uuid."""
@@ -386,11 +380,12 @@ def get_profile_header(institution: str, from_date: str = "2000-01-01", to_date:
     con.close()
 
     # Build KPIs
+    bg_color = _brand_color(inst_name) or avatar_color_fallback(institution)
     header = {
         "avatar": {
             "initials": AVATAR_MAP.get(inst_name, "".join(w[0] for w in inst_clean_name.split())[:3].upper()),
-            "background_color": AVATAR_COLORS.get(inst_name, avatar_color_fallback(institution)),
-            "text_color": "#1A1A2E" if AVATAR_COLORS.get(inst_name) == "#FBBA00" else "#FFFFFF"
+            "background_color": bg_color,
+            "text_color": "#1A1A2E" if bg_color.lower() == "#fbba00" else "#FFFFFF"
         },
         "archetype": "...",
         "kpis": {}

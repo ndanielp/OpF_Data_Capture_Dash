@@ -1,9 +1,26 @@
 from fastapi import APIRouter, HTTPException, Query
 from services.cache import get_cache
+from services.constants import API_GROUPS, BRAND_COLORS
 import services.of_analytics as of_analytics
 from typing import Optional
 
 router = APIRouter()
+
+
+@router.get("/brand-colors")
+def brand_colors():
+    """Canonical brand colors for top institutions. Single source of truth
+    consumed by both Ecossistema and Perfil Receptor so avatars, chart
+    series and legends match across tabs."""
+    return {"brands": [{"match": m, "color": c} for m, c in BRAND_COLORS]}
+
+
+@router.get("/api-groups")
+def api_groups():
+    """Canonical API group definitions (display label → color + apis).
+    Frontend uses this to label charts and color chips so there is no
+    drift between backend and UI."""
+    return {"groups": API_GROUPS}
 
 @router.get("/institutions")
 def institutions():

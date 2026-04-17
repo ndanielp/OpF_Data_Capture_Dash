@@ -19,20 +19,21 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 import config
+from services.constants import (
+    API_GROUPS as _SHARED_API_GROUPS,
+    BRAND_COLORS as _SHARED_BRAND,
+    RESOURCES_API,
+    EXCLUDED_APIS,
+)
 
 # ── Agrupamentos e Cores ───────────────────────────────────────────────────────
-API_GROUPS = {
-    "Conta":        ["accounts"],
-    "Cartão":       ["credit-cards-accounts"],
-    "Crédito":      ["loans", "financings", "invoice-financings",
-                     "unarranged-accounts-overdraft"],
-    "Investimento": ["funds", "bank-fixed-incomes", "credit-fixed-incomes",
-                     "variable-incomes", "treasure-titles"],
-    "Câmbio":       ["exchanges"],
-    "Cadastro":     ["customers-pf", "customers-pj"],
+# Exposed as API_GROUPS[label] -> list[str] of api ids (flat shape for this
+# module's heatmap code). The canonical source (with colors) lives in
+# services.constants — imported above.
+API_GROUPS: dict[str, list[str]] = {
+    label: [a for a in info["apis"] if a != "customers"]  # ecossistema splits "customers" into customers-pf/pj
+    for label, info in _SHARED_API_GROUPS.items()
 }
-RESOURCES_API = "resources"
-EXCLUDED_APIS = {"consents"}
 _ORDERED_APIS = [api for apis in API_GROUPS.values() for api in apis]
 
 _API_LABELS = {
@@ -56,22 +57,7 @@ _API_LABELS = {
 _NORM_CPF_APIS  = {"customers-pf"}
 _NORM_CNPJ_APIS = {"customers-pj"}
 
-_BRAND = [
-    ("bradesco",        "#CC092F"),
-    ("nubank",          "#8B1CF0"),
-    ("itaú",            "#EC7000"),
-    ("itau",            "#EC7000"),
-    ("santander",       "#EC0000"),
-    ("caixa",           "#005CA9"),
-    ("mercado pago",    "#00A9E0"),
-    ("picpay",          "#21C25E"),
-    ("banco do brasil", "#F9A800"),
-    ("belvo",           "#4A9EFF"),
-    ("recargapay",      "#7B68EE"),
-    ("shopee",          "#FF5722"),
-    ("pagseguro",       "#34B7F1"),
-    ("cloudwalk",       "#9C27B0"),
-]
+_BRAND = _SHARED_BRAND
 
 _FALLBACK_COLORS = [
     "#4A9EFF", "#7B68EE", "#FF5722", "#34B7F1",
