@@ -36,7 +36,9 @@
       "Bash(curl -s \"http://localhost:8000/api/of/receptor-profile/temporal?institution=926e3037-a685-553c-afa3-f7cb46ff8084&from=2025-10-01&to=2025-11-30&normalize=false\")",
       "Bash(python -c \"import json,sys; d=json.load\\(sys.stdin\\); k=list\\(d.keys\\(\\)\\)[0]; print\\('norm=false:', d[k]\\)\")",
       "PowerShell(Stop-Process -Force)",
-      "PowerShell(Invoke-RestMethod \"http://localhost:8000/api/of/receptor-profile/temporal?institution=926e3037-a685-553c-afa3-f7cb46ff8084&normalize=false\")"
+      "PowerShell(Invoke-RestMethod \"http://localhost:8000/api/of/receptor-profile/temporal?institution=926e3037-a685-553c-afa3-f7cb46ff8084&normalize=false\")",
+      "PowerShell(Invoke-RestMethod \"http://localhost:8000/api/of/ecosystem-stats\")",
+      "PowerShell(Invoke-RestMethod \"http://localhost:8000/api/stats\")"
     ]
   }
 }

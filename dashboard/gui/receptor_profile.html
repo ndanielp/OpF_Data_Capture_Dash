@@ -104,6 +104,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-seri
 .titlebar-nav a:hover,.titlebar-nav a.active{color:var(--text-accent);border-color:var(--text-accent);background:rgba(74,158,255,0.08)}
 
 .page{padding:0;display:flex;flex-direction:column;gap:var(--s5)}
+#profile-content{display:flex;flex-direction:column;gap:var(--s4)}
+.temporal-group{display:flex;flex-direction:column;gap:var(--s2)}
 
 /* HEADER */
 .receptor-header{background:var(--bg-surface);border:1px solid var(--border-subtle);
@@ -195,10 +197,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-seri
   color:#14B8A6;padding-left:var(--s3)}
 
 /* ENDPOINT DEPTH */
-.ep-group{margin-bottom:var(--s5)}
-.ep-group-header{display:flex;align-items:center;gap:var(--s2);margin-bottom:var(--s3);
+.ep-group{display:flex;flex-direction:column;gap:var(--s2)}
+.ep-group-header{display:flex;align-items:center;gap:var(--s2);
   padding:var(--s2) var(--s3);border-radius:var(--r-sm);cursor:pointer;user-select:none}
 .ep-group-header:hover{filter:brightness(1.1)}
+#endpointSection{display:flex;flex-direction:column;gap:var(--s3)}
 .ep-group-name{font-size:var(--tx-sm);font-weight:700;text-transform:uppercase;letter-spacing:0.08em}
 .ep-apis-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:var(--s3)}
 .ep-api-card{background:var(--bg-elevated);border:1px solid var(--border-subtle);
@@ -455,46 +458,47 @@ canvas{display:block}
 
     </div>
 
-    <!-- TEMPORAL EVOLUTION: STACKED INTENSITY -->
+    <!-- TEMPORAL EVOLUTION: STACKED INTENSITY + RESOURCE -->
     <div class="section-label">Evolução Temporal — Intensidade de Uso</div>
-    <div id="card-temporal" class="chart-card">
-      <div class="chart-head">
-        <div>
-          <div class="chart-title">Intensidade Empilhada por Grupo (excl. Resource)</div>
-          <div class="chart-subtitle">Req / consentimento / 30 dias · Valores empilhados — altura total = intensidade total semanal normalizada</div>
+    <div class="temporal-group">
+      <div id="card-temporal" class="chart-card">
+        <div class="chart-head">
+          <div>
+            <div class="chart-title">Intensidade Empilhada por Grupo (excl. Resource)</div>
+            <div class="chart-subtitle" id="temporal-subtitle">Req / consentimento / 30 dias · Valores empilhados — altura total = intensidade total semanal normalizada</div>
+          </div>
+          <div class="chart-badge" id="stacked-badge">-</div>
         </div>
-        <div class="chart-badge" id="stacked-badge">-</div>
+        <div class="legend" style="margin-bottom:var(--s3)">
+          <div class="legend-item"><div class="legend-dot" style="background:var(--c-conta)"></div>Contas</div>
+          <div class="legend-item"><div class="legend-dot" style="background:var(--c-cartao)"></div>Cartão de Crédito</div>
+          <div class="legend-item"><div class="legend-dot" style="background:var(--c-invest)"></div>Investimentos</div>
+          <div class="legend-item"><div class="legend-dot" style="background:var(--c-credito)"></div>Empréstimos</div>
+          <div class="legend-item"><div class="legend-dot" style="background:var(--c-identidade)"></div>Cadastro</div>
+          <div class="legend-item"><div class="legend-dot" style="background:var(--c-cambio)"></div>Câmbio</div>
+        </div>
+        <div style="position:relative;height:220px">
+          <canvas id="stackedIntensityChart"></canvas>
+        </div>
       </div>
-      <div class="legend" style="margin-bottom:var(--s3)">
-        <div class="legend-item"><div class="legend-dot" style="background:var(--c-conta)"></div>Contas</div>
-        <div class="legend-item"><div class="legend-dot" style="background:var(--c-cartao)"></div>Cartão de Crédito</div>
-        <div class="legend-item"><div class="legend-dot" style="background:var(--c-invest)"></div>Investimentos</div>
-        <div class="legend-item"><div class="legend-dot" style="background:var(--c-credito)"></div>Empréstimos</div>
-        <div class="legend-item"><div class="legend-dot" style="background:var(--c-identidade)"></div>Cadastro</div>
-        <div class="legend-item"><div class="legend-dot" style="background:var(--c-cambio)"></div>Câmbio</div>
-      </div>
-      <div style="position:relative;height:220px">
-        <canvas id="stackedIntensityChart"></canvas>
-      </div>
-    </div>
 
-    <!-- RESOURCE CHART -->
-    <div id="card-resource-chart" class="chart-card" style="margin-top:calc(-1 * var(--s3))">
-      <div class="chart-head">
-        <div>
-          <div class="chart-title">Resource — Intensidade Semanal</div>
-          <div class="chart-subtitle">Req / consentimento / 30 dias · Escala independente · Pivô visível em set/2025</div>
+      <div id="card-resource-chart" class="chart-card">
+        <div class="chart-head">
+          <div>
+            <div class="chart-title">Resource — Intensidade Semanal</div>
+            <div class="chart-subtitle" id="resource-subtitle">Req / consentimento / 30 dias · Escala independente</div>
+          </div>
+          <div class="chart-badge" style="color:#14B8A6;background:rgba(20,184,166,0.1);border-color:rgba(20,184,166,0.3)">Resource</div>
         </div>
-        <div class="chart-badge" style="color:#14B8A6;background:rgba(20,184,166,0.1);border-color:rgba(20,184,166,0.3)">Resource</div>
-      </div>
-      <div style="position:relative;height:140px">
-        <canvas id="resourceChart"></canvas>
+        <div style="position:relative;height:140px">
+          <canvas id="resourceChart"></canvas>
+        </div>
       </div>
     </div>
 
     <!-- ENDPOINT DEPTH -->
     <div class="section-label">Profundidade de Consumo por API</div>
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-top:-12px;margin-bottom:var(--s4);flex-wrap:wrap;gap:var(--s3)">
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:var(--s3)">
       <div id="depth-subtitle" style="font-size:var(--tx-xs);color:var(--text-secondary)">
         Intensidade média por endpoint · Req / consentimento / 30 dias (média do período) · Excl. Resource
       </div>
@@ -573,9 +577,15 @@ function fmtDate(d){
   const [y,m]=d.split('-');
   return ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'][+m-1]+'/'+y.slice(2);
 }
+function fmtWeek(d){
+  const p=d.split('-');
+  return p[2]+'/'+['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'][+p[1]-1];
+}
 
-// ─── SIDEBAR ──────────────────────────────────────────────────────────
+// ─── GLOBALS ──────────────────────────────────────────────────────────
 let _currentInstitution = null;
+let _dbMinDate = null;
+let _dbMaxDate = null;
 
 async function loadSidebarReceptors() {
   try {
@@ -653,7 +663,20 @@ document.getElementById('prof-toggle-escala').addEventListener('click', function
   if (_currentInstitution) loadProfile(_currentInstitution);
 });
 
+async function loadDbRange() {
+  try {
+    const s = await (await fetch('/api/stats')).json();
+    if (s.min_date) _dbMinDate = s.min_date;
+    if (s.max_date) _dbMaxDate = s.max_date;
+    const ds = document.getElementById('prof-date-start');
+    const de = document.getElementById('prof-date-end');
+    if (_dbMinDate) { ds.min = _dbMinDate; de.min = _dbMinDate; }
+    if (_dbMaxDate) { ds.max = _dbMaxDate; de.max = _dbMaxDate; }
+  } catch (_) {}
+}
+
 document.addEventListener('DOMContentLoaded', () => {
+  loadDbRange();
   loadSidebarReceptors();
   initPeriodFilter();
 });
@@ -667,7 +690,7 @@ async function _loadProfileNow(institutionId){
 
   document.getElementById('empty-state').style.display='none';
   document.getElementById('error-state').style.display='none';
-  document.getElementById('profile-content').style.display='block';
+  document.getElementById('profile-content').style.display='flex';
   document.getElementById('loading-state').style.display='block';
   loadSkeleton();
   ['card-smap','card-tornado','card-temporal','card-resource-chart'].forEach(id => _setCardLoading(id, true));
@@ -758,7 +781,7 @@ function initPeriodFilter() {
   let saved = null;
   try { saved = JSON.parse(sessionStorage.getItem('opf:filters') || 'null'); } catch (_) {}
   document.getElementById('prof-date-start').value = saved?.start || oneYearAgo;
-  document.getElementById('prof-date-end').value   = saved?.end   || _today;
+  document.getElementById('prof-date-end').value   = saved?.end   || (_dbMaxDate || _today);
 
   function _saveAndReload() {
     try {
@@ -776,13 +799,13 @@ function initPeriodFilter() {
     btn.addEventListener('click', () => {
       document.querySelectorAll('#date-bar .quick-btn').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
-      const action = btn.dataset.months;
-      const endDate = _today;
+      const action  = btn.dataset.months;
+      const endDate = _dbMaxDate || _today;
       let startDate;
       if (action === '0') {
-        startDate = '2020-01-01';
+        startDate = _dbMinDate || '2020-01-01';
       } else if (action === 'ytd') {
-        startDate = new Date().getFullYear() + '-01-01';
+        startDate = endDate.slice(0, 4) + '-01-01';
       } else {
         const months = parseFloat(action);
         const d = new Date(endDate + 'T12:00:00');
@@ -1202,11 +1225,23 @@ function renderTemporalIntensity(tsIntensity, normalize = true) {
   if(!tsIntensity || !Object.keys(tsIntensity).length) return;
 
   const dates  = Object.keys(tsIntensity);
-  const labels = dates.map(fmtDate);
-  const yLabel  = normalize ? 'req/consent/30d' : 'req / semana';
+  const labels = dates.map(fmtWeek);
+  const yLabel  = normalize ? 'req/consent/30d' : 'req/semana';
   const fmtVal  = normalize
     ? v => v.toFixed(1)
-    : v => v >= 1e6 ? (v/1e6).toFixed(1)+'M' : v >= 1e3 ? (v/1e3).toFixed(0)+'k' : v.toFixed(0);
+    : v => v >= 1e9 ? (v/1e9).toFixed(2).replace('.',',')+'B'
+         : v >= 1e6 ? (v/1e6).toFixed(1).replace('.',',')+'M'
+         : v >= 1e3 ? (v/1e3).toFixed(0)+'k' : v.toFixed(0);
+
+  // Subtitles
+  const tempSub = document.getElementById('temporal-subtitle');
+  const resSub  = document.getElementById('resource-subtitle');
+  const subText = normalize
+    ? 'Req / consentimento / 30 dias · Valores empilhados — altura total = intensidade total semanal normalizada'
+    : 'Requisições / semana (volume bruto) · Valores empilhados';
+  const resText = normalize ? 'Req / consentimento / 30 dias · Escala independente' : 'Requisições / semana · Escala independente';
+  if(tempSub) tempSub.textContent = subText;
+  if(resSub)  resSub.textContent  = resText;
 
   // Badge: period range + escala
   const badge = document.getElementById('stacked-badge');
@@ -1415,7 +1450,7 @@ function renderEndpointDepth(endpointDepth, normalize = true) {
       <div style="width:${trackW}px;height:${height}px;background:var(--bg-base);border-radius:${height}px;overflow:hidden;flex-shrink:0">
         <div style="width:${fillW}px;height:100%;background:${color};opacity:0.75;border-radius:${height}px"></div>
       </div>
-      <span style="font-size:10px;color:var(--text-muted);font-variant-numeric:tabular-nums;min-width:38px;text-align:right">${total.toFixed(1)}</span>
+      <span style="font-size:10px;color:var(--text-muted);font-variant-numeric:tabular-nums;min-width:52px;text-align:right">${fmtVal(total)}</span>
     </div>`;
   }
 
@@ -1453,10 +1488,9 @@ function renderEndpointDepth(endpointDepth, normalize = true) {
 
     const hdr = document.createElement('div');
     hdr.className  = 'ep-group-header';
-    hdr.style.cssText = `display:flex;align-items:center;gap:var(--s2);padding:var(--s2) var(--s3);
-      border-radius:var(--r-sm);background:${bgBase};border-left:3px solid ${groupData.color};transition:background 0.15s`;
+    hdr.style.cssText = `background:${bgBase};border-left:3px solid ${groupData.color};transition:background 0.15s`;
     hdr.innerHTML = `
-      <span class="ep-chevron" id="chev-${groupKey}">▼</span>
+      <span class="ep-chevron collapsed" id="chev-${groupKey}">▼</span>
       <div class="ep-group-name" style="color:${groupData.color}">${groupKey}</div>
       ${intensityBar(groupTotal, groupData.color, GRP_BAR_W, 5)}`;
     hdr.addEventListener('mouseenter', () => hdr.style.background = bgHover);
@@ -1465,7 +1499,7 @@ function renderEndpointDepth(endpointDepth, normalize = true) {
 
     const grid = document.createElement('div');
     grid.className = 'ep-apis-grid';
-    grid.style.marginTop = 'var(--s3)';
+    grid.style.display = 'none';
 
     hdr.addEventListener('click', () => {
       const isOpen = grid.style.display !== 'none';
