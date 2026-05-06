@@ -965,6 +965,13 @@
       flex-wrap: wrap;
     }
 
+    .accel-signal { font-size: 11px; font-weight: 700; min-width: 24px; text-align: center; }
+    .accel-signal.up_strong   { color: var(--success); }
+    .accel-signal.up          { color: var(--success); opacity: 0.7; }
+    .accel-signal.flat        { color: var(--text-muted); }
+    .accel-signal.down        { color: #F59E0B; }
+    .accel-signal.down_strong { color: var(--error); }
+
     .efficiency-quadrants {
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -1276,7 +1283,7 @@
           <div class="chart-head">
             <div>
               <div class="chart-title">Aceleração de Consentimentos</div>
-              <div class="chart-subtitle">Variação semana a semana · consentimentos únicos</div>
+              <div class="chart-subtitle">Momentum mensal · consentimentos únicos</div>
             </div>
             <div class="chart-toggles" id="accel-consent-toggles">
               <button data-view="all" class="active">Total</button>
@@ -1284,10 +1291,16 @@
               <button data-view="pj">PJ</button>
             </div>
           </div>
-          <div id="accel-consents-empty" class="chart-empty" style="display:none">Sem dados suficientes (mínimo 2 semanas)</div>
-          <div style="position:relative;height:200px;width:100%">
-            <canvas id="accelConsentChart"></canvas>
+          <div id="accel-consents-empty" class="chart-empty" style="display:none">Sem dados suficientes (mínimo 2 meses)</div>
+          <div style="display:flex; justify-content:space-between; font-size:10px; color:var(--text-muted); padding-bottom:4px; border-bottom:1px solid var(--border-default); margin-top:var(--s2);">
+            <div>Instituição</div>
+            <div style="display:flex; gap:6px;">
+              <div style="width:52px; text-align:right;" title="Delta do mês mais recente">Mês atual</div>
+              <div style="width:52px; text-align:right; color:var(--text-accent)" title="Variação vs mês anterior (momentum)">Variação</div>
+              <div style="width:24px; text-align:center;">Sinal</div>
+            </div>
           </div>
+          <ul class="ranking-list" id="accel-consent-list" style="max-height:220px; overflow-y:auto;"></ul>
         </div>
 
         <!-- Aceleração de Intensidade -->
@@ -1295,13 +1308,19 @@
           <div class="chart-head">
             <div>
               <div class="chart-title">Aceleração de Intensidade de API</div>
-              <div class="chart-subtitle">Variação semana a semana · req/consentimento/30d</div>
+              <div class="chart-subtitle">Momentum mensal · req/consentimento/30d</div>
             </div>
           </div>
-          <div id="accel-intensity-empty" class="chart-empty" style="display:none">Sem dados suficientes (mínimo 2 semanas)</div>
-          <div style="position:relative;height:200px;width:100%">
-            <canvas id="accelIntensityChart"></canvas>
+          <div id="accel-intensity-empty" class="chart-empty" style="display:none">Sem dados suficientes (mínimo 2 meses)</div>
+          <div style="display:flex; justify-content:space-between; font-size:10px; color:var(--text-muted); padding-bottom:4px; border-bottom:1px solid var(--border-default); margin-top:var(--s2);">
+            <div>Instituição</div>
+            <div style="display:flex; gap:6px;">
+              <div style="width:52px; text-align:right;" title="Delta de intensidade do mês mais recente">Mês atual</div>
+              <div style="width:52px; text-align:right; color:var(--text-accent)" title="Variação vs mês anterior (momentum)">Variação</div>
+              <div style="width:24px; text-align:center;">Sinal</div>
+            </div>
           </div>
+          <ul class="ranking-list" id="accel-intensity-list" style="max-height:220px; overflow-y:auto;"></ul>
         </div>
 
       </div>
@@ -1405,8 +1424,6 @@
        ============================================================ */
     let lineChart = null;
     let barChart = null;
-    let accelConsentChart = null;
-    let accelIntensityChart = null;
     let efficiencyChart = null;
     let _allReceptors = [];   // [{label, color, top}]
     let _apiData = null;     // last api-requests response (for export)
@@ -1459,7 +1476,7 @@
         barChart.options.plugins.tooltip.bodyColor = Chart.defaults.color;
         barChart.update();
       }
-      [accelConsentChart, accelIntensityChart, efficiencyChart].filter(Boolean).forEach(ch => {
+      [efficiencyChart].filter(Boolean).forEach(ch => {
         ch.options.scales.x.grid.color = gridColor;
         ch.options.scales.y.grid.color = gridColor;
         ch.options.plugins.tooltip.backgroundColor = tooltipBg;
@@ -2151,57 +2168,6 @@
     /* ============================================================
        ACELERAÇÃO — INIT + UPDATE
        ============================================================ */
-    function _accelChartOptions(yTitle) {
-      const isLight = document.body.getAttribute('data-theme') === 'light';
-      return {
-        responsive: true, maintainAspectRatio: false,
-        interaction: { mode: 'index', intersect: false },
-        plugins: {
-          legend: { display: false },
-          tooltip: {
-            backgroundColor: isLight ? '#FFF' : '#1B1F2E',
-            borderColor: isLight ? '#D1D5DB' : '#333B54',
-            borderWidth: 1,
-            titleColor: isLight ? '#111827' : '#EEF0F6',
-            bodyColor: isLight ? '#4B5563' : '#8B95B0',
-            padding: 10,
-            filter: item => item.dataset.label !== '__zero__',
-            callbacks: {
-              label: ctx => {
-                const v = ctx.parsed.y;
-                const sign = v > 0 ? '+' : '';
-                return `  ${ctx.dataset.label}: ${sign}${fmtVal(v, false)}`;
-              }
-            }
-          }
-        },
-        scales: {
-          x: {
-            grid: { color: isLight ? '#E5E7EB' : '#252A3A' },
-            border: { display: false },
-            ticks: { color: isLight ? '#4B5563' : '#4A5270', maxRotation: 45 },
-          },
-          y: {
-            grid: { color: isLight ? '#E5E7EB' : '#252A3A' },
-            border: { display: false },
-            ticks: { color: '#4A5270', callback: v => fmtVal(v, false) },
-            title: { display: true, text: yTitle, color: '#4A5270', font: { size: 10 } },
-          }
-        }
-      };
-    }
-
-    function initAccelCharts() {
-      accelConsentChart = new Chart(
-        document.getElementById('accelConsentChart').getContext('2d'),
-        { type: 'line', data: { labels: [], datasets: [] }, options: _accelChartOptions('Δ Consentimentos') }
-      );
-      accelIntensityChart = new Chart(
-        document.getElementById('accelIntensityChart').getContext('2d'),
-        { type: 'line', data: { labels: [], datasets: [] }, options: _accelChartOptions('Δ req/consent/30d') }
-      );
-    }
-
     function initEfficiencyChart() {
       const isLight = document.body.getAttribute('data-theme') === 'light';
       efficiencyChart = new Chart(
@@ -2250,53 +2216,52 @@
       );
     }
 
-    function renderAccelCharts() {
+    const _SIGNAL_ICON  = { up_strong:'↑↑', up:'↑', flat:'→', down:'↓', down_strong:'↓↓' };
+
+    function _accelRow(r, delta, momentum) {
+      const sign = delta >= 0 ? '+' : '';
+      const mSign = momentum != null ? (momentum >= 0 ? '+' : '') : '';
+      const mFmt  = momentum != null ? mSign + fmtVal(momentum, false) : '—';
+      const sig   = r.signal || 'flat';
+      return `<li class="ranking-item">
+        <div class="ranking-label">
+          <div class="ranking-color" style="background:${r.color}"></div>
+          <div class="ranking-name" style="text-overflow:ellipsis;overflow:hidden;max-width:90px;white-space:nowrap" title="${r.receptor}">${r.receptor}</div>
+        </div>
+        <div style="display:flex;gap:6px;align-items:center;">
+          <div class="ranking-value" style="width:52px;text-align:right;">${sign}${fmtVal(delta, false)}</div>
+          <div style="font-size:9px;width:52px;text-align:right;font-weight:600;color:var(--text-accent)">${mFmt}</div>
+          <div class="accel-signal ${sig}">${_SIGNAL_ICON[sig]}</div>
+        </div>
+      </li>`;
+    }
+
+    function renderAccelSummary() {
       if (!_accelData) return;
-      const cseries = _accelData.consent_series || [];
-      const clabels = _accelData.labels_consents || [];
-      const emptyC  = document.getElementById('accel-consents-empty');
-      const canvasC = document.getElementById('accelConsentChart');
-      if (cseries.length === 0 || clabels.length === 0) {
-        emptyC.style.display = 'flex'; canvasC.style.display = 'none';
+
+      const csummary = _accelData.consent_summary || [];
+      const emptyC   = document.getElementById('accel-consents-empty');
+      const listC    = document.getElementById('accel-consent-list');
+      if (csummary.length === 0) {
+        emptyC.style.display = 'flex'; listC.innerHTML = '';
       } else {
-        emptyC.style.display = 'none'; canvasC.style.display = '';
-        accelConsentChart.data.labels = clabels;
-        accelConsentChart.data.datasets = [
-          ...cseries.map(s => ({
-            label: s.receptor,
-            data: _accelView === 'pf' ? s.deltas_pf : _accelView === 'pj' ? s.deltas_pj : s.deltas_all,
-            borderColor: s.color,
-            backgroundColor: s.color + '22',
-            tension: 0.3, pointRadius: 3, fill: false,
-          })),
-          { label: '__zero__', data: Array(clabels.length).fill(0),
-            borderColor: 'rgba(120,120,120,0.3)', borderDash: [4,4],
-            borderWidth: 1, pointRadius: 0, fill: false, tension: 0 },
-        ];
-        accelConsentChart.update();
+        emptyC.style.display = 'none';
+        const sorted = [...csummary].sort((a, b) => Math.abs(b.momentum ?? 0) - Math.abs(a.momentum ?? 0));
+        listC.innerHTML = sorted.map(r => {
+          const delta = _accelView === 'pf' ? r.last_delta_pf : _accelView === 'pj' ? r.last_delta_pj : r.last_delta;
+          return _accelRow(r, delta, r.momentum);
+        }).join('');
       }
-      const iseries = _accelData.intensity_series || [];
-      const ilabels = _accelData.labels_intensity || [];
-      const emptyI  = document.getElementById('accel-intensity-empty');
-      const canvasI = document.getElementById('accelIntensityChart');
-      if (iseries.length === 0 || ilabels.length === 0) {
-        emptyI.style.display = 'flex'; canvasI.style.display = 'none';
+
+      const isummary = _accelData.intensity_summary || [];
+      const emptyI   = document.getElementById('accel-intensity-empty');
+      const listI    = document.getElementById('accel-intensity-list');
+      if (isummary.length === 0) {
+        emptyI.style.display = 'flex'; listI.innerHTML = '';
       } else {
-        emptyI.style.display = 'none'; canvasI.style.display = '';
-        accelIntensityChart.data.labels = ilabels;
-        accelIntensityChart.data.datasets = [
-          ...iseries.map(s => ({
-            label: s.receptor,
-            data: s.deltas,
-            borderColor: s.color,
-            backgroundColor: s.color + '22',
-            tension: 0.3, pointRadius: 3, fill: false,
-          })),
-          { label: '__zero__', data: Array(ilabels.length).fill(0),
-            borderColor: 'rgba(120,120,120,0.3)', borderDash: [4,4],
-            borderWidth: 1, pointRadius: 0, fill: false, tension: 0 },
-        ];
-        accelIntensityChart.update();
+        emptyI.style.display = 'none';
+        const sorted = [...isummary].sort((a, b) => Math.abs(b.momentum ?? 0) - Math.abs(a.momentum ?? 0));
+        listI.innerHTML = sorted.map(r => _accelRow(r, r.last_delta, r.momentum)).join('');
       }
     }
 
@@ -2306,7 +2271,7 @@
         const resp = await fetch('/api/acceleration?' + params, { signal });
         const data = await resp.json();
         _accelData = data;
-        renderAccelCharts();
+        renderAccelSummary();
       } finally {
         ['card-accel-consents', 'card-accel-intensity'].forEach(id => setCardLoading(id, false));
       }
@@ -2370,7 +2335,7 @@
         document.querySelectorAll('#accel-consent-toggles button').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
         _accelView = btn.dataset.view;
-        if (_accelData) renderAccelCharts();
+        if (_accelData) renderAccelSummary();
       });
     });
 
@@ -2674,7 +2639,6 @@
     async function loadAll() {
       initLineChart();
       initBarChart();
-      initAccelCharts();
       initEfficiencyChart();
       initChartApiTime();
       // Stats e receptors em paralelo — sem dependência entre si

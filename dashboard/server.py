@@ -905,6 +905,28 @@ def get_resources(start: str = None, end: str = None, receptors: str = None, sta
         "normalize": norm,
     })
 
+def _signal_from_quantiles(momentum: float | None, qs: list[float]) -> str:
+    if momentum is None or not qs:
+        return "flat"
+    if momentum > qs[3]: return "up_strong"
+    if momentum > qs[2]: return "up"
+    if momentum > qs[1]: return "flat"
+    if momentum > qs[0]: return "down"
+    return "down_strong"
+
+
+def _assign_signals(items: list[dict], key: str = "momentum") -> None:
+    moms = [r[key] for r in items if r[key] is not None]
+    if len(moms) < 2 or min(moms) == max(moms):
+        return
+    try:
+        qs = statistics.quantiles(moms, n=5)  # [p20, p40, p60, p80]
+        for r in items:
+            r["signal"] = _signal_from_quantiles(r[key], qs)
+    except Exception:
+        pass
+
+
 @app.get("/api/acceleration", response_class=JSONResponse)
 @cached_response("acceleration")
 def get_acceleration(start: str = None, end: str = None, receptors: str = None):
@@ -913,17 +935,22 @@ def get_acceleration(start: str = None, end: str = None, receptors: str = None):
     dt_end   = _parse_date(end, today)
     sel      = _parse_receptors(receptors)
 
-    # ── Consentimentos ────────────────────────────────────────────────────────
+    # ── Consentimentos: dados semanais ────────────────────────────────────────
     df_cons = _get_consents(dt_start, dt_end)
     consent_series: list[dict] = []
+    consent_summary: list[dict] = []
     labels_cons: list[str] = []
+    recs:   list[str] = []
+    colors: dict      = {}
+
     if not df_cons.empty:
         if sel:
             df_cons = df_cons[df_cons["receptor"].isin(sel)]
         recs   = df_cons["receptor"].unique().tolist()
         colors = _build_color_map(recs)
-        all_dates  = sorted(df_cons["date"].dt.date.unique())
+        all_dates   = sorted(df_cons["date"].dt.date.unique())
         labels_cons = [d.isoformat() for d in all_dates[1:]]
+
         for rec in recs:
             rdf = df_cons[df_cons["receptor"] == rec].sort_values("date")
             if len(rdf) < 2:
@@ -939,9 +966,54 @@ def get_acceleration(start: str = None, end: str = None, receptors: str = None):
                 "deltas_pj":  [cnjs[i] - cnjs[i-1] for i in range(1, len(cnjs))],
             })
 
-    # ── Intensidade (api_group_weekly) ────────────────────────────────────────
-    intensity_series: list[dict] = []
+        # ── Resumo mensal de consentimentos ───────────────────────────────────
+        df_m = df_cons.copy()
+        df_m["month"] = df_m["date"].dt.to_period("M")
+        monthly = (
+            df_m.groupby(["receptor", "month"])[["total", "cpf", "cnpj"]]
+            .sum().reset_index()
+        )
+        monthly["month_str"] = monthly["month"].astype(str)
+        monthly = monthly.sort_values(["receptor", "month"])
+
+        for rec in recs:
+            mrdf = monthly[monthly["receptor"] == rec].sort_values("month")
+            if len(mrdf) < 2:
+                continue
+            tots_m = mrdf["total"].tolist()
+            cpfs_m = mrdf["cpf"].tolist()
+            cnjs_m = mrdf["cnpj"].tolist()
+            mlabels = mrdf["month_str"].tolist()
+            d_all = [tots_m[i] - tots_m[i-1] for i in range(1, len(tots_m))]
+            d_pf  = [cpfs_m[i] - cpfs_m[i-1] for i in range(1, len(cpfs_m))]
+            d_pj  = [cnjs_m[i] - cnjs_m[i-1] for i in range(1, len(cnjs_m))]
+            last_delta = d_all[-1]
+            prev_delta = d_all[-2] if len(d_all) >= 2 else None
+            momentum   = (last_delta - prev_delta) if prev_delta is not None else None
+            consent_summary.append({
+                "receptor":      rec,
+                "color":         colors.get(rec, "#4A9EFF"),
+                "month_labels":  mlabels[1:],
+                "deltas_all":    d_all,
+                "deltas_pf":     d_pf,
+                "deltas_pj":     d_pj,
+                "last_delta":    last_delta,
+                "last_delta_pf": d_pf[-1] if d_pf else 0,
+                "last_delta_pj": d_pj[-1] if d_pj else 0,
+                "prev_delta":    prev_delta,
+                "momentum":      momentum,
+                "signal":        "flat",
+            })
+        _assign_signals(consent_summary)
+
+    # ── Intensidade: dados semanais ───────────────────────────────────────────
+    intensity_series:  list[dict] = []
+    intensity_summary: list[dict] = []
     labels_int: list[str] = []
+    recs_int:   list[str] = []
+    colors_int: dict      = {}
+    df_agw = pd.DataFrame()
+
     try:
         con = _db_con()
         df_agw = pd.read_sql(
@@ -953,34 +1025,74 @@ def get_acceleration(start: str = None, end: str = None, receptors: str = None):
             con, params=[dt_start.isoformat(), dt_end.isoformat()], parse_dates=["date"],
         )
         con.close()
-        if not df_agw.empty:
-            if sel:
-                df_agw = df_agw[df_agw["receptor"].isin(sel)]
-            recs_int   = df_agw["receptor"].unique().tolist()
-            colors_int = _build_color_map(recs_int)
-            all_dates_int = sorted(df_agw["date"].dt.date.unique())
-            labels_int    = [d.isoformat() for d in all_dates_int[1:]]
-            for rec in recs_int:
-                rdf = df_agw[df_agw["receptor"] == rec].sort_values("date")
-                if len(rdf) < 2:
-                    continue
-                intens = [
-                    row.req_week * 30.0 / (row.consents_total * 7) if row.consents_total > 0 else 0.0
-                    for row in rdf.itertuples()
-                ]
-                intensity_series.append({
-                    "receptor": rec,
-                    "color":    colors_int.get(rec, "#4A9EFF"),
-                    "deltas":   [round(intens[i] - intens[i-1], 3) for i in range(1, len(intens))],
-                })
     except Exception:
         pass
 
+    if not df_agw.empty:
+        if sel:
+            df_agw = df_agw[df_agw["receptor"].isin(sel)]
+        recs_int   = df_agw["receptor"].unique().tolist()
+        colors_int = _build_color_map(recs_int)
+        all_dates_int = sorted(df_agw["date"].dt.date.unique())
+        labels_int    = [d.isoformat() for d in all_dates_int[1:]]
+
+        for rec in recs_int:
+            rdf = df_agw[df_agw["receptor"] == rec].sort_values("date")
+            if len(rdf) < 2:
+                continue
+            intens = [
+                row.req_week * 30.0 / (row.consents_total * 7) if row.consents_total > 0 else 0.0
+                for row in rdf.itertuples()
+            ]
+            intensity_series.append({
+                "receptor": rec,
+                "color":    colors_int.get(rec, "#4A9EFF"),
+                "deltas":   [round(intens[i] - intens[i-1], 3) for i in range(1, len(intens))],
+            })
+
+        # ── Resumo mensal de intensidade ──────────────────────────────────────
+        df_agw_m = df_agw.copy()
+        df_agw_m["month"] = df_agw_m["date"].dt.to_period("M")
+        df_agw_m["intensity"] = [
+            row.req_week * 30.0 / (row.consents_total * 7) if row.consents_total > 0 else 0.0
+            for row in df_agw_m.itertuples()
+        ]
+        monthly_int = (
+            df_agw_m.groupby(["receptor", "month"])["intensity"]
+            .mean().reset_index()
+        )
+        monthly_int["month_str"] = monthly_int["month"].astype(str)
+        monthly_int = monthly_int.sort_values(["receptor", "month"])
+
+        for rec in recs_int:
+            mrdf = monthly_int[monthly_int["receptor"] == rec].sort_values("month")
+            if len(mrdf) < 2:
+                continue
+            intens_m = mrdf["intensity"].tolist()
+            mlabels  = mrdf["month_str"].tolist()
+            d_int    = [round(intens_m[i] - intens_m[i-1], 3) for i in range(1, len(intens_m))]
+            last_delta = d_int[-1]
+            prev_delta = d_int[-2] if len(d_int) >= 2 else None
+            momentum   = round(last_delta - prev_delta, 3) if prev_delta is not None else None
+            intensity_summary.append({
+                "receptor":   rec,
+                "color":      colors_int.get(rec, "#4A9EFF"),
+                "month_labels": mlabels[1:],
+                "deltas":     d_int,
+                "last_delta": last_delta,
+                "prev_delta": prev_delta,
+                "momentum":   momentum,
+                "signal":     "flat",
+            })
+        _assign_signals(intensity_summary)
+
     return JSONResponse({
-        "labels_consents":  labels_cons,
-        "labels_intensity": labels_int,
-        "consent_series":   consent_series,
-        "intensity_series": intensity_series,
+        "labels_consents":   labels_cons,
+        "labels_intensity":  labels_int,
+        "consent_series":    consent_series,
+        "intensity_series":  intensity_series,
+        "consent_summary":   consent_summary,
+        "intensity_summary": intensity_summary,
     })
 
 
