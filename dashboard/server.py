@@ -966,41 +966,30 @@ def get_acceleration(start: str = None, end: str = None, receptors: str = None):
                 "deltas_pj":  [cnjs[i] - cnjs[i-1] for i in range(1, len(cnjs))],
             })
 
-        # ── Resumo mensal de consentimentos ───────────────────────────────────
-        df_m = df_cons.copy()
-        df_m["month"] = df_m["date"].dt.to_period("M")
-        monthly = (
-            df_m.sort_values("date")
-            .groupby(["receptor", "month"])[["total", "cpf", "cnpj"]]
-            .last().reset_index()
-        )
-        monthly["month_str"] = monthly["month"].astype(str)
-        monthly = monthly.sort_values(["receptor", "month"])
-
+        # ── Resumo 4 semanas vs 4 semanas (consentimentos) ───────────────────
         for rec in recs:
-            mrdf = monthly[monthly["receptor"] == rec].sort_values("month")
-            if len(mrdf) < 2:
+            rdf = df_cons[df_cons["receptor"] == rec].sort_values("date")
+            weeks = rdf["date"].dt.date.unique()
+            if len(weeks) < 5:   # precisa de pelo menos 5 snapshots para 2 janelas
                 continue
-            tots_m = mrdf["total"].tolist()
-            cpfs_m = mrdf["cpf"].tolist()
-            cnjs_m = mrdf["cnpj"].tolist()
-            mlabels = mrdf["month_str"].tolist()
-            d_all = [tots_m[i] - tots_m[i-1] for i in range(1, len(tots_m))]
-            d_pf  = [cpfs_m[i] - cpfs_m[i-1] for i in range(1, len(cpfs_m))]
-            d_pj  = [cnjs_m[i] - cnjs_m[i-1] for i in range(1, len(cnjs_m))]
-            last_delta = d_all[-1]
-            prev_delta = d_all[-2] if len(d_all) >= 2 else None
-            momentum   = (last_delta - prev_delta) if prev_delta is not None else None
+            tots = rdf.set_index(rdf["date"].dt.date)["total"]
+            cpfs = rdf.set_index(rdf["date"].dt.date)["cpf"]
+            cnjs = rdf.set_index(rdf["date"].dt.date)["cnpj"]
+            # Últimos 5 snapshots disponíveis: [w-8, w-4, w0] mínimo
+            # last_4w  = total[w0]  - total[w-4]
+            # prev_4w  = total[w-4] - total[w-8]
+            w = sorted(weeks)
+            last_delta    = int(tots[w[-1]] - tots[w[-5]])
+            prev_delta    = int(tots[w[-5]] - tots[w[-9]]) if len(w) >= 9 else int(tots[w[-5]] - tots[w[0]])
+            last_delta_pf = int(cpfs[w[-1]] - cpfs[w[-5]])
+            last_delta_pj = int(cnjs[w[-1]] - cnjs[w[-5]])
+            momentum      = last_delta - prev_delta
             consent_summary.append({
                 "receptor":      rec,
                 "color":         colors.get(rec, "#4A9EFF"),
-                "month_labels":  mlabels[1:],
-                "deltas_all":    d_all,
-                "deltas_pf":     d_pf,
-                "deltas_pj":     d_pj,
                 "last_delta":    last_delta,
-                "last_delta_pf": d_pf[-1] if d_pf else 0,
-                "last_delta_pj": d_pj[-1] if d_pj else 0,
+                "last_delta_pf": last_delta_pf,
+                "last_delta_pj": last_delta_pj,
                 "prev_delta":    prev_delta,
                 "momentum":      momentum,
                 "signal":        "flat",
@@ -1051,35 +1040,24 @@ def get_acceleration(start: str = None, end: str = None, receptors: str = None):
                 "deltas":   [round(intens[i] - intens[i-1], 3) for i in range(1, len(intens))],
             })
 
-        # ── Resumo mensal de intensidade ──────────────────────────────────────
-        df_agw_m = df_agw.copy()
-        df_agw_m["month"] = df_agw_m["date"].dt.to_period("M")
-        df_agw_m["intensity"] = [
-            row.req_week * 30.0 / (row.consents_total * 7) if row.consents_total > 0 else 0.0
-            for row in df_agw_m.itertuples()
-        ]
-        monthly_int = (
-            df_agw_m.groupby(["receptor", "month"])["intensity"]
-            .mean().reset_index()
-        )
-        monthly_int["month_str"] = monthly_int["month"].astype(str)
-        monthly_int = monthly_int.sort_values(["receptor", "month"])
-
+        # ── Resumo 4 semanas vs 4 semanas (intensidade) ───────────────────────
         for rec in recs_int:
-            mrdf = monthly_int[monthly_int["receptor"] == rec].sort_values("month")
-            if len(mrdf) < 2:
+            rdf = df_agw[df_agw["receptor"] == rec].sort_values("date")
+            w = sorted(rdf["date"].dt.date.unique())
+            if len(w) < 5:
                 continue
-            intens_m = mrdf["intensity"].tolist()
-            mlabels  = mrdf["month_str"].tolist()
-            d_int    = [round(intens_m[i] - intens_m[i-1], 3) for i in range(1, len(intens_m))]
-            last_delta = d_int[-1]
-            prev_delta = d_int[-2] if len(d_int) >= 2 else None
-            momentum   = round(last_delta - prev_delta, 3) if prev_delta is not None else None
+            def _avg_intens(rows):
+                vals = [r.req_week * 30.0 / (r.consents_total * 7) if r.consents_total > 0 else 0.0
+                        for r in rows.itertuples()]
+                return sum(vals) / len(vals) if vals else 0.0
+            last4 = rdf[rdf["date"].dt.date.isin(w[-4:])]
+            prev4 = rdf[rdf["date"].dt.date.isin(w[-8:-4] if len(w) >= 8 else w[:max(1, len(w)-4)])]
+            last_delta = round(_avg_intens(last4), 3)
+            prev_delta = round(_avg_intens(prev4), 3)
+            momentum   = round(last_delta - prev_delta, 3)
             intensity_summary.append({
                 "receptor":   rec,
                 "color":      colors_int.get(rec, "#4A9EFF"),
-                "month_labels": mlabels[1:],
-                "deltas":     d_int,
                 "last_delta": last_delta,
                 "prev_delta": prev_delta,
                 "momentum":   momentum,
