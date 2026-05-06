@@ -959,6 +959,22 @@
       .api-time-card  { flex: none; width: 100%; height: 400px; min-width: 0; }
     }
 
+    .acceleration-row {
+      display: flex;
+      gap: var(--s4);
+      flex-wrap: wrap;
+    }
+
+    .efficiency-quadrants {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 4px;
+      margin-top: 8px;
+      font-size: 10px;
+      color: var(--text-muted);
+      text-align: center;
+    }
+
     .page-footnote {
       display: flex;
       align-items: flex-start;
@@ -1252,6 +1268,44 @@
         </div>
       </div>
 
+      <!-- Acceleration Row -->
+      <div class="acceleration-row">
+
+        <!-- Aceleração de Consentimentos -->
+        <div id="card-accel-consents" class="chart-card" style="flex:1;min-width:300px;">
+          <div class="chart-head">
+            <div>
+              <div class="chart-title">Aceleração de Consentimentos</div>
+              <div class="chart-subtitle">Variação semana a semana · consentimentos únicos</div>
+            </div>
+            <div class="chart-toggles" id="accel-consent-toggles">
+              <button data-view="all" class="active">Total</button>
+              <button data-view="pf">PF</button>
+              <button data-view="pj">PJ</button>
+            </div>
+          </div>
+          <div id="accel-consents-empty" class="chart-empty" style="display:none">Sem dados suficientes (mínimo 2 semanas)</div>
+          <div style="position:relative;height:200px;width:100%">
+            <canvas id="accelConsentChart"></canvas>
+          </div>
+        </div>
+
+        <!-- Aceleração de Intensidade -->
+        <div id="card-accel-intensity" class="chart-card" style="flex:1;min-width:300px;">
+          <div class="chart-head">
+            <div>
+              <div class="chart-title">Aceleração de Intensidade de API</div>
+              <div class="chart-subtitle">Variação semana a semana · req/consentimento/30d</div>
+            </div>
+          </div>
+          <div id="accel-intensity-empty" class="chart-empty" style="display:none">Sem dados suficientes (mínimo 2 semanas)</div>
+          <div style="position:relative;height:200px;width:100%">
+            <canvas id="accelIntensityChart"></canvas>
+          </div>
+        </div>
+
+      </div>
+
       <!-- Chart 2 + Temporal: side-by-side -->
       <div class="api-charts-row">
 
@@ -1306,6 +1360,26 @@
         </div>
       </div>
 
+      <!-- Efficiency Scatter -->
+      <div id="card-efficiency" class="chart-card">
+        <div class="chart-head">
+          <div>
+            <div class="chart-title">Eficiência de Consumo</div>
+            <div class="chart-subtitle">Consentimentos × Intensidade de API · todos os receptores</div>
+          </div>
+        </div>
+        <div id="efficiency-empty" class="chart-empty" style="display:none">Sem dados suficientes</div>
+        <div style="position:relative;height:360px;width:100%">
+          <canvas id="efficiencyChart"></canvas>
+        </div>
+        <div class="efficiency-quadrants">
+          <div>↖ Especialista · baixo consent, alta intensidade</div>
+          <div>↗ Maduro · alto consent, alta intensidade</div>
+          <div>↙ Iniciante · baixo consent, baixa intensidade</div>
+          <div>↘ Dormente · alto consent, baixa intensidade</div>
+        </div>
+      </div>
+
       <footer class="page-footnote">
         <svg width="12" height="12" viewBox="0 0 13 13" fill="none" style="flex-shrink:0;margin-top:2px"><circle cx="6.5" cy="6.5" r="6" stroke="currentColor" stroke-width="1.1"/><text x="6.5" y="10" text-anchor="middle" font-size="8" fill="currentColor" font-family="sans-serif">i</text></svg>
         <span>
@@ -1331,10 +1405,16 @@
        ============================================================ */
     let lineChart = null;
     let barChart = null;
+    let accelConsentChart = null;
+    let accelIntensityChart = null;
+    let efficiencyChart = null;
     let _allReceptors = [];   // [{label, color, top}]
     let _apiData = null;     // last api-requests response (for export)
     let _consentsData = null; // last consents response (for export)
     let _resData = null;     // last resources response (for export)
+    let _accelData = null;
+    let _efficiencyData = null;
+    let _accelView = 'all';
     let _dbMinDate = null;
     let _dbMaxDate = null;
 
@@ -1379,6 +1459,15 @@
         barChart.options.plugins.tooltip.bodyColor = Chart.defaults.color;
         barChart.update();
       }
+      [accelConsentChart, accelIntensityChart, efficiencyChart].filter(Boolean).forEach(ch => {
+        ch.options.scales.x.grid.color = gridColor;
+        ch.options.scales.y.grid.color = gridColor;
+        ch.options.plugins.tooltip.backgroundColor = tooltipBg;
+        ch.options.plugins.tooltip.borderColor = tooltipBorder;
+        ch.options.plugins.tooltip.titleColor = tooltipTitle;
+        ch.options.plugins.tooltip.bodyColor = Chart.defaults.color;
+        ch.update();
+      });
       if (_lineChartApi) {
         _lineChartApi.options.scales.x.grid.color = gridColor;
         _lineChartApi.options.scales.y.grid.color = gridColor;
@@ -2060,6 +2149,232 @@
     }
 
     /* ============================================================
+       ACELERAÇÃO — INIT + UPDATE
+       ============================================================ */
+    function _accelChartOptions(yTitle) {
+      const isLight = document.body.getAttribute('data-theme') === 'light';
+      return {
+        responsive: true, maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            backgroundColor: isLight ? '#FFF' : '#1B1F2E',
+            borderColor: isLight ? '#D1D5DB' : '#333B54',
+            borderWidth: 1,
+            titleColor: isLight ? '#111827' : '#EEF0F6',
+            bodyColor: isLight ? '#4B5563' : '#8B95B0',
+            padding: 10,
+            filter: item => item.dataset.label !== '__zero__',
+            callbacks: {
+              label: ctx => {
+                const v = ctx.parsed.y;
+                const sign = v > 0 ? '+' : '';
+                return `  ${ctx.dataset.label}: ${sign}${fmtVal(v, false)}`;
+              }
+            }
+          }
+        },
+        scales: {
+          x: {
+            grid: { color: isLight ? '#E5E7EB' : '#252A3A' },
+            border: { display: false },
+            ticks: { color: isLight ? '#4B5563' : '#4A5270', maxRotation: 45 },
+          },
+          y: {
+            grid: { color: isLight ? '#E5E7EB' : '#252A3A' },
+            border: { display: false },
+            ticks: { color: '#4A5270', callback: v => fmtVal(v, false) },
+            title: { display: true, text: yTitle, color: '#4A5270', font: { size: 10 } },
+          }
+        }
+      };
+    }
+
+    function initAccelCharts() {
+      accelConsentChart = new Chart(
+        document.getElementById('accelConsentChart').getContext('2d'),
+        { type: 'line', data: { labels: [], datasets: [] }, options: _accelChartOptions('Δ Consentimentos') }
+      );
+      accelIntensityChart = new Chart(
+        document.getElementById('accelIntensityChart').getContext('2d'),
+        { type: 'line', data: { labels: [], datasets: [] }, options: _accelChartOptions('Δ req/consent/30d') }
+      );
+    }
+
+    function initEfficiencyChart() {
+      const isLight = document.body.getAttribute('data-theme') === 'light';
+      efficiencyChart = new Chart(
+        document.getElementById('efficiencyChart').getContext('2d'),
+        {
+          type: 'scatter',
+          data: { datasets: [] },
+          options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: {
+              legend: { display: false },
+              tooltip: {
+                backgroundColor: isLight ? '#FFF' : '#1B1F2E',
+                borderColor: isLight ? '#D1D5DB' : '#333B54',
+                borderWidth: 1,
+                titleColor: isLight ? '#111827' : '#EEF0F6',
+                bodyColor: isLight ? '#4B5563' : '#8B95B0',
+                padding: 10,
+                filter: item => item.datasetIndex === 0,
+                callbacks: {
+                  title: items => items[0]?.raw?.receptor || '',
+                  label: ctx => {
+                    const r = ctx.raw;
+                    return [`  Consentimentos: ${fmtVal(r.x, false)}`, `  Intensidade: ${r.y.toFixed(1)} req/c/30d`];
+                  }
+                }
+              }
+            },
+            scales: {
+              x: {
+                type: 'logarithmic',
+                grid: { color: isLight ? '#E5E7EB' : '#252A3A' },
+                border: { display: false },
+                ticks: { color: '#4A5270', callback: v => fmtVal(v, false) },
+                title: { display: true, text: 'Consentimentos únicos (escala log)', color: '#4A5270', font: { size: 10 } },
+              },
+              y: {
+                grid: { color: isLight ? '#E5E7EB' : '#252A3A' },
+                border: { display: false },
+                ticks: { color: '#4A5270', callback: v => v.toFixed(1) },
+                title: { display: true, text: 'Intensidade média (req/consent/30d)', color: '#4A5270', font: { size: 10 } },
+              }
+            }
+          }
+        }
+      );
+    }
+
+    function renderAccelCharts() {
+      if (!_accelData) return;
+      const cseries = _accelData.consent_series || [];
+      const clabels = _accelData.labels_consents || [];
+      const emptyC  = document.getElementById('accel-consents-empty');
+      const canvasC = document.getElementById('accelConsentChart');
+      if (cseries.length === 0 || clabels.length === 0) {
+        emptyC.style.display = 'flex'; canvasC.style.display = 'none';
+      } else {
+        emptyC.style.display = 'none'; canvasC.style.display = '';
+        accelConsentChart.data.labels = clabels;
+        accelConsentChart.data.datasets = [
+          ...cseries.map(s => ({
+            label: s.receptor,
+            data: _accelView === 'pf' ? s.deltas_pf : _accelView === 'pj' ? s.deltas_pj : s.deltas_all,
+            borderColor: s.color,
+            backgroundColor: s.color + '22',
+            tension: 0.3, pointRadius: 3, fill: false,
+          })),
+          { label: '__zero__', data: Array(clabels.length).fill(0),
+            borderColor: 'rgba(120,120,120,0.3)', borderDash: [4,4],
+            borderWidth: 1, pointRadius: 0, fill: false, tension: 0 },
+        ];
+        accelConsentChart.update();
+      }
+      const iseries = _accelData.intensity_series || [];
+      const ilabels = _accelData.labels_intensity || [];
+      const emptyI  = document.getElementById('accel-intensity-empty');
+      const canvasI = document.getElementById('accelIntensityChart');
+      if (iseries.length === 0 || ilabels.length === 0) {
+        emptyI.style.display = 'flex'; canvasI.style.display = 'none';
+      } else {
+        emptyI.style.display = 'none'; canvasI.style.display = '';
+        accelIntensityChart.data.labels = ilabels;
+        accelIntensityChart.data.datasets = [
+          ...iseries.map(s => ({
+            label: s.receptor,
+            data: s.deltas,
+            borderColor: s.color,
+            backgroundColor: s.color + '22',
+            tension: 0.3, pointRadius: 3, fill: false,
+          })),
+          { label: '__zero__', data: Array(ilabels.length).fill(0),
+            borderColor: 'rgba(120,120,120,0.3)', borderDash: [4,4],
+            borderWidth: 1, pointRadius: 0, fill: false, tension: 0 },
+        ];
+        accelIntensityChart.update();
+      }
+    }
+
+    async function updateAccelChart(params, signal) {
+      ['card-accel-consents', 'card-accel-intensity'].forEach(id => setCardLoading(id, true));
+      try {
+        const resp = await fetch('/api/acceleration?' + params, { signal });
+        const data = await resp.json();
+        _accelData = data;
+        renderAccelCharts();
+      } finally {
+        ['card-accel-consents', 'card-accel-intensity'].forEach(id => setCardLoading(id, false));
+      }
+    }
+
+    async function updateEfficiencyChart(params, signal) {
+      setCardLoading('card-efficiency', true);
+      try {
+        const effParams = new URLSearchParams({ start: params.get('start'), end: params.get('end') });
+        const resp = await fetch('/api/efficiency?' + effParams, { signal });
+        const data = await resp.json();
+        _efficiencyData = data;
+        const empty  = document.getElementById('efficiency-empty');
+        const canvas = document.getElementById('efficiencyChart');
+        if (!data.points || data.points.length === 0) {
+          empty.style.display = 'flex'; canvas.style.display = 'none'; return;
+        }
+        empty.style.display = 'none'; canvas.style.display = '';
+        const selectedRecs = new Set(
+          [...document.querySelectorAll('.receptor-item.selected')].map(el => el.dataset.label)
+        );
+        const pts = data.points;
+        const xVals = pts.map(p => p.consents);
+        const yVals = pts.map(p => p.intensity);
+        const xMin  = Math.min(...xVals);
+        const xMax  = Math.max(...xVals);
+        const yMax  = Math.max(...yVals) * 1.15;
+        efficiencyChart.data.datasets = [
+          {
+            type: 'scatter',
+            data: pts.map(p => ({ x: p.consents, y: p.intensity, receptor: p.receptor })),
+            backgroundColor: pts.map(p =>
+              selectedRecs.size === 0 || selectedRecs.has(p.receptor) ? p.color + 'CC' : p.color + '33'
+            ),
+            borderColor: pts.map(p =>
+              selectedRecs.size > 0 && selectedRecs.has(p.receptor) ? '#FFFFFF88' : p.color + '66'
+            ),
+            borderWidth: pts.map(p => selectedRecs.size > 0 && selectedRecs.has(p.receptor) ? 2 : 1),
+            pointRadius: pts.map(p => selectedRecs.size > 0 && selectedRecs.has(p.receptor) ? 9 : 6),
+            pointHoverRadius: 9,
+          },
+          {
+            type: 'line', showLine: true, pointRadius: 0,
+            data: [{ x: xMin * 0.5, y: data.median_intensity }, { x: xMax * 2, y: data.median_intensity }],
+            borderColor: 'rgba(140,140,140,0.4)', borderDash: [6,4], borderWidth: 1,
+          },
+          {
+            type: 'line', showLine: true, pointRadius: 0,
+            data: [{ x: data.median_consents, y: 0 }, { x: data.median_consents, y: yMax }],
+            borderColor: 'rgba(140,140,140,0.4)', borderDash: [6,4], borderWidth: 1,
+          },
+        ];
+        efficiencyChart.options.scales.y.max = yMax;
+        efficiencyChart.update();
+      } finally { setCardLoading('card-efficiency', false); }
+    }
+
+    /* Aceleração toggle PF/PJ/Total */
+    document.querySelectorAll('#accel-consent-toggles button').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('#accel-consent-toggles button').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        _accelView = btn.dataset.view;
+        if (_accelData) renderAccelCharts();
+      });
+    });
+
+    /* ============================================================
        CHART API — TEMPORAL (LINE)
        ============================================================ */
     function initChartApiTime() {
@@ -2283,6 +2598,8 @@
           updateChart2(params, mySignal),
           updateChart3(params, mySignal),
           updateChartApiTime(params, mySignal),
+          updateAccelChart(params, mySignal),
+          updateEfficiencyChart(params, mySignal),
         ]);
       } catch (e) {
         if (e?.name !== 'AbortError') console.error(e);
@@ -2357,6 +2674,8 @@
     async function loadAll() {
       initLineChart();
       initBarChart();
+      initAccelCharts();
+      initEfficiencyChart();
       initChartApiTime();
       // Stats e receptors em paralelo — sem dependência entre si
       await Promise.all([

@@ -6,6 +6,7 @@ e os entrega formatados (JSON) para a interface HTML/JS.
 """
 
 import sqlite3
+import statistics
 import threading
 import time as _time
 import uvicorn
@@ -903,6 +904,143 @@ def get_resources(start: str = None, end: str = None, receptors: str = None, sta
         "colors":    sorted_colors,
         "normalize": norm,
     })
+
+@app.get("/api/acceleration", response_class=JSONResponse)
+@cached_response("acceleration")
+def get_acceleration(start: str = None, end: str = None, receptors: str = None):
+    today    = date.today()
+    dt_start = _parse_date(start, today - timedelta(days=365))
+    dt_end   = _parse_date(end, today)
+    sel      = _parse_receptors(receptors)
+
+    # ── Consentimentos ────────────────────────────────────────────────────────
+    df_cons = _get_consents(dt_start, dt_end)
+    consent_series: list[dict] = []
+    labels_cons: list[str] = []
+    if not df_cons.empty:
+        if sel:
+            df_cons = df_cons[df_cons["receptor"].isin(sel)]
+        recs   = df_cons["receptor"].unique().tolist()
+        colors = _build_color_map(recs)
+        all_dates  = sorted(df_cons["date"].dt.date.unique())
+        labels_cons = [d.isoformat() for d in all_dates[1:]]
+        for rec in recs:
+            rdf = df_cons[df_cons["receptor"] == rec].sort_values("date")
+            if len(rdf) < 2:
+                continue
+            tots = rdf["total"].tolist()
+            cpfs = rdf["cpf"].tolist()
+            cnjs = rdf["cnpj"].tolist()
+            consent_series.append({
+                "receptor":   rec,
+                "color":      colors.get(rec, "#4A9EFF"),
+                "deltas_all": [tots[i] - tots[i-1] for i in range(1, len(tots))],
+                "deltas_pf":  [cpfs[i] - cpfs[i-1] for i in range(1, len(cpfs))],
+                "deltas_pj":  [cnjs[i] - cnjs[i-1] for i in range(1, len(cnjs))],
+            })
+
+    # ── Intensidade (api_group_weekly) ────────────────────────────────────────
+    intensity_series: list[dict] = []
+    labels_int: list[str] = []
+    try:
+        con = _db_con()
+        df_agw = pd.read_sql(
+            """SELECT date, receptor_uuid, receptor,
+                      SUM(req_week) AS req_week, MAX(consents_total) AS consents_total
+               FROM api_group_weekly
+               WHERE date BETWEEN ? AND ? AND grp != 'Resource'
+               GROUP BY date, receptor_uuid, receptor ORDER BY date""",
+            con, params=[dt_start.isoformat(), dt_end.isoformat()], parse_dates=["date"],
+        )
+        con.close()
+        if not df_agw.empty:
+            if sel:
+                df_agw = df_agw[df_agw["receptor"].isin(sel)]
+            recs_int   = df_agw["receptor"].unique().tolist()
+            colors_int = _build_color_map(recs_int)
+            all_dates_int = sorted(df_agw["date"].dt.date.unique())
+            labels_int    = [d.isoformat() for d in all_dates_int[1:]]
+            for rec in recs_int:
+                rdf = df_agw[df_agw["receptor"] == rec].sort_values("date")
+                if len(rdf) < 2:
+                    continue
+                intens = [
+                    row.req_week * 30.0 / (row.consents_total * 7) if row.consents_total > 0 else 0.0
+                    for row in rdf.itertuples()
+                ]
+                intensity_series.append({
+                    "receptor": rec,
+                    "color":    colors_int.get(rec, "#4A9EFF"),
+                    "deltas":   [round(intens[i] - intens[i-1], 3) for i in range(1, len(intens))],
+                })
+    except Exception:
+        pass
+
+    return JSONResponse({
+        "labels_consents":  labels_cons,
+        "labels_intensity": labels_int,
+        "consent_series":   consent_series,
+        "intensity_series": intensity_series,
+    })
+
+
+@app.get("/api/efficiency", response_class=JSONResponse)
+@cached_response("efficiency")
+def get_efficiency(start: str = None, end: str = None):
+    today    = date.today()
+    dt_start = _parse_date(start, today - timedelta(days=365))
+    dt_end   = _parse_date(end, today)
+
+    try:
+        con = _db_con()
+        df = pd.read_sql(
+            """SELECT date, receptor_uuid, receptor,
+                      SUM(req_week) AS req_week, MAX(consents_total) AS consents_total
+               FROM api_group_weekly
+               WHERE date BETWEEN ? AND ? AND grp != 'Resource'
+               GROUP BY date, receptor_uuid, receptor ORDER BY date""",
+            con, params=[dt_start.isoformat(), dt_end.isoformat()], parse_dates=["date"],
+        )
+        con.close()
+    except Exception:
+        return JSONResponse({"points": [], "median_consents": 0, "median_intensity": 0})
+
+    if df.empty:
+        return JSONResponse({"points": [], "median_consents": 0, "median_intensity": 0})
+
+    results = []
+    colors_map = _build_color_map(df["receptor"].unique().tolist())
+    for (uuid, rec), grp in df.groupby(["receptor_uuid", "receptor"]):
+        grp = grp.sort_values("date")
+        consents_last = int(grp["consents_total"].iloc[-1])
+        if consents_last <= 0:
+            continue
+        weekly_int = [
+            row.req_week * 30.0 / (row.consents_total * 7)
+            for row in grp.itertuples() if row.consents_total > 0
+        ]
+        if not weekly_int:
+            continue
+        results.append({
+            "receptor":  rec,
+            "uuid":      uuid,
+            "color":     colors_map.get(rec, "#4A9EFF"),
+            "consents":  consents_last,
+            "intensity": round(sum(weekly_int) / len(weekly_int), 3),
+        })
+
+    if not results:
+        return JSONResponse({"points": [], "median_consents": 0, "median_intensity": 0})
+
+    med_cons = statistics.median(r["consents"]  for r in results)
+    med_int  = statistics.median(r["intensity"] for r in results)
+
+    return JSONResponse({
+        "points":          results,
+        "median_consents": med_cons,
+        "median_intensity": round(med_int, 3),
+    })
+
 
 @app.get("/api/stats", response_class=JSONResponse)
 @cached_response("stats")
