@@ -970,8 +970,9 @@ def get_acceleration(start: str = None, end: str = None, receptors: str = None):
         df_m = df_cons.copy()
         df_m["month"] = df_m["date"].dt.to_period("M")
         monthly = (
-            df_m.groupby(["receptor", "month"])[["total", "cpf", "cnpj"]]
-            .sum().reset_index()
+            df_m.sort_values("date")
+            .groupby(["receptor", "month"])[["total", "cpf", "cnpj"]]
+            .last().reset_index()
         )
         monthly["month_str"] = monthly["month"].astype(str)
         monthly = monthly.sort_values(["receptor", "month"])
