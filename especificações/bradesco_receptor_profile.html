@@ -1,0 +1,1076 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bradesco — Perfil Estratégico Open Finance</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<style>
+:root {
+  --bg-base:#13151E;--bg-surface:#1B1F2E;--bg-elevated:#242838;--bg-hover:#2D3247;
+  --text-primary:#EEF0F6;--text-secondary:#8B95B0;--text-muted:#4A5270;
+  --text-accent:#4A9EFF;--border-subtle:#252A3A;--border-default:#333B54;
+  --success:#2ECC7F;--warning:#F5A623;--error:#FF4D4D;
+  --s1:4px;--s2:8px;--s3:12px;--s4:16px;--s5:20px;--s6:24px;--s8:32px;
+  --tx-xs:11px;--tx-sm:12px;--tx-base:13px;--tx-md:15px;--tx-lg:17px;--tx-xl:20px;
+  --r-sm:4px;--r-md:8px;--r-lg:12px;
+  --c-conta:#4A9EFF;--c-cartao:#F472B6;--c-invest:#2ECC7F;
+  --c-credito:#FF6B6B;--c-cambio:#A855F7;--c-identidade:#F5A623;--c-resource:#14B8A6;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;
+  background:var(--bg-base);color:var(--text-primary);font-size:var(--tx-base);
+  line-height:1.5;-webkit-font-smoothing:antialiased;min-height:100vh}
+
+.titlebar{background:var(--bg-elevated);border-bottom:1px solid var(--border-subtle);
+  height:38px;display:flex;align-items:center;padding:0 var(--s4);gap:var(--s2);
+  position:sticky;top:0;z-index:100}
+.titlebar-logo{width:20px;height:20px;background:var(--text-accent);border-radius:var(--r-sm);
+  display:grid;place-items:center;font-size:10px;font-weight:700;color:white}
+.titlebar-name{font-size:var(--tx-sm);font-weight:600}
+.titlebar-sep{color:var(--text-muted)}
+.titlebar-sub{font-size:var(--tx-sm);color:var(--text-secondary)}
+.titlebar-spacer{flex:1}
+.titlebar-period{font-size:var(--tx-xs);color:var(--text-muted);
+  background:var(--bg-base);padding:3px 8px;border-radius:10px;border:1px solid var(--border-subtle)}
+
+.page{max-width:1420px;margin:0 auto;padding:var(--s6);display:flex;flex-direction:column;gap:var(--s5)}
+
+/* HEADER */
+.receptor-header{background:var(--bg-surface);border:1px solid var(--border-subtle);
+  border-radius:var(--r-lg);padding:var(--s5) var(--s6);display:flex;
+  align-items:flex-start;gap:var(--s6)}
+.receptor-logo{width:52px;height:52px;border-radius:var(--r-md);
+  background:linear-gradient(135deg,#CC092F,#8B0020);
+  display:grid;place-items:center;font-size:16px;font-weight:900;color:white;flex-shrink:0}
+.receptor-name{font-size:22px;font-weight:700}
+.receptor-uuid{font-size:var(--tx-xs);color:var(--text-muted);margin-top:2px;font-family:monospace}
+.archetype-badge{display:inline-flex;align-items:center;gap:5px;margin-top:6px;
+  background:rgba(20,184,166,0.12);border:1px solid rgba(20,184,166,0.3);
+  color:#14B8A6;font-size:var(--tx-xs);font-weight:600;padding:3px 10px;
+  border-radius:20px;text-transform:uppercase;letter-spacing:0.06em}
+
+/* KPI STRIP */
+.kpi-strip{display:flex;gap:var(--s3);flex-wrap:wrap;flex:1}
+.kpi-card{background:var(--bg-elevated);border:1px solid var(--border-subtle);
+  border-radius:var(--r-md);padding:var(--s3) var(--s4);flex:1;min-width:120px}
+.kpi-label{font-size:var(--tx-xs);color:var(--text-muted);text-transform:uppercase;
+  letter-spacing:0.08em;font-weight:700;margin-bottom:3px}
+.kpi-value{font-size:var(--tx-xl);font-weight:700;font-variant-numeric:tabular-nums;line-height:1.2}
+.kpi-sub{font-size:var(--tx-xs);color:var(--text-muted);margin-top:2px}
+.kpi-accent{color:var(--text-accent)}.kpi-good{color:var(--success)}.kpi-warn{color:var(--warning)}
+
+/* INSIGHT CHIPS */
+.insights-row{display:grid;grid-template-columns:repeat(4,1fr);gap:var(--s3)}
+.insight-chip{background:var(--bg-surface);border:1px solid var(--border-subtle);
+  border-radius:var(--r-md);padding:var(--s3) var(--s4);display:flex;gap:var(--s3)}
+.insight-icon{font-size:16px;flex-shrink:0;margin-top:1px}
+.insight-title{font-size:var(--tx-sm);font-weight:600;margin-bottom:2px}
+.insight-desc{font-size:var(--tx-xs);color:var(--text-secondary);line-height:1.5}
+.chip-resource{border-left:3px solid #14B8A6}
+.chip-nubank{border-left:3px solid #F5A623}
+.chip-intensity{border-left:3px solid #2ECC7F}
+.chip-profile{border-left:3px solid #4A9EFF}
+
+/* SECTION LABEL */
+.section-label{font-size:var(--tx-xs);font-weight:700;color:var(--text-muted);
+  text-transform:uppercase;letter-spacing:0.12em;display:flex;align-items:center;gap:var(--s2)}
+.section-label::after{content:'';flex:1;height:1px;background:var(--border-subtle)}
+
+/* CHART CARDS */
+.chart-card{background:var(--bg-surface);border:1px solid var(--border-subtle);
+  border-radius:var(--r-lg);padding:var(--s5)}
+.chart-head{display:flex;align-items:flex-start;justify-content:space-between;
+  margin-bottom:var(--s4);gap:var(--s4)}
+.chart-title{font-size:var(--tx-md);font-weight:600}
+.chart-subtitle{font-size:var(--tx-xs);color:var(--text-secondary);margin-top:3px;line-height:1.5}
+.chart-badge{font-size:var(--tx-xs);color:var(--text-muted);background:var(--bg-elevated);
+  padding:2px 8px;border-radius:10px;border:1px solid var(--border-subtle);white-space:nowrap;flex-shrink:0}
+
+.annotation{background:rgba(20,184,166,0.08);border:1px solid rgba(20,184,166,0.2);
+  border-radius:var(--r-md);padding:var(--s2) var(--s3);margin-bottom:var(--s3);
+  font-size:var(--tx-xs);color:#14B8A6}
+.annotation-warn{background:rgba(245,166,35,0.08);border-color:rgba(245,166,35,0.2);color:#F5A623}
+
+.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:var(--s5)}
+.grid-5-4{display:grid;grid-template-columns:5fr 4fr;gap:var(--s5)}
+
+/* LEGEND */
+.legend{display:flex;flex-wrap:wrap;gap:var(--s2) var(--s5);margin-top:var(--s3)}
+.legend-item{display:flex;align-items:center;gap:5px;font-size:var(--tx-xs);color:var(--text-secondary)}
+.legend-dot{width:10px;height:10px;border-radius:2px;flex-shrink:0}
+.legend-line{width:18px;height:2px;flex-shrink:0}
+.legend-dashed{width:18px;height:0;border-top:2px dashed;flex-shrink:0}
+
+/* TORNADO */
+.tornado-labels{display:flex;flex-direction:column;gap:0}
+.tornado-row{display:flex;align-items:center;gap:0;height:28px}
+.tornado-name{width:140px;font-size:10px;color:var(--text-secondary);text-align:center;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex-shrink:0}
+.tornado-left-bar{flex:1;display:flex;justify-content:flex-end;align-items:center}
+.tornado-right-bar{flex:1;display:flex;justify-content:flex-start;align-items:center}
+.t-bar{height:16px;border-radius:2px;min-width:2px;transition:width 0.3s}
+.t-bar-left{background:linear-gradient(to left, #4A9EFF, #2563EB)}
+.t-bar-right{background:linear-gradient(to right, #14B8A6, #0D9488)}
+.tornado-value{font-size:10px;color:var(--text-muted);padding:0 3px;font-variant-numeric:tabular-nums}
+.tornado-header{display:flex;align-items:center;gap:0;margin-bottom:var(--s2)}
+.tornado-header-left{flex:1;text-align:right;font-size:var(--tx-xs);font-weight:600;
+  color:#4A9EFF;padding-right:var(--s3)}
+.tornado-header-center{width:140px;flex-shrink:0}
+.tornado-header-right{flex:1;text-align:left;font-size:var(--tx-xs);font-weight:600;
+  color:#14B8A6;padding-left:var(--s3)}
+.tornado-missing{font-size:9px;color:var(--text-muted);font-style:italic}
+.tornado-center-line{width:1px;background:var(--border-default);position:absolute;left:50%}
+
+/* ENDPOINT DEPTH */
+.ep-group{margin-bottom:var(--s5)}
+.ep-group-header{display:flex;align-items:center;gap:var(--s2);margin-bottom:var(--s3);
+  padding:var(--s2) var(--s3);border-radius:var(--r-sm)}
+.ep-group-name{font-size:var(--tx-sm);font-weight:700;text-transform:uppercase;letter-spacing:0.08em}
+.ep-group-total{font-size:var(--tx-xs);color:var(--text-muted);margin-left:auto}
+.ep-apis-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:var(--s3)}
+.ep-api-card{background:var(--bg-elevated);border:1px solid var(--border-subtle);
+  border-radius:var(--r-md);padding:var(--s3) var(--s4)}
+.ep-api-name{font-size:var(--tx-xs);font-weight:600;color:var(--text-secondary);
+  text-transform:uppercase;letter-spacing:0.06em;margin-bottom:var(--s3);
+  display:flex;align-items:center;gap:6px}
+.ep-api-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.ep-row{display:flex;align-items:center;gap:var(--s2);margin-bottom:5px}
+.ep-name{font-size:var(--tx-xs);color:var(--text-secondary);flex:1;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.ep-bar-track{width:120px;height:6px;background:var(--bg-surface);border-radius:3px;flex-shrink:0}
+.ep-bar-fill{height:100%;border-radius:3px}
+.ep-val{font-size:11px;color:var(--text-muted);width:40px;text-align:right;
+  font-variant-numeric:tabular-nums;flex-shrink:0}
+.ep-bar-track-wrap{position:relative;width:120px;flex-shrink:0}
+.ep-ref-tick{position:absolute;top:0;bottom:0;width:1.5px;pointer-events:none}
+.ep-ref-median{background:#F5A623;opacity:0.85}
+.ep-ref-q3{background:#4A5270;opacity:0.9}
+.ep-sub-header{font-size:10px;font-weight:700;text-transform:uppercase;
+  letter-spacing:0.07em;color:var(--text-muted);margin:var(--s2) 0 var(--s1);
+  padding-bottom:3px;border-bottom:1px solid var(--border-subtle)}
+.ep-ref-legend{display:flex;gap:var(--s4);margin-top:var(--s2);margin-bottom:var(--s3)}
+.ep-ref-legend-item{display:flex;align-items:center;gap:4px;font-size:10px;color:var(--text-muted)}
+.ep-ref-swatch{width:10px;height:2px;flex-shrink:0}
+/* Expand/collapse */
+.ep-group-header{cursor:pointer;user-select:none}
+.ep-group-header:hover{filter:brightness(1.1)}
+.ep-chevron{display:inline-block;font-size:9px;color:var(--text-muted);
+  transition:transform 0.18s ease;margin-right:var(--s2);flex-shrink:0}
+.ep-chevron.collapsed{transform:rotate(-90deg)}
+
+canvas{display:block}
+</style>
+</head>
+<body>
+
+<div class="titlebar">
+  <div class="titlebar-logo">OF</div>
+  <span class="titlebar-name">Open Finance Brasil</span>
+  <span class="titlebar-sep">›</span>
+  <span class="titlebar-sub">Perfil Estratégico — Receptor</span>
+  <div class="titlebar-spacer"></div>
+  <span class="titlebar-period">Jun/2025 – Mar/2026 · Dados semanais · Intensidade normalizada 30 dias</span>
+</div>
+
+<div class="page">
+
+  <!-- HEADER -->
+  <div class="receptor-header">
+    <div style="display:flex;align-items:flex-start;gap:var(--s4);flex-shrink:0">
+      <div class="receptor-logo">BDC</div>
+      <div>
+        <div class="receptor-name">Bradesco</div>
+        <div class="receptor-uuid">a72a6d4f-79be-5362-afb6-f8d9c9c39cf5</div>
+        <div class="archetype-badge">Monitor Patrimonial &amp; Agregador</div>
+      </div>
+    </div>
+    <div class="kpi-strip">
+      <div class="kpi-card">
+        <div class="kpi-label">Total Requisições</div>
+        <div class="kpi-value">4,8 Bi</div>
+        <div class="kpi-sub">Jun/25 – Mar/26</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Consentimentos</div>
+        <div class="kpi-value kpi-accent">3,91 Mi</div>
+        <div class="kpi-sub">Fev/26 · +116% no período</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Intensidade 30d</div>
+        <div class="kpi-value kpi-accent">~211</div>
+        <div class="kpi-sub">Req / consent / 30d (atual)</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Taxa de Erro</div>
+        <div class="kpi-value kpi-good">2,68%</div>
+        <div class="kpi-sub">2º melhor · ecossistema avg 8,8%</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Transmissores</div>
+        <div class="kpi-value">51</div>
+        <div class="kpi-sub">Maior cobertura do ecossistema</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Ranking Volume</div>
+        <div class="kpi-value kpi-warn">#7 / 7</div>
+        <div class="kpi-sub">Menor volume absoluto</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- INSIGHTS -->
+  <div class="insights-row">
+    <div class="insight-chip chip-resource">
+      <div class="insight-icon">📊</div>
+      <div>
+        <div class="insight-title">Pivô Resource — Set/2025</div>
+        <div class="insight-desc">Resource saiu de ~11 req/consent/30d (ago/25) para ~110 (out/25). Mapeamento de ativos antes de consultar dados específicos — produto de visão patrimonial consolidada.</div>
+      </div>
+    </div>
+    <div class="insight-chip chip-nubank">
+      <div class="insight-icon">🎯</div>
+      <div>
+        <div class="insight-title">Assimetria com Nubank</div>
+        <div class="insight-desc">O Nubank consulta o Bradesco 2,5× mais do que o Bradesco consulta o Nubank (668M vs 266M req/30d). Bradesco é fonte de dados relevante para concorrentes.</div>
+      </div>
+    </div>
+    <div class="insight-chip chip-intensity">
+      <div class="insight-icon">📈</div>
+      <div>
+        <div class="insight-title">Intensidade Triplicou — Out/2025</div>
+        <div class="insight-desc">De ~27 req/consent/sem. (jul-ago/25) para ~70 (out-nov/25). Sinal de ativação de produto: monitoramento periódico automatizado passou a operar em escala.</div>
+      </div>
+    </div>
+    <div class="insight-chip chip-profile">
+      <div class="insight-icon">⚡</div>
+      <div>
+        <div class="insight-title">Perfil: Saldos, não Transações</div>
+        <div class="insight-desc">Em Conta, Saldos+Limites = 84% das chamadas vs. 3% para Transações. Em Investimentos, Saldos dominam. Foco em patrimônio e posição, não em histórico comportamental.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- STRATEGIC MAP + TORNADO -->
+  <div class="section-label">Posicionamento Estratégico</div>
+  <div class="grid-5-4">
+
+    <!-- DOT CHART: Strategic Map -->
+    <div class="chart-card">
+      <div class="chart-head">
+        <div>
+          <div class="chart-title">Mapa Estratégico — Intensidade por Grupo</div>
+          <div class="chart-subtitle">Req / consentimento / 30 dias · Média das últimas 4 semanas · Todos os receptores · Excl. consents</div>
+        </div>
+        <div class="chart-badge">req/consent/30d</div>
+      </div>
+      <div style="position:relative;height:340px">
+        <canvas id="dotChart"></canvas>
+      </div>
+      <div class="legend" style="margin-top:var(--s4)">
+        <div class="legend-item"><div style="width:12px;height:12px;border-radius:50%;background:#4A9EFF;flex-shrink:0"></div>Bradesco</div>
+        <div class="legend-item"><div style="width:8px;height:8px;border-radius:50%;background:#4A5270;flex-shrink:0"></div>Demais receptores</div>
+        <div class="legend-item"><div class="legend-line" style="background:#EEF0F6"></div>Média</div>
+        <div class="legend-item"><div class="legend-dashed" style="border-color:#F5A623"></div>Mediana</div>
+        <div class="legend-item"><div class="legend-dashed" style="border-color:#8B95B0"></div>1º Quartil</div>
+      </div>
+    </div>
+
+    <!-- TORNADO -->
+    <div class="chart-card">
+      <div class="chart-head">
+        <div>
+          <div class="chart-title">Rede de Transmissores — Tornado</div>
+          <div class="chart-subtitle">Média 30 dias (últimas 4 semanas) · Requisições em milhões</div>
+        </div>
+      </div>
+      <div class="annotation">
+        Esquerda: Bradesco consulta a instituição · Direita: Instituição consulta Bradesco. Espaço em branco = dado não disponível neste ecossistema.
+      </div>
+      <div class="tornado-header">
+        <div class="tornado-header-left">← Bradesco consulta</div>
+        <div class="tornado-header-center" style="text-align:center;font-size:var(--tx-xs);color:var(--text-muted);font-weight:600">Instituição</div>
+        <div class="tornado-header-right">consulta Bradesco →</div>
+      </div>
+      <div id="tornadoContainer"></div>
+    </div>
+
+  </div>
+
+  <!-- TEMPORAL EVOLUTION: STACKED INTENSITY -->
+  <div class="section-label">Evolução Temporal — Intensidade de Uso</div>
+  <div class="chart-card">
+    <div class="chart-head">
+      <div>
+        <div class="chart-title">Intensidade Empilhada por Grupo (excl. Resource)</div>
+        <div class="chart-subtitle">Req / consentimento / 30 dias · Valores empilhados — altura total = intensidade total semanal normalizada</div>
+      </div>
+      <div class="chart-badge">Jun/2025 – Mar/2026</div>
+    </div>
+    <div class="annotation">
+      A altura total da pilha representa a intensidade de uso total da semana. O crescimento a partir de set/25 é ativação de produto — não apenas crescimento de base de consentimentos.
+    </div>
+    <div style="position:relative;height:260px">
+      <canvas id="stackedIntensityChart"></canvas>
+    </div>
+    <div class="legend">
+      <div class="legend-item"><div class="legend-dot" style="background:var(--c-conta)"></div>Conta</div>
+      <div class="legend-item"><div class="legend-dot" style="background:var(--c-cartao)"></div>Cartão</div>
+      <div class="legend-item"><div class="legend-dot" style="background:var(--c-invest)"></div>Investimento</div>
+      <div class="legend-item"><div class="legend-dot" style="background:var(--c-credito)"></div>Crédito</div>
+      <div class="legend-item"><div class="legend-dot" style="background:var(--c-identidade)"></div>Identidade</div>
+      <div class="legend-item"><div class="legend-dot" style="background:var(--c-cambio)"></div>Câmbio</div>
+    </div>
+  </div>
+
+  <!-- RESOURCE SEPARATE -->
+  <div class="chart-card" style="margin-top:calc(-1 * var(--s3))">
+    <div class="chart-head">
+      <div>
+        <div class="chart-title">Resource — Intensidade Semanal</div>
+        <div class="chart-subtitle">Req / consentimento / 30 dias · Escala independente · Pivô visível em set/2025</div>
+      </div>
+      <div class="chart-badge" style="color:#14B8A6;background:rgba(20,184,166,0.1);border-color:rgba(20,184,166,0.3)">Resource</div>
+    </div>
+    <div style="position:relative;height:120px">
+      <canvas id="resourceChart"></canvas>
+    </div>
+  </div>
+
+  <!-- ENDPOINT DEPTH -->
+  <div class="section-label">Profundidade de Consumo por API</div>
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-top:-12px;margin-bottom:var(--s4);flex-wrap:wrap;gap:var(--s3)">
+    <div style="font-size:var(--tx-xs);color:var(--text-secondary)">
+      Intensidade média por endpoint · Req / consentimento / 30 dias (média do período) · Excl. Resource
+    </div>
+    <div style="display:flex;gap:var(--s5);flex-shrink:0">
+      <div style="display:flex;align-items:center;gap:5px;font-size:var(--tx-xs);color:var(--text-muted)">
+        <div style="width:12px;height:2px;background:#F5A623;border-radius:1px"></div>Mediana ecossistema
+      </div>
+      <div style="display:flex;align-items:center;gap:5px;font-size:var(--tx-xs);color:var(--text-muted)">
+        <div style="width:12px;height:2px;background:#4A5270;border-radius:1px"></div>3º Quartil (top 25%)
+      </div>
+    </div>
+  </div>
+  <div id="endpointSection"></div>
+
+</div>
+
+<script>
+// =============================================================
+// DATA
+// =============================================================
+Chart.defaults.color='#8B95B0';
+Chart.defaults.borderColor='#252A3A';
+Chart.defaults.font.family="-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif";
+Chart.defaults.font.size=11;
+const TT={backgroundColor:'#1B1F2E',borderColor:'#333B54',borderWidth:1,
+  titleColor:'#EEF0F6',bodyColor:'#8B95B0',padding:10,cornerRadius:6};
+
+function fmtDate(d){
+  const [y,m]=d.split('-');
+  return ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'][+m-1]+'/'+y.slice(2);
+}
+function fmtM(v){return (v/1e6).toFixed(0)+'M'}
+
+const GROUPS=['Conta','Cartao','Investimento','Credito','Cambio','Identidade','Resource'];
+const GROUP_LABELS={'Conta':'Conta','Cartao':'Cartão','Investimento':'Investimento',
+  'Credito':'Crédito','Cambio':'Câmbio','Identidade':'Identidade','Resource':'Resource'};
+const GROUP_COLORS={'Conta':'#4A9EFF','Cartao':'#F472B6','Investimento':'#2ECC7F',
+  'Credito':'#FF6B6B','Cambio':'#A855F7','Identidade':'#F5A623','Resource':'#14B8A6'};
+
+// Dot Chart data
+const REC_GROUP_INTENSITY={
+  "BANCO DO BRASIL":       {"Conta":38.64,"Cartao":11.68,"Investimento":29.89,"Credito":16.23,"Cambio":0.03,"Identidade":0.24,"Resource":44.93},
+  "BRADESCO":              {"Conta":55.77,"Cartao":8.33,"Investimento":14.92,"Credito":9.66,"Cambio":0.07,"Identidade":4.23,"Resource":69.85},
+  "CAIXA ECONOMICA FEDERAL":{"Conta":104.0,"Cartao":47.77,"Investimento":255.65,"Credito":78.23,"Cambio":0.06,"Identidade":18.27,"Resource":24.96},
+  "ITAÚ UNIBANCO":         {"Conta":183.47,"Cartao":48.89,"Investimento":138.38,"Credito":43.86,"Cambio":0.88,"Identidade":7.26,"Resource":48.74},
+  "MERCADO PAGO":          {"Conta":111.42,"Cartao":47.07,"Investimento":19.34,"Credito":19.16,"Cambio":0.0,"Identidade":3.20,"Resource":35.87},
+  "NUBANK":                {"Conta":140.04,"Cartao":71.45,"Investimento":51.73,"Credito":61.71,"Cambio":0.0,"Identidade":4.99,"Resource":50.79},
+  "SANTANDER BRASIL":      {"Conta":143.82,"Cartao":5.54,"Investimento":40.71,"Credito":26.97,"Cambio":0.05,"Identidade":2.52,"Resource":3.91}
+};
+const GROUP_STATS={
+  "Conta":       {"mean":111.02,"median":111.42,"q1":55.77},
+  "Cartao":      {"mean":34.39, "median":47.07, "q1":8.33},
+  "Investimento":{"mean":78.66, "median":40.71, "q1":19.34},
+  "Credito":     {"mean":36.55, "median":26.97, "q1":16.23},
+  "Cambio":      {"mean":0.16,  "median":0.05,  "q1":0.0},
+  "Identidade":  {"mean":5.82,  "median":4.23,  "q1":2.52},
+  "Resource":    {"mean":39.87, "median":44.93, "q1":24.96}
+};
+
+// Tornado data (30d avg, millions)
+const TORNADO=[
+  {name:"NUBANK",           left:266.6, right:668.9},
+  {name:"MERCADO PAGO",     left:67.9,  right:232.6},
+  {name:"ITAÚ UNIBANCO",    left:51.4,  right:125.1},
+  {name:"CAIXA ECONOMICA",  left:37.5,  right:125.6},
+  {name:"SANTANDER BRASIL", left:57.9,  right:85.9},
+  {name:"BANCO DO BRASIL",  left:41.3,  right:43.1},
+  {name:"PICPAY",           left:54.0,  right:null},
+  {name:"BANCO INTER",      left:19.0,  right:null},
+  {name:"BANCO XP",         left:12.7,  right:null},
+  {name:"BRADESCO (self)",  left:11.2,  right:11.2},
+  {name:"SICREDI",          left:6.5,   right:null},
+  {name:"BANCO BTG PACTUAL",left:5.5,   right:null}
+];
+
+// Time series intensity
+const TS_INTENSITY={
+  "2025-06-06":{"Conta":61.11,"Cartao":10.82,"Investimento":37.71,"Credito":20.15,"Cambio":0.21,"Identidade":0.18,"Resource":13.09},
+  "2025-06-13":{"Conta":40.57,"Cartao":4.75,"Investimento":24.07,"Credito":15.23,"Cambio":0.15,"Identidade":0.19,"Resource":12.64},
+  "2025-06-20":{"Conta":47.52,"Cartao":5.95,"Investimento":27.76,"Credito":17.51,"Cambio":0.20,"Identidade":0.15,"Resource":11.05},
+  "2025-06-27":{"Conta":44.83,"Cartao":4.57,"Investimento":30.23,"Credito":19.13,"Cambio":0.23,"Identidade":9.59,"Resource":10.35},
+  "2025-07-04":{"Conta":49.87,"Cartao":6.28,"Investimento":33.52,"Credito":18.64,"Cambio":0.22,"Identidade":0.16,"Resource":10.89},
+  "2025-07-11":{"Conta":45.04,"Cartao":3.56,"Investimento":30.63,"Credito":15.77,"Cambio":0.25,"Identidade":0.11,"Resource":10.67},
+  "2025-07-18":{"Conta":38.80,"Cartao":5.08,"Investimento":37.82,"Credito":11.04,"Cambio":0.17,"Identidade":0.16,"Resource":10.17},
+  "2025-07-25":{"Conta":48.57,"Cartao":1.87,"Investimento":31.37,"Credito":14.99,"Cambio":0.22,"Identidade":0.24,"Resource":9.78},
+  "2025-08-01":{"Conta":41.53,"Cartao":4.88,"Investimento":35.79,"Credito":14.81,"Cambio":0.19,"Identidade":0.68,"Resource":5.48},
+  "2025-08-08":{"Conta":52.44,"Cartao":4.33,"Investimento":33.49,"Credito":18.16,"Cambio":0.25,"Identidade":0.41,"Resource":1.96},
+  "2025-08-15":{"Conta":51.07,"Cartao":5.38,"Investimento":32.65,"Credito":9.78,"Cambio":0.18,"Identidade":0.60,"Resource":1.71},
+  "2025-08-22":{"Conta":27.69,"Cartao":5.78,"Investimento":19.81,"Credito":12.26,"Cambio":0.14,"Identidade":0.69,"Resource":1.57},
+  "2025-08-29":{"Conta":1.03,"Cartao":0.26,"Investimento":0.003,"Credito":0.25,"Cambio":0.0,"Identidade":0.10,"Resource":0.31},
+  "2025-09-05":{"Conta":64.03,"Cartao":9.34,"Investimento":44.88,"Credito":31.17,"Cambio":0.22,"Identidade":0.74,"Resource":85.95},
+  "2025-09-12":{"Conta":27.34,"Cartao":3.28,"Investimento":13.00,"Credito":10.61,"Cambio":0.07,"Identidade":0.28,"Resource":31.31},
+  "2025-09-19":{"Conta":23.54,"Cartao":3.00,"Investimento":12.57,"Credito":10.89,"Cambio":0.05,"Identidade":0.36,"Resource":28.54},
+  "2025-09-26":{"Conta":30.46,"Cartao":2.91,"Investimento":26.68,"Credito":10.66,"Cambio":0.13,"Identidade":0.59,"Resource":51.02},
+  "2025-10-03":{"Conta":77.26,"Cartao":15.00,"Investimento":59.23,"Credito":42.19,"Cambio":0.42,"Identidade":1.18,"Resource":110.01},
+  "2025-10-10":{"Conta":70.12,"Cartao":8.86,"Investimento":55.43,"Credito":35.69,"Cambio":0.31,"Identidade":1.09,"Resource":95.44},
+  "2025-10-17":{"Conta":66.42,"Cartao":15.84,"Investimento":68.94,"Credito":40.54,"Cambio":0.27,"Identidade":1.22,"Resource":92.28},
+  "2025-10-24":{"Conta":68.94,"Cartao":3.68,"Investimento":65.62,"Credito":46.11,"Cambio":0.29,"Identidade":1.26,"Resource":93.60},
+  "2025-10-31":{"Conta":65.11,"Cartao":16.90,"Investimento":64.87,"Credito":44.08,"Cambio":0.35,"Identidade":1.18,"Resource":97.58},
+  "2025-11-07":{"Conta":60.01,"Cartao":7.66,"Investimento":39.53,"Credito":29.98,"Cambio":0.24,"Identidade":1.05,"Resource":73.89},
+  "2025-11-14":{"Conta":66.11,"Cartao":7.85,"Investimento":50.43,"Credito":33.51,"Cambio":0.27,"Identidade":1.35,"Resource":85.60},
+  "2025-11-21":{"Conta":65.84,"Cartao":13.69,"Investimento":51.21,"Credito":42.02,"Cambio":0.30,"Identidade":1.14,"Resource":92.33},
+  "2025-11-28":{"Conta":70.82,"Cartao":7.07,"Investimento":61.33,"Credito":32.37,"Cambio":0.35,"Identidade":0.71,"Resource":95.11},
+  "2025-12-05":{"Conta":61.57,"Cartao":11.26,"Investimento":38.24,"Credito":17.08,"Cambio":0.07,"Identidade":1.02,"Resource":73.05},
+  "2025-12-12":{"Conta":48.95,"Cartao":6.78,"Investimento":12.01,"Credito":9.48,"Cambio":0.04,"Identidade":0.98,"Resource":58.94},
+  "2025-12-19":{"Conta":66.63,"Cartao":15.35,"Investimento":34.20,"Credito":14.06,"Cambio":0.07,"Identidade":1.13,"Resource":83.16},
+  "2025-12-26":{"Conta":62.11,"Cartao":5.99,"Investimento":13.69,"Credito":11.14,"Cambio":0.07,"Identidade":1.18,"Resource":78.75},
+  "2026-01-02":{"Conta":64.83,"Cartao":14.71,"Investimento":28.82,"Credito":12.42,"Cambio":0.11,"Identidade":0.83,"Resource":83.59},
+  "2026-01-09":{"Conta":58.37,"Cartao":6.30,"Investimento":14.86,"Credito":11.46,"Cambio":0.08,"Identidade":0.60,"Resource":70.70},
+  "2026-01-16":{"Conta":53.74,"Cartao":13.31,"Investimento":26.85,"Credito":12.33,"Cambio":0.06,"Identidade":0.71,"Resource":85.38},
+  "2026-01-23":{"Conta":52.56,"Cartao":6.08,"Investimento":13.24,"Credito":10.16,"Cambio":0.05,"Identidade":1.46,"Resource":68.57},
+  "2026-01-30":{"Conta":58.34,"Cartao":5.70,"Investimento":13.77,"Credito":11.23,"Cambio":0.08,"Identidade":1.65,"Resource":70.94},
+  "2026-02-06":{"Conta":47.24,"Cartao":8.62,"Investimento":12.72,"Credito":10.63,"Cambio":0.06,"Identidade":0.92,"Resource":77.88},
+  "2026-02-13":{"Conta":67.59,"Cartao":6.28,"Investimento":14.81,"Credito":9.82,"Cambio":0.07,"Identidade":2.37,"Resource":61.19},
+  "2026-02-20":{"Conta":55.93,"Cartao":13.03,"Investimento":17.30,"Credito":9.97,"Cambio":0.07,"Identidade":0.56,"Resource":70.97},
+  "2026-02-27":{"Conta":52.29,"Cartao":5.38,"Investimento":14.84,"Credito":8.22,"Cambio":0.10,"Identidade":13.06,"Resource":69.37}
+};
+
+// Endpoint intensity data — labels translated to PT-BR
+// Identidade uses CPF avg for PF endpoints and CNPJ avg for PJ endpoints
+const EP_DATA={
+  Conta:{
+    color:'#4A9EFF',
+    apis:{
+      accounts:{
+        key:'accounts',
+        label:'Conta Corrente',
+        endpoints:{
+          'Saldos da Conta':23.07,'Limites da Conta':22.58,
+          'Lista de Contas':3.06,'Transações da Conta':2.60,
+          'Identificação da Conta':2.21,'Transações recentes da Conta':0.46
+        }
+      }
+    }
+  },
+  Cartao:{
+    color:'#F472B6',
+    apis:{
+      'credit-cards-accounts':{
+        key:'credit-cards-accounts',
+        label:'Cartão de Crédito',
+        endpoints:{
+          'Lista de cartões de crédito':2.30,'Identificação de cartão de crédito':1.69,
+          'Limites de cartão de crédito':1.37,'Fatura de Cartão de Crédito':1.11,
+          'Transações de cartão de crédito':0.77,'Transações de cartão de crédito por fatura':0.56,
+          'Transações recentes de cartão de crédito':0.14
+        }
+      }
+    }
+  },
+  Investimento:{
+    color:'#2ECC7F',
+    apis:{
+      'bank-fixed-incomes':{
+        key:'bank-fixed-incomes',
+        label:'Renda Fixa Bancária',
+        endpoints:{
+          'Saldos':18.06,'Identificação do Investimento':2.35,
+          'Transações recentes':2.01,'Transações':1.61,'Lista de Investimentos':0.96
+        }
+      },
+      'variable-incomes':{
+        key:'variable-incomes',
+        label:'Renda Variável',
+        endpoints:{
+          'Saldos':2.83,'Identificação do Investimento':0.23,
+          'Transações recentes':0.14,'Transações':0.12,
+          'Lista de Investimentos':0.08,'Detalhes da nota de negociação':0.01
+        }
+      },
+      funds:{
+        key:'funds',
+        label:'Fundos de Investimento',
+        endpoints:{
+          'Saldos':1.22,'Transações recentes':0.24,
+          'Transações':0.10,'Lista de Investimentos':0.10,'Identificação do Investimento':0.06
+        }
+      },
+      'treasure-titles':{
+        key:'treasure-titles',
+        label:'Tesouro Direto',
+        endpoints:{
+          'Saldos':0.66,'Identificação do Investimento':0.07,
+          'Lista de Investimentos':0.05,'Transações recentes':0.05,'Transações':0.04
+        }
+      },
+      'credit-fixed-incomes':{
+        key:'credit-fixed-incomes',
+        label:'Renda Fixa Creditícia',
+        endpoints:{
+          'Saldos':0.15,'Identificação do Investimento':0.02,
+          'Transações recentes':0.01,'Transações':0.01,'Lista de Investimentos':0.007
+        }
+      }
+    }
+  },
+  Credito:{
+    color:'#FF6B6B',
+    apis:{
+      loans:{
+        key:'loans',
+        label:'Empréstimos',
+        endpoints:{
+          'Parcelas do Contrato':4.35,'Pagamentos do Contrato':3.78,
+          'Garantias do Contrato':3.58,'Empréstimos':2.75,'Identificação do Contrato':1.19
+        }
+      },
+      financings:{
+        key:'financings',
+        label:'Financiamentos',
+        endpoints:{
+          'Parcelas do Contrato':0.98,'Pagamentos do Contrato':0.78,
+          'Garantias do Contrato':0.76,'Identificação do Contrato':0.36,'Lista de financiamentos':0.22
+        }
+      },
+      'invoice-financings':{
+        key:'invoice-financings',
+        label:'Recebíveis (FIDC)',
+        endpoints:{
+          'Garantias do Contrato':0.028,'Parcelas do Contrato':0.027,
+          'Pagamentos do Contrato':0.024,'Identificação do Contrato':0.018,'Lista de Contratos':0.001
+        }
+      },
+      'unarranged-accounts-overdraft':{
+        key:'unarranged-accounts-overdraft',
+        label:'Cheque Especial',
+        endpoints:{
+          'Garantias do Contrato':0.019,'Contrato':0.007,
+          'Pagamentos do Contrato':0.007,'Parcelas do Contrato':0.007,'Adiantamento a Depositantes':0.007
+        }
+      }
+    }
+  },
+  Cambio:{
+    color:'#A855F7',
+    apis:{
+      exchanges:{
+        key:'exchanges',
+        label:'Câmbio',
+        endpoints:{
+          'Lista de produtos':0.11,'Eventos':0.046,'Identificação do produto':0.002
+        }
+      }
+    }
+  },
+  Identidade:{
+    color:'#F5A623',
+    apis:{
+      customers:{
+        key:'customers',
+        label:'Dados Cadastrais',
+        // PF endpoints normalised by avg CPF consents (2,831,391)
+        // PJ endpoints normalised by avg CNPJ consents (56,106)
+        pfEndpoints:{
+          'Relacionamento PF':0.66647,'Identificação PF':0.42815,'Qualificação PF':0.35018
+        },
+        pjEndpoints:{
+          'Identificação PJ':0.61464,'Relacionamento PJ':0.51666,'Qualificação PJ':0.41975
+        },
+        // raw key mapping for EP_STATS lookup
+        epKeyMap:{
+          'Relacionamento PF':'Relacionamento pessoa natural',
+          'Identificação PF':'Identificação pessoa natural',
+          'Qualificação PF':'Qualificação pessoa natural',
+          'Identificação PJ':'Identificação pessoa jurídica',
+          'Relacionamento PJ':'Relacionamento pessoa jurídica',
+          'Qualificação PJ':'Qualificação pessoa jurídica'
+        }
+      }
+    }
+  }
+};
+
+// Cross-receptor endpoint stats (median, Q3) — key: "apiKey|||endpointName"
+// Q3 = 3º quartil (top 25% do ecossistema). customers PF normaliz. por CPF, PJ por CNPJ.
+const EP_STATS={
+  "accounts|||Identificação da Conta":{"median":2.0984,"q3":3.5318},
+  "accounts|||Limites da Conta":{"median":22.4704,"q3":22.8967},
+  "accounts|||Lista de Contas":{"median":3.7478,"q3":6.146},
+  "accounts|||Saldos da Conta":{"median":47.3909,"q3":68.4006},
+  "accounts|||Transações da Conta":{"median":2.5522,"q3":3.396},
+  "accounts|||Transações recentes da Conta":{"median":22.6517,"q3":43.5194},
+  "bank-fixed-incomes|||Identificação do Investimento":{"median":4.0454,"q3":9.4205},
+  "bank-fixed-incomes|||Lista de Investimentos":{"median":1.1313,"q3":8.8148},
+  "bank-fixed-incomes|||Saldos":{"median":17.2101,"q3":29.6562},
+  "bank-fixed-incomes|||Transações":{"median":2.3066,"q3":11.6702},
+  "bank-fixed-incomes|||Transações recentes":{"median":12.8454,"q3":28.2595},
+  "credit-cards-accounts|||Fatura de Cartão de Crédito":{"median":4.3671,"q3":14.3192},
+  "credit-cards-accounts|||Identificação de cartão de crédito":{"median":1.3404,"q3":3.4136},
+  "credit-cards-accounts|||Limites de cartão de crédito":{"median":7.0431,"q3":21.852},
+  "credit-cards-accounts|||Lista de cartões de crédito":{"median":2.8324,"q3":5.2986},
+  "credit-cards-accounts|||Transações de cartão de crédito":{"median":0.3608,"q3":3.0179},
+  "credit-cards-accounts|||Transações de cartão de crédito por fatura":{"median":2.1821,"q3":12.5296},
+  "credit-cards-accounts|||Transações recentes de cartão de crédito":{"median":14.2208,"q3":22.6492},
+  "credit-fixed-incomes|||Identificação do Investimento":{"median":0.0178,"q3":0.0221},
+  "credit-fixed-incomes|||Lista de Investimentos":{"median":0.0086,"q3":0.2639},
+  "credit-fixed-incomes|||Saldos":{"median":0.1627,"q3":0.1975},
+  "credit-fixed-incomes|||Transações":{"median":0.0178,"q3":0.0232},
+  "credit-fixed-incomes|||Transações recentes":{"median":0.1234,"q3":0.1862},
+  "customers|||Identificação pessoa jurídica":{"median":0.7649,"q3":3.1279},
+  "customers|||Identificação pessoa natural":{"median":1.1041,"q3":2.2657},
+  "customers|||Qualificação pessoa jurídica":{"median":0.8072,"q3":2.9982},
+  "customers|||Qualificação pessoa natural":{"median":1.2025,"q3":2.3124},
+  "customers|||Relacionamento pessoa jurídica":{"median":0.8938,"q3":2.9175},
+  "customers|||Relacionamento pessoa natural":{"median":1.2708,"q3":2.243},
+  "exchanges|||Eventos":{"median":0.0345,"q3":0.5001},
+  "exchanges|||Identificação do produto":{"median":0.0223,"q3":0.1135},
+  "exchanges|||Lista de produtos":{"median":0.0752,"q3":0.1684},
+  "financings|||Garantias do Contrato":{"median":1.2295,"q3":1.6966},
+  "financings|||Identificação do Contrato":{"median":0.8504,"q3":1.6276},
+  "financings|||Lista de financiamentos":{"median":0.3871,"q3":1.5099},
+  "financings|||Pagamentos do Contrato":{"median":1.2457,"q3":2.3252},
+  "financings|||Parcelas do Contrato":{"median":1.5958,"q3":2.3251},
+  "funds|||Identificação do Investimento":{"median":0.1786,"q3":0.2442},
+  "funds|||Lista de Investimentos":{"median":0.1349,"q3":2.1177},
+  "funds|||Saldos":{"median":1.1634,"q3":1.5316},
+  "funds|||Transações":{"median":0.0591,"q3":0.2249},
+  "funds|||Transações recentes":{"median":0.9547,"q3":1.3786},
+  "invoice-financings|||Garantias do Contrato":{"median":0.0556,"q3":0.0935},
+  "invoice-financings|||Identificação do Contrato":{"median":0.091,"q3":0.2327},
+  "invoice-financings|||Lista de Contratos":{"median":0.0192,"q3":0.0553},
+  "invoice-financings|||Pagamentos do Contrato":{"median":0.0898,"q3":0.1595},
+  "invoice-financings|||Parcelas do Contrato":{"median":0.077,"q3":0.0871},
+  "loans|||Empréstimos":{"median":2.6837,"q3":4.9129},
+  "loans|||Garantias do Contrato":{"median":3.5721,"q3":6.0736},
+  "loans|||Identificação do Contrato":{"median":3.1159,"q3":4.277},
+  "loans|||Pagamentos do Contrato":{"median":6.1489,"q3":27.6132},
+  "loans|||Parcelas do Contrato":{"median":6.3403,"q3":12.4463},
+  "treasure-titles|||Identificação do Investimento":{"median":0.0764,"q3":0.1098},
+  "treasure-titles|||Lista de Investimentos":{"median":0.0459,"q3":0.6556},
+  "treasure-titles|||Saldos":{"median":0.7299,"q3":0.8186},
+  "treasure-titles|||Transações":{"median":0.0434,"q3":0.1265},
+  "treasure-titles|||Transações recentes":{"median":0.5112,"q3":0.8156},
+  "unarranged-accounts-overdraft|||Adiantamento a Depositantes":{"median":0.1553,"q3":0.2207},
+  "unarranged-accounts-overdraft|||Contrato":{"median":0.0911,"q3":0.2458},
+  "unarranged-accounts-overdraft|||Garantias do Contrato":{"median":0.0655,"q3":0.2429},
+  "unarranged-accounts-overdraft|||Pagamentos do Contrato":{"median":0.0857,"q3":0.2202},
+  "unarranged-accounts-overdraft|||Parcelas do Contrato":{"median":0.0745,"q3":0.2349},
+  "variable-incomes|||Detalhes da nota de negociação":{"median":0.0957,"q3":0.3251},
+  "variable-incomes|||Identificação do Investimento":{"median":0.4241,"q3":0.5191},
+  "variable-incomes|||Lista de Investimentos":{"median":0.07,"q3":1.9686},
+  "variable-incomes|||Saldos":{"median":2.8338,"q3":3.6055},
+  "variable-incomes|||Transações":{"median":0.1964,"q3":0.5832},
+  "variable-incomes|||Transações recentes":{"median":0.8652,"q3":2.5535}
+};
+
+// =============================================================
+// 1. DOT CHART — STRATEGIC MAP (horizontal scatter)
+// =============================================================
+(function(){
+  const groupsY = GROUPS; // y=0..6
+  const groupMax = {};
+  groupsY.forEach(g=>{
+    groupMax[g]=Math.max(...Object.values(REC_GROUP_INTENSITY).map(r=>r[g]||0),
+      GROUP_STATS[g].mean);
+  });
+
+  // Build datasets
+  const receptors = Object.keys(REC_GROUP_INTENSITY);
+  const colors = {
+    'BANCO DO BRASIL':'#6B7280','BRADESCO':'#4A9EFF',
+    'CAIXA ECONOMICA FEDERAL':'#6B7280','ITAÚ UNIBANCO':'#6B7280',
+    'MERCADO PAGO':'#6B7280','NUBANK':'#6B7280','SANTANDER BRASIL':'#6B7280'
+  };
+  const sizes = {'BRADESCO':10};
+
+  const recDatasets = receptors.filter(r=>r!=='BRADESCO').map(r=>({
+    label:r,
+    data: groupsY.map((g,i)=>({x:REC_GROUP_INTENSITY[r][g]||0, y:i})),
+    backgroundColor:'rgba(74,82,112,0.5)',
+    borderColor:'rgba(74,82,112,0.0)',
+    pointRadius:5,
+    pointHoverRadius:7,
+    type:'scatter'
+  }));
+
+  const bdDataset = {
+    label:'BRADESCO',
+    data: groupsY.map((g,i)=>({x:REC_GROUP_INTENSITY['BRADESCO'][g]||0, y:i})),
+    backgroundColor:'#4A9EFF',
+    borderColor:'white',
+    borderWidth:1.5,
+    pointRadius:8,
+    pointHoverRadius:10,
+    type:'scatter'
+  };
+
+  // Reference lines (mean, median, q1) — each group gets 3 points (but we draw them as tiny vertical segments)
+  // We simulate lines by drawing 2-point datasets spanning y±0.45
+  const refDatasets = [];
+  groupsY.forEach((g,i)=>{
+    const s = GROUP_STATS[g];
+    refDatasets.push({
+      label:'mean_'+g,
+      data:[{x:s.mean, y:i-0.42},{x:s.mean, y:i+0.42}],
+      borderColor:'rgba(238,240,246,0.7)',
+      borderWidth:1.5,
+      pointRadius:0,
+      showLine:true,
+      fill:false,
+      type:'line'
+    });
+    refDatasets.push({
+      label:'median_'+g,
+      data:[{x:s.median, y:i-0.42},{x:s.median, y:i+0.42}],
+      borderColor:'rgba(245,166,35,0.7)',
+      borderWidth:1.5,
+      borderDash:[3,2],
+      pointRadius:0,
+      showLine:true,
+      fill:false,
+      type:'line'
+    });
+    refDatasets.push({
+      label:'q1_'+g,
+      data:[{x:s.q1, y:i-0.42},{x:s.q1, y:i+0.42}],
+      borderColor:'rgba(139,149,176,0.5)',
+      borderWidth:1,
+      borderDash:[2,3],
+      pointRadius:0,
+      showLine:true,
+      fill:false,
+      type:'line'
+    });
+  });
+
+  new Chart(document.getElementById('dotChart'),{
+    type:'scatter',
+    data:{datasets:[...refDatasets,...recDatasets,bdDataset]},
+    options:{
+      responsive:true,maintainAspectRatio:false,
+      scales:{
+        x:{
+          grid:{color:'#252A3A'},
+          title:{display:true,text:'req / consentimento / 30 dias',color:'#4A5270',font:{size:10}}
+        },
+        y:{
+          min:-0.6,max:6.6,
+          grid:{color:'#252A3A'},
+          ticks:{
+            stepSize:1,
+            callback:(v)=>groupsY[Math.round(v)]?GROUP_LABELS[groupsY[Math.round(v)]]:'',
+            color:(ctx)=>{
+              const g=groupsY[ctx.tick.value];
+              return g?GROUP_COLORS[g]:'#4A5270';
+            },
+            font:{size:11,weight:'600'}
+          }
+        }
+      },
+      plugins:{
+        legend:{display:false},
+        tooltip:{
+          ...TT,
+          filter:ctx=>!ctx.dataset.label.startsWith('mean_')&&
+                      !ctx.dataset.label.startsWith('median_')&&
+                      !ctx.dataset.label.startsWith('q1_'),
+          callbacks:{
+            label:ctx=>{
+              const g=groupsY[Math.round(ctx.parsed.y)];
+              return ' '+ctx.dataset.label+': '+ctx.parsed.x.toFixed(1)+' req/c/30d';
+            }
+          }
+        }
+      }
+    }
+  });
+})();
+
+// =============================================================
+// 2. TORNADO CHART (DOM-based)
+// =============================================================
+(function(){
+  const container=document.getElementById('tornadoContainer');
+  const maxVal=Math.max(...TORNADO.map(d=>Math.max(d.left,d.right||0)));
+  const BAR_MAX=160; // px max bar width per side
+
+  TORNADO.forEach(d=>{
+    const row=document.createElement('div');
+    row.className='tornado-row';
+    const leftW=Math.round((d.left/maxVal)*BAR_MAX);
+    const rightW=d.right!=null?Math.round((d.right/maxVal)*BAR_MAX):0;
+
+    const rightHtml=d.right!=null
+      ?`<div class="t-bar t-bar-right" style="width:${rightW}px"></div>
+        <div class="tornado-value">${d.right.toFixed(0)}M</div>`
+      :`<div class="tornado-missing">—</div>`;
+
+    row.innerHTML=`
+      <div class="tornado-left-bar">
+        <div class="tornado-value">${d.left.toFixed(0)}M</div>
+        <div class="t-bar t-bar-left" style="width:${leftW}px;margin-left:4px"></div>
+      </div>
+      <div class="tornado-name" title="${d.name}">${d.name}</div>
+      <div class="tornado-right-bar">${rightHtml}</div>
+    `;
+    container.appendChild(row);
+  });
+})();
+
+// =============================================================
+// 3. STACKED INTENSITY CHART (excl. Resource)
+// =============================================================
+(function(){
+  const dates=Object.keys(TS_INTENSITY);
+  const excl=['Resource'];
+  const stackGroups=['Conta','Cartao','Investimento','Credito','Identidade','Cambio'];
+
+  const datasets=stackGroups.map(g=>({
+    label:GROUP_LABELS[g],
+    data:dates.map(d=>TS_INTENSITY[d][g]||0),
+    backgroundColor:GROUP_COLORS[g]+'BB',
+    borderColor:GROUP_COLORS[g],
+    borderWidth:0.5,
+    fill:true,
+    tension:0.3,
+    pointRadius:0,
+    pointHoverRadius:4
+  }));
+
+  new Chart(document.getElementById('stackedIntensityChart'),{
+    type:'line',
+    data:{labels:dates.map(fmtDate),datasets},
+    options:{
+      responsive:true,maintainAspectRatio:false,
+      interaction:{mode:'index',intersect:false},
+      scales:{
+        x:{grid:{color:'#252A3A'},ticks:{maxRotation:0,maxTicksLimit:13}},
+        y:{stacked:true,grid:{color:'#252A3A'},min:0,
+           ticks:{callback:v=>v.toFixed(0)},
+           title:{display:true,text:'req/consent/30d',color:'#4A5270',font:{size:10}}}
+      },
+      plugins:{
+        legend:{display:false},
+        tooltip:{...TT,callbacks:{label:ctx=>' '+ctx.dataset.label+': '+ctx.raw.toFixed(1)}}
+      }
+    }
+  });
+})();
+
+// =============================================================
+// 4. RESOURCE CHART
+// =============================================================
+(function(){
+  const dates=Object.keys(TS_INTENSITY);
+  new Chart(document.getElementById('resourceChart'),{
+    type:'line',
+    data:{
+      labels:dates.map(fmtDate),
+      datasets:[{
+        label:'Resource',
+        data:dates.map(d=>TS_INTENSITY[d].Resource||0),
+        borderColor:'#14B8A6',
+        backgroundColor:'rgba(20,184,166,0.12)',
+        fill:true,tension:0.3,borderWidth:1.5,
+        pointRadius:0,pointHoverRadius:4
+      }]
+    },
+    options:{
+      responsive:true,maintainAspectRatio:false,
+      interaction:{mode:'index',intersect:false},
+      scales:{
+        x:{grid:{color:'#252A3A'},ticks:{maxRotation:0,maxTicksLimit:13}},
+        y:{grid:{color:'#252A3A'},min:0,
+           ticks:{callback:v=>v.toFixed(0)},
+           title:{display:true,text:'req/consent/30d',color:'#4A5270',font:{size:10}}}
+      },
+      plugins:{
+        legend:{display:false},
+        tooltip:{...TT,callbacks:{label:ctx=>' Resource: '+ctx.raw.toFixed(1)}}
+      }
+    }
+  });
+})();
+
+// =============================================================
+// 5. ENDPOINT DEPTH — hierarchical DOM with expand/collapse,
+//    shared intensity bars, and Q3 reference ticks
+// =============================================================
+(function(){
+  const section=document.getElementById('endpointSection');
+  const EP_BAR_W=120; // endpoint bar track width px
+  const GRP_BAR_W=110; // group/api bar track width px
+
+  function fmtVal(v){return v<0.01?v.toFixed(4):v<0.1?v.toFixed(3):v.toFixed(2);}
+
+  // ------ Pre-compute all group totals and API totals ------
+  const groupTotals={};
+  const apiTotalsMap={}; // {groupKey: {apiKey: total}}
+  Object.entries(EP_DATA).forEach(([gk,gd])=>{
+    let gt=0;
+    apiTotalsMap[gk]={};
+    Object.entries(gd.apis).forEach(([ak,a])=>{
+      let at=0;
+      if(a.endpoints) at=Object.values(a.endpoints).reduce((s,v)=>s+v,0);
+      else {
+        if(a.pfEndpoints) at+=Object.values(a.pfEndpoints).reduce((s,v)=>s+v,0);
+        if(a.pjEndpoints) at+=Object.values(a.pjEndpoints).reduce((s,v)=>s+v,0);
+      }
+      apiTotalsMap[gk][ak]=at;
+      gt+=at;
+    });
+    groupTotals[gk]=gt;
+  });
+  // Global scale max (same for groups and APIs — comparable across all)
+  const GLOBAL_MAX=Math.max(...Object.values(groupTotals));
+
+  // ------ Shared intensity bar (group or API level) ------
+  function intensityBar(total, color, trackW, height){
+    const fillW=Math.max(1,Math.round((total/GLOBAL_MAX)*trackW));
+    return `<div style="display:flex;align-items:center;gap:5px;margin-left:auto;flex-shrink:0">
+      <div style="width:${trackW}px;height:${height}px;background:var(--bg-base);border-radius:${height}px;overflow:hidden;flex-shrink:0">
+        <div style="width:${fillW}px;height:100%;background:${color};opacity:0.75;border-radius:${height}px"></div>
+      </div>
+      <span style="font-size:10px;color:var(--text-muted);font-variant-numeric:tabular-nums;min-width:38px;text-align:right">${total.toFixed(1)}</span>
+    </div>`;
+  }
+
+  // ------ Endpoint row with Q3 reference tick ------
+  function epRow(displayName, rawEpName, apiKey, val, maxEp, color){
+    const barFill=Math.max(1,Math.round((val/maxEp)*EP_BAR_W));
+    const statsKey=apiKey+'|||'+rawEpName;
+    const stats=EP_STATS[statsKey]||null;
+    let ticks='';
+    if(stats){
+      const mPx=Math.min(Math.round((stats.median/maxEp)*EP_BAR_W),EP_BAR_W);
+      const q3Px=Math.min(Math.round((stats.q3/maxEp)*EP_BAR_W),EP_BAR_W);
+      if(mPx>0) ticks+=`<div class="ep-ref-tick ep-ref-median" style="left:${mPx}px" title="Mediana ecossistema: ${fmtVal(stats.median)}"></div>`;
+      if(q3Px>0) ticks+=`<div class="ep-ref-tick ep-ref-q3" style="left:${q3Px}px" title="3º Quartil (top 25%): ${fmtVal(stats.q3)}"></div>`;
+    }
+    return `<div class="ep-row">
+      <div class="ep-name" title="${displayName}">${displayName}</div>
+      <div class="ep-bar-track-wrap">
+        <div class="ep-bar-track" style="width:${EP_BAR_W}px;height:6px;background:var(--bg-surface);border-radius:3px;position:relative">
+          <div class="ep-bar-fill" style="width:${barFill}px;background:${color}88;height:100%;border-radius:3px"></div>
+          ${ticks}
+        </div>
+      </div>
+      <div class="ep-val">${fmtVal(val)}</div>
+    </div>`;
+  }
+
+  // ------ Render each group ------
+  Object.entries(EP_DATA).forEach(([groupKey,groupData])=>{
+    const groupDiv=document.createElement('div');
+    groupDiv.className='ep-group';
+    const groupTotal=groupTotals[groupKey];
+    const bgBase=`${groupData.color}18`;
+    const bgHover=`${groupData.color}2E`;
+
+    // Group header (clickable, with hover feedback)
+    const hdr=document.createElement('div');
+    hdr.className='ep-group-header';
+    hdr.style.cssText=`display:flex;align-items:center;gap:var(--s2);padding:var(--s2) var(--s3);
+      border-radius:var(--r-sm);background:${bgBase};border-left:3px solid ${groupData.color};
+      transition:background 0.15s`;
+    hdr.innerHTML=`
+      <span class="ep-chevron" id="chev-${groupKey}">▼</span>
+      <div class="ep-group-name" style="color:${groupData.color}">${groupKey}</div>
+      ${intensityBar(groupTotal, groupData.color, GRP_BAR_W, 5)}
+    `;
+    hdr.addEventListener('mouseenter',()=>{ hdr.style.background=bgHover; });
+    hdr.addEventListener('mouseleave',()=>{ hdr.style.background=bgBase; });
+    groupDiv.appendChild(hdr);
+
+    // Grid (starts expanded)
+    const grid=document.createElement('div');
+    grid.className='ep-apis-grid';
+    grid.style.marginTop='var(--s3)';
+
+    // Toggle on click
+    hdr.addEventListener('click',()=>{
+      const chev=document.getElementById('chev-'+groupKey);
+      const isOpen=grid.style.display!=='none';
+      grid.style.display=isOpen?'none':'grid';
+      chev.classList.toggle('collapsed',isOpen);
+    });
+
+    // ------ API cards — sorted by total desc ------
+    const sortedApis=Object.entries(groupData.apis)
+      .sort(([akA],[akB])=>(apiTotalsMap[groupKey][akB]||0)-(apiTotalsMap[groupKey][akA]||0));
+
+    sortedApis.forEach(([apiKey,apiData])=>{
+      const card=document.createElement('div');
+      card.className='ep-api-card';
+      const apiTotal=apiTotalsMap[groupKey][apiKey];
+
+      // Card header (no per-card legend — legend is in section header)
+      let cardInner=`<div class="ep-api-name" style="flex-wrap:wrap;row-gap:4px">
+        <div class="ep-api-dot" style="background:${groupData.color}"></div>
+        <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis">${apiData.label}</span>
+        ${intensityBar(apiTotal, groupData.color, GRP_BAR_W, 4)}
+      </div>`;
+
+      // Identidade: split PF / PJ
+      if(apiData.pfEndpoints && apiData.pjEndpoints){
+        const allVals=[...Object.values(apiData.pfEndpoints),...Object.values(apiData.pjEndpoints)];
+        // Include Q3 values in scale so ticks stay within track
+        const custQ3s=Object.entries(EP_STATS)
+          .filter(([k])=>k.startsWith('customers'))
+          .map(([,s])=>s.q3||0);
+        const maxEp=Math.max(...allVals,...custQ3s);
+
+        cardInner+=`<div class="ep-sub-header">Pessoa Física — normaliz. por CPF ativos</div>`;
+        Object.entries(apiData.pfEndpoints).sort((a,b)=>b[1]-a[1]).forEach(([dn,val])=>{
+          cardInner+=epRow(dn, apiData.epKeyMap[dn]||dn, apiData.key, val, maxEp, groupData.color);
+        });
+        cardInner+=`<div class="ep-sub-header" style="margin-top:var(--s3)">Pessoa Jurídica — normaliz. por CNPJ ativos</div>`;
+        Object.entries(apiData.pjEndpoints).sort((a,b)=>b[1]-a[1]).forEach(([dn,val])=>{
+          cardInner+=epRow(dn, apiData.epKeyMap[dn]||dn, apiData.key, val, maxEp, groupData.color);
+        });
+
+      } else {
+        // Standard API: scale includes Q3 values for the endpoint so ticks don't clip
+        const epQ3s=Object.keys(apiData.endpoints)
+          .map(ep=>(EP_STATS[apiData.key+'|||'+ep]||{}).q3||0);
+        const maxEp=Math.max(...Object.values(apiData.endpoints),...epQ3s);
+
+        Object.entries(apiData.endpoints).sort((a,b)=>b[1]-a[1]).forEach(([ep,val])=>{
+          cardInner+=epRow(ep, ep, apiData.key, val, maxEp, groupData.color);
+        });
+      }
+
+      card.innerHTML=cardInner;
+      grid.appendChild(card);
+    });
+
+    groupDiv.appendChild(grid);
+    section.appendChild(groupDiv);
+  });
+})();
+</script>
+</body>
+</html>

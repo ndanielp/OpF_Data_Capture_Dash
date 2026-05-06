@@ -285,6 +285,19 @@ def open_db(path: Path) -> sqlite3.Connection:
         )
     """)
 
+    # Pré-agregação semanal por grupo de API — alimenta Mapa Estratégico e Evolução Temporal.
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS api_group_weekly (
+            date           TEXT    NOT NULL,
+            receptor_uuid  TEXT    NOT NULL,
+            receptor       TEXT    NOT NULL DEFAULT '',
+            grp            TEXT    NOT NULL,
+            req_week       INTEGER NOT NULL DEFAULT 0,
+            consents_total INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (date, receptor_uuid, grp)
+        )
+    """)
+
     # Índices de leitura para o dashboard — criados uma vez, idempotentes.
     con.executescript("""
         CREATE INDEX IF NOT EXISTS idx_consents_date
@@ -296,10 +309,55 @@ def open_db(path: Path) -> sqlite3.Connection:
         CREATE INDEX IF NOT EXISTS idx_api_dash_covering
             ON api_requests(date, receptor, api, endpoint_id, status, endpoint, total)
             WHERE endpoint_id <> 0;
+
+        -- Índices para queries do Perfil Receptor (filtra por receptor_uuid, não receptor texto)
+        CREATE INDEX IF NOT EXISTS idx_api_by_receptor
+            ON api_requests(receptor_uuid, date, api, status, total);
+
+        CREATE INDEX IF NOT EXISTS idx_consents_by_receptor
+            ON unique_consents(receptor_uuid, date, total);
+
+        CREATE INDEX IF NOT EXISTS idx_api_by_transmitter
+            ON api_requests(transmitter_uuid, date, status, total);
+
+        -- Índices para api_group_weekly
+        CREATE INDEX IF NOT EXISTS idx_agw_receptor ON api_group_weekly(receptor_uuid, date);
+        CREATE INDEX IF NOT EXISTS idx_agw_date     ON api_group_weekly(date);
     """)
 
     con.commit()
     return con
+
+
+def refresh_api_group_weekly(con: sqlite3.Connection) -> None:
+    """Recalcula api_group_weekly inteiramente a partir de api_requests x unique_consents.
+
+    Deve ser chamado após cada run de coleta para manter a tabela em sincronia.
+    executescript() auto-comita, portanto não requer commit() adicional.
+    """
+    con.executescript("""
+        DELETE FROM api_group_weekly;
+        INSERT INTO api_group_weekly (date, receptor_uuid, receptor, grp, req_week, consents_total)
+        SELECT r.date, r.receptor_uuid, r.receptor,
+               CASE
+                   WHEN r.api = 'accounts'                                              THEN 'Conta'
+                   WHEN r.api = 'credit-cards-accounts'                                 THEN 'Cartao'
+                   WHEN r.api IN ('bank-fixed-incomes','credit-fixed-incomes',
+                                  'variable-incomes','funds','treasure-titles')          THEN 'Investimento'
+                   WHEN r.api IN ('loans','financings','invoice-financings',
+                                  'unarranged-accounts-overdraft')                       THEN 'Credito'
+                   WHEN r.api = 'exchanges'                                             THEN 'Cambio'
+                   WHEN r.api = 'customers'                                             THEN 'Identidade'
+               END AS grp,
+               SUM(r.total)  AS req_week,
+               c.total       AS consents_total
+        FROM api_requests r
+        JOIN unique_consents c ON r.date = c.date AND r.receptor_uuid = c.receptor_uuid
+        WHERE r.api NOT IN ('consents', 'resources')
+          AND r.status = 200
+        GROUP BY r.date, r.receptor_uuid, grp
+        HAVING grp IS NOT NULL;
+    """)
 
 
 def upsert_consents(con: sqlite3.Connection, records: list[dict], fetched_at: str) -> int:

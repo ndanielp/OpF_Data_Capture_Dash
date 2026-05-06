@@ -11,28 +11,31 @@ import time as _time
 import uvicorn
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
+from functools import wraps
 from pathlib import Path
 
 import pandas as pd
+from cachetools import TTLCache
 from fastapi import FastAPI, Query, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 import config
+from services.constants import (
+    API_GROUPS as _SHARED_API_GROUPS,
+    BRAND_COLORS as _SHARED_BRAND,
+    RESOURCES_API,
+    EXCLUDED_APIS,
+)
 
 # ── Agrupamentos e Cores ───────────────────────────────────────────────────────
-API_GROUPS = {
-    "Conta":        ["accounts"],
-    "Cartão":       ["credit-cards-accounts"],
-    "Crédito":      ["loans", "financings", "invoice-financings",
-                     "unarranged-accounts-overdraft"],
-    "Investimento": ["funds", "bank-fixed-incomes", "credit-fixed-incomes",
-                     "variable-incomes", "treasure-titles"],
-    "Câmbio":       ["exchanges"],
-    "Cadastro":     ["customers-pf", "customers-pj"],
+# Exposed as API_GROUPS[label] -> list[str] of api ids (flat shape for this
+# module's heatmap code). The canonical source (with colors) lives in
+# services.constants — imported above.
+API_GROUPS: dict[str, list[str]] = {
+    label: [a for a in info["apis"] if a != "customers"]  # ecossistema splits "customers" into customers-pf/pj
+    for label, info in _SHARED_API_GROUPS.items()
 }
-RESOURCES_API = "resources"
-EXCLUDED_APIS = {"consents"}
 _ORDERED_APIS = [api for apis in API_GROUPS.values() for api in apis]
 
 _API_LABELS = {
@@ -56,22 +59,7 @@ _API_LABELS = {
 _NORM_CPF_APIS  = {"customers-pf"}
 _NORM_CNPJ_APIS = {"customers-pj"}
 
-_BRAND = [
-    ("bradesco",        "#CC092F"),
-    ("nubank",          "#8B1CF0"),
-    ("itaú",            "#EC7000"),
-    ("itau",            "#EC7000"),
-    ("santander",       "#EC0000"),
-    ("caixa",           "#005CA9"),
-    ("mercado pago",    "#00A9E0"),
-    ("picpay",          "#21C25E"),
-    ("banco do brasil", "#F9A800"),
-    ("belvo",           "#4A9EFF"),
-    ("recargapay",      "#7B68EE"),
-    ("shopee",          "#FF5722"),
-    ("pagseguro",       "#34B7F1"),
-    ("cloudwalk",       "#9C27B0"),
-]
+_BRAND = _SHARED_BRAND
 
 _FALLBACK_COLORS = [
     "#4A9EFF", "#7B68EE", "#FF5722", "#34B7F1",
@@ -109,6 +97,12 @@ def _build_color_map(receptors: list[str]) -> dict[str, str]:
 def _db_con() -> sqlite3.Connection:
     con = sqlite3.connect(str(config.DB_PATH))
     con.execute("PRAGMA cache_size = -4096")   # limita page cache do SQLite a 4 MB
+    # WAL + mmap + memory temp: read-only dashboard talks to a DB that the
+    # collector writes in WAL mode; setting here lets queries stream pages
+    # through mmap instead of syscalls, and keeps temp tables off disk.
+    con.execute("PRAGMA journal_mode = WAL")
+    con.execute("PRAGMA mmap_size = 268435456")
+    con.execute("PRAGMA temp_store = MEMORY")
     return con
 
 def _load_consents(start: date | None = None, end: date | None = None) -> pd.DataFrame:
@@ -122,8 +116,8 @@ def _load_consents(start: date | None = None, end: date | None = None) -> pd.Dat
             )
         else:
             df = pd.read_sql(
-                "SELECT receptor, SUM(total) AS total, SUM(cpf) AS cpf, SUM(cnpj) AS cnpj"
-                " FROM unique_consents GROUP BY receptor",
+                "SELECT receptor_uuid, receptor, SUM(total) AS total, SUM(cpf) AS cpf, SUM(cnpj) AS cnpj"
+                " FROM unique_consents GROUP BY receptor_uuid, receptor",
                 con,
             )
         con.close()
@@ -199,6 +193,35 @@ _CACHE_WEEKS = 52
 _CACHE_TTL   = 300   # segundos entre recargas automáticas
 _CACHE: dict = {"consents": None, "api": None, "ts": 0.0, "cutoff": None}
 _CACHE_LOCK  = threading.Lock()
+
+# Response-level cache for hot dashboard endpoints. TTL is short (60s) —
+# long enough to absorb repeated refreshes from the same user during a
+# typical filter-tweak session, short enough that fresh data surfaces fast.
+_RESP_CACHE: TTLCache = TTLCache(maxsize=512, ttl=60)
+_RESP_LOCK: threading.Lock = threading.Lock()
+
+
+def cached_response(name: str):
+    """Cache an endpoint's serialized JSON body by (name, query params).
+
+    A hit skips re-computation and re-serialization. All dashboard query
+    params are scalar (str/int/None), so frozenset of items is hashable.
+    """
+    def deco(fn):
+        @wraps(fn)
+        def wrapper(**kwargs):
+            key = (name, frozenset(kwargs.items()))
+            with _RESP_LOCK:
+                hit = _RESP_CACHE.get(key)
+            if hit is not None:
+                return Response(content=hit, media_type="application/json")
+            resp = fn(**kwargs)
+            if isinstance(resp, JSONResponse):
+                with _RESP_LOCK:
+                    _RESP_CACHE[key] = resp.body
+            return resp
+        return wrapper
+    return deco
 
 
 def _refresh_cache(force: bool = False) -> None:
@@ -302,13 +325,132 @@ def _top10_with_bradesco(df: pd.DataFrame) -> list[str]:
 
 # ── FastAPI App ────────────────────────────────────────────────────────────────
 
+def _ensure_dashboard_indexes() -> None:
+    """Compound covering index the dashboard's consents queries need.
+
+    The collector's scrapers.py ships single-column indexes; without this,
+    queries filtered by (date, receptor_uuid) fall back to seek + row fetch.
+    Wait up to 3s if the collector holds a write lock rather than crash.
+    """
+    try:
+        con = _db_con()
+        try:
+            con.execute("PRAGMA busy_timeout = 3000")
+            con.execute(
+                "CREATE INDEX IF NOT EXISTS idx_consents_date_rec "
+                "ON unique_consents(date, receptor_uuid, total)"
+            )
+            con.commit()
+        finally:
+            con.close()
+    except Exception:
+        pass
+
+
+def _ensure_api_group_weekly():
+    """Cria e popula api_group_weekly se vazio — compatibilidade com DBs antigos."""
+    con = sqlite3.connect(str(config.DB_PATH))
+    try:
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS api_group_weekly (
+                date           TEXT    NOT NULL,
+                receptor_uuid  TEXT    NOT NULL,
+                receptor       TEXT    NOT NULL DEFAULT '',
+                grp            TEXT    NOT NULL,
+                req_week       INTEGER NOT NULL DEFAULT 0,
+                consents_total INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (date, receptor_uuid, grp))
+        """)
+        n = con.execute("SELECT COUNT(*) FROM api_group_weekly").fetchone()[0]
+        if n == 0:
+            con.executescript("""
+                INSERT INTO api_group_weekly
+                    (date, receptor_uuid, receptor, grp, req_week, consents_total)
+                SELECT r.date, r.receptor_uuid, r.receptor,
+                       CASE WHEN r.api='accounts' THEN 'Conta'
+                            WHEN r.api='credit-cards-accounts' THEN 'Cartao'
+                            WHEN r.api IN ('bank-fixed-incomes','credit-fixed-incomes',
+                                'variable-incomes','funds','treasure-titles') THEN 'Investimento'
+                            WHEN r.api IN ('loans','financings','invoice-financings',
+                                'unarranged-accounts-overdraft') THEN 'Credito'
+                            WHEN r.api='exchanges' THEN 'Cambio'
+                            WHEN r.api='customers' THEN 'Identidade'
+                            WHEN r.api='resources' THEN 'Resource'
+                       END AS grp,
+                       SUM(r.total), c.total
+                FROM api_requests r
+                JOIN unique_consents c ON r.date=c.date AND r.receptor_uuid=c.receptor_uuid
+                WHERE r.api NOT IN ('consents') AND r.status=200
+                GROUP BY r.date, r.receptor_uuid, grp HAVING grp IS NOT NULL;
+            """)
+        # Garante que Resource esteja presente mesmo em DBs já populados sem ele.
+        n_resource = con.execute(
+            "SELECT COUNT(*) FROM api_group_weekly WHERE grp='Resource'"
+        ).fetchone()[0]
+        if n_resource == 0:
+            con.execute("""
+                INSERT OR REPLACE INTO api_group_weekly
+                    (date, receptor_uuid, receptor, grp, req_week, consents_total)
+                SELECT r.date, r.receptor_uuid, r.receptor, 'Resource',
+                       SUM(r.total), COALESCE(c.total, 0)
+                FROM api_requests r
+                LEFT JOIN unique_consents c ON r.date=c.date AND r.receptor_uuid=c.receptor_uuid
+                WHERE r.api='resources' AND r.status=200
+                GROUP BY r.date, r.receptor_uuid
+            """)
+            con.commit()
+    finally:
+        con.close()
+
+
+def _get_latest_weeks(n: int) -> list[str]:
+    """Retorna as N datas mais recentes em api_requests com status=200, preenchendo até n."""
+    con = sqlite3.connect(str(config.DB_PATH))
+    try:
+        rows = con.execute(
+            "SELECT DISTINCT date FROM api_requests WHERE status=200 ORDER BY date DESC LIMIT ?",
+            (n,),
+        ).fetchall()
+    finally:
+        con.close()
+    weeks = [r[0] for r in rows]
+    while len(weeks) < n:
+        weeks.append(weeks[-1] if weeks else "1900-01-01")
+    return weeks
+
+
+def _warm_profile_cache() -> None:
+    """Pré-carrega dados institution-independent nos TTLCaches de of_analytics."""
+    try:
+        of_analytics._get_strategic_map("2024-01-01", "2100-01-01")
+    except Exception:
+        pass
+    try:
+        of_analytics._get_ecosystem_rankings("2024-01-01", "2100-01-01")
+    except Exception:
+        pass
+    try:
+        weeks = _get_latest_weeks(4)
+        of_analytics._get_ep_ecosystem_stats(*weeks)
+    except Exception:
+        pass
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Garante que api_group_weekly exista e tenha dados (DBs antigos sem a tabela populada).
+    _ensure_api_group_weekly()
+    _ensure_dashboard_indexes()
     # Pré-aquece cache em background — servidor aceita conexões imediatamente.
     threading.Thread(target=lambda: _refresh_cache(force=True), daemon=True).start()
+    threading.Thread(target=_warm_profile_cache, daemon=True).start()
     yield
 
+from routers import openfinance
+import services.of_analytics as of_analytics
+
 app = FastAPI(title="OPF Batch Dashboard", lifespan=lifespan)
+app.include_router(openfinance.router, prefix="/api/of")
 
 GUI_DIR = Path(__file__).parent / "gui"
 
@@ -317,21 +459,32 @@ async def index():
     index_path = GUI_DIR / "dashboard.html"
     return HTMLResponse(index_path.read_text(encoding="utf-8"))
 
+@app.get("/profile", response_class=HTMLResponse)
+async def profile():
+    index_path = GUI_DIR / "receptor_profile.html"
+    return HTMLResponse(index_path.read_text(encoding="utf-8"))
+
 @app.get("/api/receptors", response_class=JSONResponse)
+@cached_response("receptors")
 def get_receptors():
     # Consulta leve: apenas totais agregados por receptor, sem filtro de data
-    df = _load_consents()   # sem datas → retorna GROUP BY receptor (sem coluna date)
+    df = _load_consents()   # sem datas → retorna GROUP BY receptor_uuid, receptor
     if df.empty: return JSONResponse([])
-    all_recs = df.sort_values("total", ascending=False)["receptor"].tolist()
+    df = df.sort_values("total", ascending=False)
+    if "receptor_uuid" in df.columns:
+        df["receptor_uuid"] = df["receptor_uuid"].fillna("")
+    all_recs = df["receptor"].tolist()
     colors = _build_color_map(all_recs)
     top10 = set(_top10_with_bradesco(df))
     return JSONResponse([
-        {"label": r, "color": colors.get(r, "#4A5270"), "top": r in top10}
-        for r in all_recs
+        {"label": row["receptor"], "uuid": row.get("receptor_uuid", "") or "",
+         "color": colors.get(row["receptor"], "#4A5270"), "top": row["receptor"] in top10}
+        for _, row in df.iterrows()
     ])
 
 
 @app.get("/api/consents", response_class=JSONResponse)
+@cached_response("consents")
 def get_consents(start: str = None, end: str = None, receptors: str = None):
     today = date.today()
     dt_start = _parse_date(start, today - timedelta(days=365))
@@ -433,6 +586,7 @@ def get_consents(start: str = None, end: str = None, receptors: str = None):
     })
 
 @app.get("/api/api-requests", response_class=JSONResponse)
+@cached_response("api-requests")
 def get_api_requests(start: str = None, end: str = None, receptors: str = None, status: str = "all", normalize: str = "0"):
     today = date.today()
     dt_start = _parse_date(start, today - timedelta(days=365))
@@ -456,10 +610,12 @@ def get_api_requests(start: str = None, end: str = None, receptors: str = None, 
     if df.empty:
         return JSONResponse({"groups": [], "apis": [], "receptors": [], "values": [], "max_val": 0})
 
+    # Buscar df_cons UMA VEZ — reutilizado em top_reps, normalização heatmap e normalização endpoint
+    df_cons = _get_consents(dt_start, dt_end) if (not sel or norm) else pd.DataFrame()
+
     if sel:
         top_reps = [r for r in sel if r in df["receptor"].values]
     else:
-        df_cons = _get_consents(dt_start, dt_end)
         base = df_cons if not df_cons.empty else df
         top_reps = [r for r in _top10_with_bradesco(base) if r in df["receptor"].values]
 
@@ -478,16 +634,13 @@ def get_api_requests(start: str = None, end: str = None, receptors: str = None, 
     )
     data     = pivot.values.astype(float)
     data_raw = data.copy()              # chamadas brutas — usadas para a coluna Total
-    ct_total = pd.Series(dtype=float)  # populado dentro do bloco norm; visível depois
+    ct_total = ct_cpf = ct_cnpj = pd.Series(dtype=float)  # populados abaixo se norm
 
     if norm:
-        df_cons = _get_consents(dt_start, dt_end)
         if not df_cons.empty:
             ct_total = df_cons.groupby("receptor")["total"].sum()
             ct_cpf   = df_cons.groupby("receptor")["cpf"].sum()
             ct_cnpj  = df_cons.groupby("receptor")["cnpj"].sum()
-        else:
-            ct_cpf = ct_cnpj = pd.Series(dtype=float)
         # Converte de semanal para mensal; Cadastro PF/PJ usam denominadores específicos
         for i, rec in enumerate(pivot.index):
             for j, col in enumerate(ordered_cols):
@@ -546,44 +699,46 @@ def get_api_requests(start: str = None, end: str = None, receptors: str = None, 
                 .sum().reset_index()
             )
             if norm and not df_ep.empty:
-                df_cons_ep = _get_consents(dt_start, dt_end)
-                if not df_cons_ep.empty:
-                    ct_ep_total = df_cons_ep.groupby("receptor")["total"].sum()
-                    ct_ep_cpf   = df_cons_ep.groupby("receptor")["cpf"].sum()
-                    ct_ep_cnpj  = df_cons_ep.groupby("receptor")["cnpj"].sum()
-                else:
-                    ct_ep_total = ct_ep_cpf = ct_ep_cnpj = pd.Series(dtype=float)
-                def _norm_ep(row):
-                    if row["api"] in _NORM_CPF_APIS:
-                        n = float(ct_ep_cpf.get(row["receptor"], 0))
-                    elif row["api"] in _NORM_CNPJ_APIS:
-                        n = float(ct_ep_cnpj.get(row["receptor"], 0))
-                    else:
-                        n = float(ct_ep_total.get(row["receptor"], 0))
-                    return (row["total"] / n) / 7 * 30 if n > 0 else 0.0
-                ep_pivot["total"] = ep_pivot.apply(_norm_ep, axis=1)
+                apis_arr = ep_pivot["api"].to_numpy()
+                recs_arr = ep_pivot["receptor"].to_numpy()
+                is_pf = pd.Series(apis_arr).isin(_NORM_CPF_APIS).to_numpy()
+                is_pj = pd.Series(apis_arr).isin(_NORM_CNPJ_APIS).to_numpy()
+                denoms = ct_total.reindex(recs_arr).to_numpy(dtype=float, na_value=0.0)
+                if is_pf.any():
+                    denoms[is_pf] = ct_cpf.reindex(recs_arr[is_pf]).to_numpy(dtype=float, na_value=0.0)
+                if is_pj.any():
+                    denoms[is_pj] = ct_cnpj.reindex(recs_arr[is_pj]).to_numpy(dtype=float, na_value=0.0)
+                totals = ep_pivot["total"].to_numpy(dtype=float)
+                safe = denoms > 0
+                out = totals.copy()
+                out[safe] = (totals[safe] / denoms[safe]) / 7.0 * 30.0
+                out[~safe] = 0.0
+                ep_pivot["total"] = out
+
+            # Dict O(1) para lookup (api, receptor, endpoint_id) → total
+            ep_dict: dict = (
+                ep_pivot.set_index(["api", "receptor", "endpoint_id"])["total"]
+                .to_dict()
+            )
 
             for api_id in ordered_cols:
-                api_ep = ep_pivot[ep_pivot["api"] == api_id]
-                if api_ep.empty:
+                api_rows = ep_pivot[ep_pivot["api"] == api_id]
+                if api_rows.empty:
                     continue
                 # Headers: endpoint_ids únicos ordenados por id
-                ep_headers = (
-                    api_ep[["endpoint_id", "endpoint"]]
+                ep_headers_df = (
+                    api_rows[["endpoint_id", "endpoint"]]
                     .drop_duplicates()
                     .sort_values("endpoint_id")
                 )
-                headers = [{"id": int(r["endpoint_id"]), "label": r["endpoint"]} for _, r in ep_headers.iterrows()]
+                headers = [{"id": int(r["endpoint_id"]), "label": r["endpoint"]}
+                           for _, r in ep_headers_df.iterrows()]
                 ep_ids = [h["id"] for h in headers]
-                # Valores: [receptor][endpoint]
-                values_ep = []
-                for rec in top_reps:
-                    row_vals = []
-                    rec_ep = api_ep[api_ep["receptor"] == rec]
-                    for ep_id in ep_ids:
-                        match = rec_ep[rec_ep["endpoint_id"] == ep_id]["total"]
-                        row_vals.append(float(match.iloc[0]) if not match.empty else 0.0)
-                    values_ep.append(row_vals)
+                # Valores: [receptor][endpoint] — lookup O(1) por (api, receptor, endpoint_id)
+                values_ep = [
+                    [float(ep_dict.get((api_id, rec, ep_id), 0.0)) for ep_id in ep_ids]
+                    for rec in top_reps
+                ]
                 endpoints_by_api[api_id] = {"headers": headers, "values": values_ep}
                 local_max = max((v for row in values_ep for v in row), default=0.0)
                 if local_max > endpoint_max_val:
@@ -603,6 +758,7 @@ def get_api_requests(start: str = None, end: str = None, receptors: str = None, 
     })
 
 @app.get("/api/api-requests-timeseries", response_class=JSONResponse)
+@cached_response("api-requests-timeseries")
 def get_api_requests_timeseries(
     start: str = None, end: str = None,
     receptors: str = None,
@@ -694,6 +850,7 @@ def get_api_requests_timeseries(
 
 
 @app.get("/api/resources", response_class=JSONResponse)
+@cached_response("resources")
 def get_resources(start: str = None, end: str = None, receptors: str = None, status: str = "all", normalize: str = "0"):
     today = date.today()
     dt_start = _parse_date(start, today - timedelta(days=365))
@@ -710,10 +867,11 @@ def get_resources(start: str = None, end: str = None, receptors: str = None, sta
 
     if df.empty: return JSONResponse({"receptors": [], "values": [], "colors": []})
 
+    df_cons = _get_consents(dt_start, dt_end) if (not sel or norm) else pd.DataFrame()
+
     if sel:
         top_reps = [r for r in sel if r in df["receptor"].values]
     else:
-        df_cons = _get_consents(dt_start, dt_end)
         base = df_cons if not df_cons.empty else df
         top_reps = [r for r in _top10_with_bradesco(base) if r in df["receptor"].values]
 
@@ -724,7 +882,6 @@ def get_resources(start: str = None, end: str = None, receptors: str = None, sta
     values = totals.values.astype(float)
 
     if norm:
-        df_cons = _get_consents(dt_start, dt_end)
         ct = df_cons.groupby("receptor")["total"].sum() if not df_cons.empty else pd.Series(dtype=float)
         for i, rec in enumerate(totals.index):
             n = float(ct.get(rec, 0))
@@ -748,6 +905,7 @@ def get_resources(start: str = None, end: str = None, receptors: str = None, sta
     })
 
 @app.get("/api/stats", response_class=JSONResponse)
+@cached_response("stats")
 def get_stats():
     try:
         con = sqlite3.connect(str(config.DB_PATH))
