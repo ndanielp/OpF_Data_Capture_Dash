@@ -1205,6 +1205,13 @@
           <button class="quick-btn" data-months="ytd">Ano atual</button>
           <button class="quick-btn" data-months="0">Tudo</button>
         </div>
+        <div class="date-spacer"></div>
+        <span class="date-bar-label">Consentimentos</span>
+        <div class="chart-toggles" id="consent-view-toggles-bar">
+          <button data-view="all" class="active">Total</button>
+          <button data-view="pf">PF</button>
+          <button data-view="pj">PJ</button>
+        </div>
       </div>
 
       <div class="top-row">
@@ -1260,11 +1267,6 @@
               <div class="chart-subtitle" id="chart1-subtitle">Evolução no período · Top receptores</div>
             </div>
             <div class="chart-actions">
-              <div class="chart-toggles" id="consent-view-toggles">
-                <button data-view="pf">PF</button>
-                <button data-view="pj">PJ</button>
-                <button data-view="all" class="active">All</button>
-              </div>
               <button class="chart-action-btn" id="btn-export-consents">Exportar CSV</button>
             </div>
           </div>
@@ -1284,11 +1286,6 @@
             <div>
               <div class="chart-title">Aceleração de Consentimentos</div>
               <div class="chart-subtitle">Últimas 4 semanas vs 4 semanas anteriores</div>
-            </div>
-            <div class="chart-toggles" id="accel-consent-toggles">
-              <button data-view="all" class="active">Total</button>
-              <button data-view="pf">PF</button>
-              <button data-view="pj">PJ</button>
             </div>
           </div>
           <div id="accel-consents-empty" class="chart-empty" style="display:none">Sem dados suficientes (mínimo 2 meses)</div>
@@ -1431,7 +1428,6 @@
     let _resData = null;     // last resources response (for export)
     let _accelData = null;
     let _efficiencyData = null;
-    let _accelView = 'all';
     let _dbMinDate = null;
     let _dbMaxDate = null;
 
@@ -1770,12 +1766,13 @@
 
     let currentConsentView = 'all';
 
-    document.querySelectorAll('#consent-view-toggles button').forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        document.querySelectorAll('#consent-view-toggles button').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('#consent-view-toggles-bar button').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('#consent-view-toggles-bar button').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
         currentConsentView = btn.dataset.view;
         if (_consentsData) renderConsentsView();
+        if (_accelData) renderAccelSummary();
       });
     });
 
@@ -2246,10 +2243,11 @@
         emptyC.style.display = 'flex'; listC.innerHTML = '';
       } else {
         emptyC.style.display = 'none';
-        const sorted = [...csummary].sort((a, b) => Math.abs(b.momentum ?? 0) - Math.abs(a.momentum ?? 0));
+        const _mom = r => currentConsentView === 'pf' ? (r.momentum_pf ?? r.momentum) : currentConsentView === 'pj' ? (r.momentum_pj ?? r.momentum) : r.momentum;
+        const sorted = [...csummary].sort((a, b) => Math.abs(_mom(b) ?? 0) - Math.abs(_mom(a) ?? 0));
         listC.innerHTML = sorted.map(r => {
-          const delta = _accelView === 'pf' ? r.last_delta_pf : _accelView === 'pj' ? r.last_delta_pj : r.last_delta;
-          return _accelRow(r, delta, r.momentum);
+          const delta = currentConsentView === 'pf' ? r.last_delta_pf : currentConsentView === 'pj' ? r.last_delta_pj : r.last_delta;
+          return _accelRow(r, delta, _mom(r));
         }).join('');
       }
 
@@ -2329,15 +2327,6 @@
       } finally { setCardLoading('card-efficiency', false); }
     }
 
-    /* Aceleração toggle PF/PJ/Total */
-    document.querySelectorAll('#accel-consent-toggles button').forEach(btn => {
-      btn.addEventListener('click', () => {
-        document.querySelectorAll('#accel-consent-toggles button').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        _accelView = btn.dataset.view;
-        if (_accelData) renderAccelSummary();
-      });
-    });
 
     /* ============================================================
        CHART API — TEMPORAL (LINE)

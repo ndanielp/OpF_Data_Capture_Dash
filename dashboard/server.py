@@ -982,8 +982,9 @@ def get_acceleration(start: str = None, end: str = None, receptors: str = None):
             last_delta    = int(tots[w[-1]] - tots[w[-5]])
             prev_delta    = int(tots[w[-5]] - tots[w[-9]]) if len(w) >= 9 else int(tots[w[-5]] - tots[w[0]])
             last_delta_pf = int(cpfs[w[-1]] - cpfs[w[-5]])
+            prev_delta_pf = int(cpfs[w[-5]] - cpfs[w[-9]]) if len(w) >= 9 else int(cpfs[w[-5]] - cpfs[w[0]])
             last_delta_pj = int(cnjs[w[-1]] - cnjs[w[-5]])
-            momentum      = last_delta - prev_delta
+            prev_delta_pj = int(cnjs[w[-5]] - cnjs[w[-9]]) if len(w) >= 9 else int(cnjs[w[-5]] - cnjs[w[0]])
             consent_summary.append({
                 "receptor":      rec,
                 "color":         colors.get(rec, "#4A9EFF"),
@@ -991,7 +992,9 @@ def get_acceleration(start: str = None, end: str = None, receptors: str = None):
                 "last_delta_pf": last_delta_pf,
                 "last_delta_pj": last_delta_pj,
                 "prev_delta":    prev_delta,
-                "momentum":      momentum,
+                "momentum":      last_delta - prev_delta,
+                "momentum_pf":   last_delta_pf - prev_delta_pf,
+                "momentum_pj":   last_delta_pj - prev_delta_pj,
                 "signal":        "flat",
             })
         _assign_signals(consent_summary)
