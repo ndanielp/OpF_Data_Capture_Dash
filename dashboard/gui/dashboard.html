@@ -6,6 +6,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Open Finance Brasil — Dashboard</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.2.0/dist/chartjs-plugin-zoom.min.js"></script>
   <style>
     /* ============================================================
    DESIGN TOKENS
@@ -1373,8 +1375,9 @@
         <div class="chart-head">
           <div>
             <div class="chart-title">Eficiência de Consumo</div>
-            <div class="chart-subtitle">Consentimentos × Intensidade de API · todos os receptores</div>
+            <div class="chart-subtitle">Consentimentos × Intensidade · scroll para zoom · arraste para pan</div>
           </div>
+          <button id="eff-reset-zoom" type="button" title="Resetar zoom" style="background:transparent;border:1px solid var(--border-default);color:var(--text-secondary);padding:4px 10px;border-radius:6px;font-size:11px;cursor:pointer;font-family:inherit">↺ Reset</button>
         </div>
         <div id="efficiency-empty" class="chart-empty" style="display:none">Sem dados suficientes</div>
         <div style="position:relative;height:360px;width:100%">
@@ -2159,6 +2162,15 @@
        ============================================================ */
     function initEfficiencyChart() {
       const isLight = document.body.getAttribute('data-theme') === 'light';
+      // Registro defensivo do plugin (no-op se já auto-registrado)
+      const _zp = window.ChartZoom || window['chartjs-plugin-zoom'];
+      if (_zp && Chart && Chart.registry && !Chart.registry.plugins.get('zoom')) {
+        try { Chart.register(_zp); } catch (_) {}
+      }
+      const _canvas = document.getElementById('efficiencyChart');
+      _canvas.style.cursor = 'grab';
+      _canvas.addEventListener('mousedown', () => _canvas.style.cursor = 'grabbing');
+      window.addEventListener('mouseup',   () => _canvas.style.cursor = 'grab');
       efficiencyChart = new Chart(
         document.getElementById('efficiencyChart').getContext('2d'),
         {
@@ -2183,6 +2195,11 @@
                     return [`  Consentimentos: ${fmtVal(r.x, false)}`, `  Intensidade: ${r.y.toFixed(1)} req/c/30d`];
                   }
                 }
+              },
+              zoom: {
+                pan:  { enabled: true, mode: 'xy', modifierKey: null, threshold: 0 },
+                zoom: { wheel: { enabled: true }, pinch: { enabled: true }, drag: { enabled: false }, mode: 'xy' },
+                limits: {}   // preenchido em updateEfficiencyChart com os extremos reais
               }
             },
             scales: {
@@ -2203,6 +2220,16 @@
           }
         }
       );
+      // Botão Reset volta à view P5–P95 definida em scales.x/y.min/max
+      const resetBtn = document.getElementById('eff-reset-zoom');
+      if (resetBtn && !resetBtn._wired) {
+        resetBtn._wired = true;
+        resetBtn.addEventListener('click', () => {
+          if (efficiencyChart && typeof efficiencyChart.resetZoom === 'function') {
+            efficiencyChart.resetZoom();
+          }
+        });
+      }
     }
 
     const _SIGNAL_ICON  = { up_strong:'↑↑', up:'↑', flat:'→', down:'↓', down_strong:'↓↓' };
@@ -2288,7 +2315,8 @@
         const yVals = pts.map(p => p.intensity);
         const xMin  = Math.min(...xVals);
         const xMax  = Math.max(...xVals);
-        const yMax  = Math.max(...yVals) * 1.15;
+        const yAbsMax = Math.max(...yVals) * 1.15;
+        // Linhas de mediana cobrem o range absoluto (continuam visíveis após pan/zoom out)
         efficiencyChart.data.datasets = [
           {
             type: 'scatter',
@@ -2310,12 +2338,23 @@
           },
           {
             type: 'line', showLine: true, pointRadius: 0,
-            data: [{ x: data.median_consents, y: 0 }, { x: data.median_consents, y: yMax }],
+            data: [{ x: data.median_consents, y: 0 }, { x: data.median_consents, y: yAbsMax }],
             borderColor: 'rgba(140,140,140,0.4)', borderDash: [6,4], borderWidth: 1,
           },
         ];
-        efficiencyChart.options.scales.y.max = yMax;
-        efficiencyChart.update();
+        // View inicial enquadrada no miolo (P20–P80 vinda do backend)
+        const sx = efficiencyChart.options.scales.x;
+        const sy = efficiencyChart.options.scales.y;
+        sx.min = data.view_x_min;
+        sx.max = data.view_x_max;
+        sy.min = data.view_y_min;
+        sy.max = data.view_y_max;
+        // Limites absolutos do pan/zoom out (clamp para evitar zoom out infinito)
+        efficiencyChart.options.plugins.zoom.limits = {
+          x: { min: xMin * 0.8, max: xMax * 1.25 },
+          y: { min: 0,           max: yAbsMax    },
+        };
+        efficiencyChart.update('none');
       } finally { setCardLoading('card-efficiency', false); }
     }
 

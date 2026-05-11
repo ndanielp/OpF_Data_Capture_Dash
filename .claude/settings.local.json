@@ -24,7 +24,8 @@
       "Bash(python -m py_compile server.py services/of_analytics.py services/constants.py routers/openfinance.py)",
       "Bash(python -m py_compile data-loader/scrapers.py dashboard/server.py)",
       "Bash(node -e ' *)",
-      "Bash(python -m py_compile dashboard/server.py dashboard/services/of_analytics.py dashboard/services/constants.py dashboard/routers/openfinance.py)"
+      "Bash(python -m py_compile dashboard/server.py dashboard/services/of_analytics.py dashboard/services/constants.py dashboard/routers/openfinance.py)",
+      "Bash(python -m py_compile dashboard/server.py)"
     ]
   }
 }

@@ -5,6 +5,7 @@ Servidor web local que expõe dados extraídos de sqlite
 e os entrega formatados (JSON) para a interface HTML/JS.
 """
 
+import math
 import sqlite3
 import statistics
 import threading
@@ -1093,11 +1094,35 @@ def get_efficiency(start: str = None, end: str = None):
     med_cons = statistics.median(r["consents"]  for r in results)
     med_int  = statistics.median(r["intensity"] for r in results)
 
+    # View inicial enquadrada no miolo (P20–P80). X em log space pois o eixo é
+    # logarítmico; Y em valor bruto (linear). Outliers ficam fora — usuário
+    # usa pan/zoom para inspecioná-los.
+    x_lo, x_hi = _p20_p80([r["consents"]  for r in results], log_space=True)
+    y_lo, y_hi = _p20_p80([r["intensity"] for r in results], log_space=False)
+    # Pequena folga em Y para não cortar pontos exatamente nas bordas
+    y_lo = max(0.0, y_lo * 0.9)
+    y_hi = y_hi * 1.1
+
     return JSONResponse({
-        "points":          results,
-        "median_consents": med_cons,
+        "points":           results,
+        "median_consents":  med_cons,
         "median_intensity": round(med_int, 3),
+        "view_x_min":       x_lo,
+        "view_x_max":       x_hi,
+        "view_y_min":       y_lo,
+        "view_y_max":       y_hi,
     })
+
+
+def _p20_p80(vals: list[float], log_space: bool = False) -> tuple[float, float]:
+    """Percentis P20/P80 — em log space (eixos log) ou linear."""
+    arr = [v for v in vals if v > 0] if log_space else list(vals)
+    if len(arr) < 3:
+        return (min(arr), max(arr)) if arr else (0.0, 1.0)
+    work = sorted(math.log10(v) for v in arr) if log_space else sorted(arr)
+    qs = statistics.quantiles(work, n=5)  # 4 cortes em P20, P40, P60, P80
+    lo, hi = qs[0], qs[3]
+    return (10 ** lo, 10 ** hi) if log_space else (lo, hi)
 
 
 @app.get("/api/stats", response_class=JSONResponse)
