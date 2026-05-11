@@ -676,6 +676,7 @@ async function loadDbRange() {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+  _appGroupsReady = loadAppGroups();
   loadDbRange();
   loadSidebarReceptors();
   initPeriodFilter();
@@ -709,6 +710,9 @@ async function _loadProfileNow(institutionId){
   const qs   = `institution=${encodeURIComponent(institutionId)}&from=${fromDate}&to=${toDate}`;
   const qsMap = `from=${fromDate}&to=${toDate}`;
   const qsNorm = `${qs}&normalize=${norm}`;
+
+  // Garante que SM_GROUPS / _TS_STACK_GROUPS / GROUP_META estão preenchidos antes de renderizar.
+  if (_appGroupsReady) { try { await _appGroupsReady; } catch (_) {} }
 
   // 1. Header primeiro → UX imediata
   try{
@@ -899,9 +903,32 @@ function renderHeader(profile){
 }
 
 // ─── STRATEGIC MAP ────────────────────────────────────────────────────
-const SM_GROUPS   = ['Conta','Cartao','Investimento','Credito','Cambio','Identidade','Resource'];
-const SM_LABELS   = {Conta:'Contas',Cartao:'Cartão de Crédito',Investimento:'Investimentos',Credito:'Empréstimos',Cambio:'Câmbio',Identidade:'Cadastro',Resource:'Resource'};
-const SM_COLORS   = {Conta:'#4A9EFF',Cartao:'#8B5CF6',Investimento:'#2ECC7F',Credito:'#FF6B6B',Cambio:'#A855F7',Identidade:'#F5A623',Resource:'#14B8A6'};
+// Populated at boot by loadAppGroups() from /api/of/api-groups.
+const SM_GROUPS = [];
+const SM_LABELS = {};
+const SM_COLORS = {};
+
+// Single source of truth for group metadata: fetched once from the backend.
+let _appGroupsReady = null;
+async function loadAppGroups() {
+  const res = await fetch('/api/of/api-groups');
+  const {groups} = await res.json();
+  const slugs = Object.keys(groups);
+  SM_GROUPS.length = 0;
+  slugs.forEach(k => SM_GROUPS.push(k));
+  slugs.forEach(k => {
+    SM_LABELS[k] = groups[k].display;
+    SM_COLORS[k] = groups[k].color;
+    if (typeof GROUP_META !== 'undefined' && GROUP_META[k]) {
+      GROUP_META[k].color = groups[k].color;
+      GROUP_META[k].label = groups[k].display;
+    }
+  });
+  _TS_STACK_GROUPS.length = 0;
+  slugs.filter(k => k !== 'Resource').forEach(k => {
+    _TS_STACK_GROUPS.push({key: k, label: groups[k].display, color: groups[k].color});
+  });
+}
 
 function renderStrategicMap(sm, institution, normalize = true) {
   if(!sm || !sm.all_receptors || !sm.group_stats) return;
@@ -1212,14 +1239,8 @@ function renderTornadoChart(tornadoData, normalize = true){
 }
 
 // ─── TEMPORAL INTENSITY CHARTS ────────────────────────────────────────
-const _TS_STACK_GROUPS = [
-  {key:'Conta',        label:'Contas',             color:'#4A9EFF'},
-  {key:'Cartao',       label:'Cartão de Crédito',  color:'#8B5CF6'},
-  {key:'Investimento', label:'Investimentos',      color:'#2ECC7F'},
-  {key:'Credito',      label:'Empréstimos',        color:'#FF6B6B'},
-  {key:'Identidade',   label:'Cadastro',           color:'#F5A623'},
-  {key:'Cambio',       label:'Câmbio',             color:'#A855F7'},
-];
+// Populated by loadAppGroups() at boot — excludes Resource (rendered separately).
+const _TS_STACK_GROUPS = [];
 
 function renderTemporalIntensity(tsIntensity, normalize = true) {
   if(!tsIntensity || !Object.keys(tsIntensity).length) return;
@@ -1338,24 +1359,26 @@ function renderTemporalIntensity(tsIntensity, normalize = true) {
 
 // ─── ENDPOINT DEPTH ───────────────────────────────────────────────────
 
+// color/label preenchidos pelo loadAppGroups(). apis: labels específicos desta seção
+// (endpoint depth) — diferente do API_LABELS canônico para caber no layout.
 const GROUP_META = {
-  Conta:       { color: '#4A9EFF', label: 'Contas',            apis: { 'accounts': 'Conta Corrente' } },
-  Cartao:      { color: '#8B5CF6', label: 'Cartão de Crédito', apis: { 'credit-cards-accounts': 'Cartão de Crédito' } },
-  Investimento:{ color: '#2ECC7F', label: 'Investimentos',     apis: {
+  Conta:       { color: '', label: '', apis: { 'accounts': 'Conta Corrente' } },
+  Cartao:      { color: '', label: '', apis: { 'credit-cards-accounts': 'Cartão de Crédito' } },
+  Investimento:{ color: '', label: '', apis: {
     'bank-fixed-incomes':   'Renda Fixa Bancária',
     'variable-incomes':     'Renda Variável',
     'funds':                'Fundos de Investimento',
     'treasure-titles':      'Tesouro Direto',
     'credit-fixed-incomes': 'Renda Fixa Creditícia'
   }},
-  Credito:     { color: '#FF6B6B', label: 'Empréstimos',       apis: {
+  Credito:     { color: '', label: '', apis: {
     'loans':                         'Empréstimos',
     'financings':                    'Financiamentos',
     'invoice-financings':            'Direitos Creditórios Descontados',
     'unarranged-accounts-overdraft': 'Adiantamento a Depositantes'
   }},
-  Cambio:      { color: '#A855F7', label: 'Câmbio',            apis: { 'exchanges': 'Câmbio' } },
-  Identidade:  { color: '#F5A623', label: 'Cadastro',          apis: { 'customers': 'Dados Cadastrais' } }
+  Cambio:      { color: '', label: '', apis: { 'exchanges': 'Câmbio' } },
+  Identidade:  { color: '', label: '', apis: { 'customers': 'Dados Cadastrais' } }
 };
 
 // abbrev display name → raw DB endpoint name (used for EP_STATS key lookup)

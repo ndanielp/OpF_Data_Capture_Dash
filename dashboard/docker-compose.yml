@@ -1,3 +1,10 @@
+# Docker Compose para uso LOCAL apenas (dashboard contra o DB do data-loader).
+# Produção é via Cloud Run + deploy.ps1 (não usa este arquivo).
+#
+# Sem GCS_BUCKET no .env, o entrypoint usa o DB montado em /app/data.
+# Com GCS_BUCKET setado, o entrypoint baixa do bucket e sobrescreve o mount —
+# evite isso em dev para não corromper o DB do data-loader.
+
 services:
   dashboard:
     build: .
@@ -5,23 +12,9 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      # Montar diretórios locais para persistência no Docker
-      - ./data:/app/data
+      - ../data-loader/data:/app/data   # DB único — fonte do data-loader
       - ./logs:/app/logs
       - ./credentials:/app/credentials
     env_file:
       - .env
-    command: ["python", "main.py", "dashboard", "--port", "8000"]
     restart: unless-stopped
-
-  batch:
-    build: .
-    container_name: opf_batch
-    volumes:
-      - ./data:/app/data
-      - ./logs:/app/logs
-      - ./credentials:/app/credentials
-    env_file:
-      - .env
-    # Este container roda os coletores e depois é finalizado automaticamente
-    command: ["python", "main.py", "run"]

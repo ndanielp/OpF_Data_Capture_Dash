@@ -348,12 +348,13 @@ def refresh_api_group_weekly(con: sqlite3.Connection) -> None:
                                   'unarranged-accounts-overdraft')                       THEN 'Credito'
                    WHEN r.api = 'exchanges'                                             THEN 'Cambio'
                    WHEN r.api = 'customers'                                             THEN 'Identidade'
+                   WHEN r.api = 'resources'                                             THEN 'Resource'
                END AS grp,
                SUM(r.total)  AS req_week,
                c.total       AS consents_total
         FROM api_requests r
         JOIN unique_consents c ON r.date = c.date AND r.receptor_uuid = c.receptor_uuid
-        WHERE r.api NOT IN ('consents', 'resources')
+        WHERE r.api <> 'consents'
           AND r.status = 200
         GROUP BY r.date, r.receptor_uuid, grp
         HAVING grp IS NOT NULL;

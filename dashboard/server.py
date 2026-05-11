@@ -30,14 +30,14 @@ from services.constants import (
 )
 
 # ── Agrupamentos e Cores ───────────────────────────────────────────────────────
-# Exposed as API_GROUPS[label] -> list[str] of api ids (flat shape for this
-# module's heatmap code). The canonical source (with colors) lives in
-# services.constants — imported above.
-API_GROUPS: dict[str, list[str]] = {
-    label: [a for a in info["apis"] if a != "customers"]  # ecossistema splits "customers" into customers-pf/pj
-    for label, info in _SHARED_API_GROUPS.items()
+# Local view of the canonical API_GROUPS (services.constants) keyed by DB slug.
+# "customers" is dropped here: ecossistema splits it into customers-pf/pj.
+API_GROUPS: dict[str, dict] = {
+    slug: {"display": info["display"],
+           "apis":    [a for a in info["apis"] if a != "customers"]}
+    for slug, info in _SHARED_API_GROUPS.items()
 }
-_ORDERED_APIS = [api for apis in API_GROUPS.values() for api in apis]
+_ORDERED_APIS = [api for info in API_GROUPS.values() for api in info["apis"]]
 
 _API_LABELS = {
     "accounts":                      "Conta",
@@ -349,7 +349,8 @@ def _ensure_dashboard_indexes() -> None:
 
 
 def _ensure_api_group_weekly():
-    """Cria e popula api_group_weekly se vazio — compatibilidade com DBs antigos."""
+    """Garante schema de api_group_weekly em DBs antigos. A população é responsabilidade
+    do data-loader (scrapers.refresh_api_group_weekly) — aqui só criamos a tabela se ausente."""
     con = sqlite3.connect(str(config.DB_PATH))
     try:
         con.execute("""
@@ -362,44 +363,7 @@ def _ensure_api_group_weekly():
                 consents_total INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY (date, receptor_uuid, grp))
         """)
-        n = con.execute("SELECT COUNT(*) FROM api_group_weekly").fetchone()[0]
-        if n == 0:
-            con.executescript("""
-                INSERT INTO api_group_weekly
-                    (date, receptor_uuid, receptor, grp, req_week, consents_total)
-                SELECT r.date, r.receptor_uuid, r.receptor,
-                       CASE WHEN r.api='accounts' THEN 'Conta'
-                            WHEN r.api='credit-cards-accounts' THEN 'Cartao'
-                            WHEN r.api IN ('bank-fixed-incomes','credit-fixed-incomes',
-                                'variable-incomes','funds','treasure-titles') THEN 'Investimento'
-                            WHEN r.api IN ('loans','financings','invoice-financings',
-                                'unarranged-accounts-overdraft') THEN 'Credito'
-                            WHEN r.api='exchanges' THEN 'Cambio'
-                            WHEN r.api='customers' THEN 'Identidade'
-                            WHEN r.api='resources' THEN 'Resource'
-                       END AS grp,
-                       SUM(r.total), c.total
-                FROM api_requests r
-                JOIN unique_consents c ON r.date=c.date AND r.receptor_uuid=c.receptor_uuid
-                WHERE r.api NOT IN ('consents') AND r.status=200
-                GROUP BY r.date, r.receptor_uuid, grp HAVING grp IS NOT NULL;
-            """)
-        # Garante que Resource esteja presente mesmo em DBs já populados sem ele.
-        n_resource = con.execute(
-            "SELECT COUNT(*) FROM api_group_weekly WHERE grp='Resource'"
-        ).fetchone()[0]
-        if n_resource == 0:
-            con.execute("""
-                INSERT OR REPLACE INTO api_group_weekly
-                    (date, receptor_uuid, receptor, grp, req_week, consents_total)
-                SELECT r.date, r.receptor_uuid, r.receptor, 'Resource',
-                       SUM(r.total), COALESCE(c.total, 0)
-                FROM api_requests r
-                LEFT JOIN unique_consents c ON r.date=c.date AND r.receptor_uuid=c.receptor_uuid
-                WHERE r.api='resources' AND r.status=200
-                GROUP BY r.date, r.receptor_uuid
-            """)
-            con.commit()
+        con.commit()
     finally:
         con.close()
 
@@ -675,10 +639,10 @@ def get_api_requests(start: str = None, end: str = None, receptors: str = None, 
 
     groups_info = []
     col_idx = 0
-    for grupo, apis in API_GROUPS.items():
-        cols = [a for a in apis if a in available_apis]
+    for slug, info in API_GROUPS.items():
+        cols = [a for a in info["apis"] if a in available_apis]
         if not cols: continue
-        groups_info.append({"label": grupo, "start": col_idx, "span": len(cols)})
+        groups_info.append({"label": info["display"], "start": col_idx, "span": len(cols)})
         col_idx += len(cols)
 
     max_val = float(data.max()) if data.size > 0 else 0

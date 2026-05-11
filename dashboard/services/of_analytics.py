@@ -7,7 +7,7 @@ import statistics
 from collections import defaultdict
 from cachetools import TTLCache, cached
 import config
-from services.constants import API_GROUPS, API_LABELS, DB_GROUP_TO_DISPLAY, BRAND_COLORS
+from services.constants import API_GROUPS, BRAND_COLORS
 
 LABEL_MAP = {
     "ITAÚ UNIBANCO": "Itaú Unibanco", "CAIXA ECONOMICA FEDERAL": "Caixa Econômica Federal",
@@ -297,16 +297,16 @@ def _get_ecosystem_rankings(from_date: str, to_date: str) -> list[dict]:
 
 
 def classify_archetype(c: dict):
-    if c.get("Empréstimos", 0) > 0.45: return "FOCO EM CRÉDITO", "Consumo dominado por APIs de crédito."
-    if c.get("Investimentos", 0) > 0.40: return "FOCO EM INVESTIMENTOS", "Consumo concentrado em renda fixa, variável e fundos."
-    if c.get("Contas", 0) > 0.50: return "FOCO EM CONTA CORRENTE", "Consumo predominante de dados de conta."
-    if c.get("Empréstimos", 0) > 0.30 and c.get("Contas", 0) > 0.25: return "CRÉDITO & CONTA", "Mix equilibrado."
-    if c.get("Investimentos", 0) > 0.25 and c.get("Empréstimos", 0) > 0.25: return "CRÉDITO & INVEST", "Combinação relevante."
-    if c.get("Cadastro", 0) > 0.30: return "FOCO EM IDENTIDADE", "Alta proporção cadastral."
+    if c.get("Credito", 0) > 0.45: return "FOCO EM CRÉDITO", "Consumo dominado por APIs de crédito."
+    if c.get("Investimento", 0) > 0.40: return "FOCO EM INVESTIMENTOS", "Consumo concentrado em renda fixa, variável e fundos."
+    if c.get("Conta", 0) > 0.50: return "FOCO EM CONTA CORRENTE", "Consumo predominante de dados de conta."
+    if c.get("Credito", 0) > 0.30 and c.get("Conta", 0) > 0.25: return "CRÉDITO & CONTA", "Mix equilibrado."
+    if c.get("Investimento", 0) > 0.25 and c.get("Credito", 0) > 0.25: return "CRÉDITO & INVEST", "Combinação relevante."
+    if c.get("Identidade", 0) > 0.30: return "FOCO EM IDENTIDADE", "Alta proporção cadastral."
     return "PERFIL DIVERSIFICADO", "Consumo distribuído."
 
-# Note: classify_archetype keys must match API_GROUPS names in services.constants
-# (used by get_profile_header when computing category_shares via group_info["apis"]).
+# classify_archetype keys are DB slugs — same shape as API_GROUPS keys in
+# services.constants, populated by get_profile_header's category_shares loop.
 
 def get_profile_header(institution: str, from_date: str = "2000-01-01", to_date: str = "2100-01-01") -> dict | None:
     """KPIs, rankings, archetype, summary e period. ~8 queries rápidas, todas indexadas por receptor_uuid."""
@@ -488,7 +488,7 @@ def _get_strategic_map(from_date: str, to_date: str, normalize: bool = True) -> 
     con.row_factory = sqlite3.Row
     cur = con.cursor()
 
-    GROUPS = ["Conta", "Cartao", "Investimento", "Credito", "Cambio", "Identidade", "Resource"]
+    GROUPS = list(API_GROUPS.keys())
     _empty = {"reference_weeks": [], "all_receptors": {}, "group_stats": {}}
 
     receptor_vals: dict = defaultdict(lambda: defaultdict(float))  # label → grp → value
@@ -721,7 +721,7 @@ def _get_tornado_data(cur, institution_uuid: str, inst_display_name: str,
 
 # ── Evolução Temporal ─────────────────────────────────────────────────────
 
-_TEMPORAL_GROUPS = ['Conta', 'Cartao', 'Investimento', 'Credito', 'Cambio', 'Identidade', 'Resource']
+_TEMPORAL_GROUPS = list(API_GROUPS.keys())
 
 def get_temporal_intensity(institution: str, from_date: str = "2000-01-01", to_date: str = "2100-01-01", normalize: bool = True) -> dict:
     """
