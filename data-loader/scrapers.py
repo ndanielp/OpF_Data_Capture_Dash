@@ -49,6 +49,14 @@ _CONSENTS_API_URL  = f"{BASE_URL}/api/unique-consents"
 _API_REQUESTS_PAGE_URL  = f"{BASE_URL}/transactional-data/api-requests/evolution"
 _API_REQUESTS_ENDPOINT  = f"{BASE_URL}/api/api-requests"
 
+# Página de payment-initiation: dispara /api/organisations (client + server)
+# e /api/apis + /api/endpoints com phase="payment-initiation".
+_PI_API_REQUESTS_PAGE_URL = f"{BASE_URL}/payment-initiation/api-requests/evolution"
+
+# Phases conhecidas do dashboard OpF. Usadas em probe/fetch e discovery.
+PHASE_TRANSACTIONAL = "transactional-data"
+PHASE_PAYMENT_INITIATION = "payment-initiation"
+
 APIS = [
     "credit-cards-accounts",
     "consents",
@@ -285,6 +293,26 @@ def open_db(path: Path) -> sqlite3.Connection:
         )
     """)
 
+    # Payment-initiation: mesma forma de api_requests, tabela separada para
+    # isolar semântica (PISP × detentor × api × endpoint × status). Sem
+    # migrações incrementais — schema é estável desde criação.
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS payment_api_requests (
+            date              TEXT NOT NULL,
+            receptor          TEXT NOT NULL,
+            receptor_uuid     TEXT NOT NULL,
+            transmitter       TEXT NOT NULL DEFAULT '',
+            transmitter_uuid  TEXT NOT NULL DEFAULT '',
+            api               TEXT NOT NULL,
+            endpoint          TEXT NOT NULL DEFAULT '',
+            endpoint_id       INTEGER NOT NULL DEFAULT 0,
+            status            INTEGER NOT NULL,
+            total             INTEGER NOT NULL DEFAULT 0,
+            fetched_at        TEXT NOT NULL,
+            PRIMARY KEY (date, receptor_uuid, transmitter_uuid, api, endpoint_id, status)
+        )
+    """)
+
     # Pré-agregação semanal por grupo de API — alimenta Mapa Estratégico e Evolução Temporal.
     con.execute("""
         CREATE TABLE IF NOT EXISTS api_group_weekly (
@@ -323,6 +351,15 @@ def open_db(path: Path) -> sqlite3.Connection:
         -- Índices para api_group_weekly
         CREATE INDEX IF NOT EXISTS idx_agw_receptor ON api_group_weekly(receptor_uuid, date);
         CREATE INDEX IF NOT EXISTS idx_agw_date     ON api_group_weekly(date);
+
+        -- Índices para payment_api_requests (espelha api_requests).
+        CREATE INDEX IF NOT EXISTS idx_pi_api_by_receptor
+            ON payment_api_requests(receptor_uuid, date, api, status, total);
+        CREATE INDEX IF NOT EXISTS idx_pi_api_by_transmitter
+            ON payment_api_requests(transmitter_uuid, date, status, total);
+        CREATE INDEX IF NOT EXISTS idx_pi_api_dash_covering
+            ON payment_api_requests(date, receptor, api, endpoint_id, status, endpoint, total)
+            WHERE endpoint_id <> 0;
     """)
 
     con.commit()
@@ -376,7 +413,14 @@ def upsert_consents(con: sqlite3.Connection, records: list[dict], fetched_at: st
     return len(rows)
 
 
-def upsert_api_requests(con: sqlite3.Connection, records: list[dict]) -> int:
+def _upsert_records_into(
+    con: sqlite3.Connection, table: str, records: list[dict],
+) -> int:
+    """Upsert genérico em tabelas com schema de api_requests
+    (api_requests, payment_api_requests). Whitelist de nomes para evitar
+    injeção via parâmetro `table`."""
+    if table not in ("api_requests", "payment_api_requests"):
+        raise ValueError(f"tabela não permitida em upsert: {table}")
     rows = [
         (r["date"], r["receptor"], r["receptor_uuid"],
          r["transmitter"], r["transmitter_uuid"],
@@ -384,14 +428,22 @@ def upsert_api_requests(con: sqlite3.Connection, records: list[dict]) -> int:
          r["status"], r["total"], r["fetched_at"])
         for r in records
     ]
-    con.executemany("""
-        INSERT OR REPLACE INTO api_requests
+    con.executemany(f"""
+        INSERT OR REPLACE INTO {table}
             (date, receptor, receptor_uuid, transmitter, transmitter_uuid,
              api, endpoint, endpoint_id, status, total, fetched_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, rows)
     con.commit()
     return len(rows)
+
+
+def upsert_api_requests(con: sqlite3.Connection, records: list[dict]) -> int:
+    return _upsert_records_into(con, "api_requests", records)
+
+
+def upsert_payment_api_requests(con: sqlite3.Connection, records: list[dict]) -> int:
+    return _upsert_records_into(con, "payment_api_requests", records)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -630,7 +682,9 @@ def run_consents(
 # API REQUESTS
 # ─────────────────────────────────────────────────────────────────────────────
 
-def fetch_transmitters(session: OpFSession) -> list[dict]:
+def fetch_transmitters(
+    session: OpFSession, page_url: str = _API_REQUESTS_PAGE_URL,
+) -> list[dict]:
     """Captura a lista de transmissores navegando na página de api-requests.
 
     Intercepta `/api/organisations` via page.on("response"). A página chama
@@ -653,7 +707,7 @@ def fetch_transmitters(session: OpFSession) -> list[dict]:
 
     page.on("response", _on_response)
     try:
-        page.goto(_API_REQUESTS_PAGE_URL, wait_until="networkidle", timeout=45000)
+        page.goto(page_url, wait_until="networkidle", timeout=45000)
         page.wait_for_timeout(1500)
     finally:
         page.remove_listener("response", _on_response)
@@ -666,12 +720,109 @@ def fetch_transmitters(session: OpFSession) -> list[dict]:
     return []
 
 
+def fetch_payment_orgs(session: OpFSession) -> tuple[list[dict], list[dict]]:
+    """Captura receptores (PISPs) e transmissores (detentores) navegando
+    na página de payment-initiation/api-requests/evolution.
+
+    Diferente de transactional-data, aqui as duas chamadas a /api/organisations
+    têm role distinto no body (`client` = PISP, `server` = detentor).
+    Como as duas requests são disparadas em paralelo pelo front, a ordem das
+    respostas é não determinística — pareamos cada resposta com o role do body
+    da request associada para classificar corretamente.
+
+    Retorna (PISPs, detentores) como listas de {"label", "value"}.
+    """
+    import json as _json
+    page = session._page
+    receptors: list[dict] = []
+    transmitters: list[dict] = []
+
+    def _on_response(resp):
+        nonlocal receptors, transmitters
+        if "/api/organisations" not in resp.url:
+            return
+        try:
+            data = resp.json()
+        except Exception:
+            return
+        if not isinstance(data, list):
+            return
+        role = ""
+        try:
+            body = resp.request.post_data
+            if body:
+                role = (_json.loads(body) or {}).get("role", "")
+        except Exception:
+            pass
+        if role == "client":
+            receptors = data
+        elif role == "server":
+            transmitters = data
+
+    page.on("response", _on_response)
+    try:
+        page.goto(_PI_API_REQUESTS_PAGE_URL, wait_until="networkidle", timeout=45000)
+        page.wait_for_timeout(1500)
+    finally:
+        page.remove_listener("response", _on_response)
+
+    return receptors, transmitters
+
+
+def fetch_apis_endpoints(
+    session: OpFSession, phase: str,
+) -> tuple[list[str], dict[str, list[dict]]]:
+    """Descobre APIs e endpoints de uma phase via POST /api/apis e /api/endpoints.
+
+    A resposta de /api/endpoints traz o campo `group`, que casa com o `label` /
+    `name` de /api/apis. Mapeamos `endpoint.group → api._id` para agrupar.
+
+    Retorna (apis, endpoints_map) onde:
+      apis = ["payments", "automatic-payments", "enrollments"]
+      endpoints_map = {"payments": [{"id": 64, "label": "..."}, ...], ...}
+    """
+    apis_raw = session.post("/api/apis", {"phase": phase}) or []
+    eps_raw  = session.post("/api/endpoints", {"phase": phase}) or []
+
+    apis: list[str] = []
+    label_to_id: dict[str, str] = {}
+    for a in apis_raw:
+        api_id = a.get("_id") or a.get("value")
+        if not api_id:
+            continue
+        apis.append(api_id)
+        for k in ("label", "name"):
+            v = a.get(k)
+            if isinstance(v, str) and v.strip():
+                label_to_id[v.strip()] = api_id
+
+    endpoints_map: dict[str, list[dict]] = {a: [] for a in apis}
+    for ep in eps_raw:
+        ep_id = ep.get("_id") if isinstance(ep.get("_id"), int) else ep.get("value")
+        label = ep.get("label") or ep.get("name") or ""
+        group = (ep.get("group") or "").strip()
+        api_id = label_to_id.get(group)
+        if not api_id or ep_id is None:
+            continue
+        endpoints_map.setdefault(api_id, []).append(
+            {"id": int(ep_id), "label": str(label)}
+        )
+
+    for api_id in endpoints_map:
+        endpoints_map[api_id].sort(key=lambda e: e["id"])
+
+    return apis, endpoints_map
+
+
 @_RETRY_POLICY
 def _probe_post(session: OpFSession, body: dict) -> object:
     return session.post("/api/api-requests", body)
 
 
-def probe_receptor(session: OpFSession, receptor_uuid: str, dates: list[str]) -> bool:
+def probe_receptor(
+    session: OpFSession, receptor_uuid: str, dates: list[str],
+    phase: str = PHASE_TRANSACTIONAL,
+) -> bool:
     """POST /api/api-requests sem filtros para verificar se o receptor tem
     chamadas no período.
 
@@ -680,7 +831,7 @@ def probe_receptor(session: OpFSession, receptor_uuid: str, dates: list[str]) ->
     """
     body = {
         "axis":      "date",
-        "phase":     "transactional-data",
+        "phase":     phase,
         "receivers": [receptor_uuid],
         "dates":     dates,
     }
@@ -692,13 +843,14 @@ def probe_receptor(session: OpFSession, receptor_uuid: str, dates: list[str]) ->
 
 
 def probe_transmitter(
-    session: OpFSession, receptor_uuid: str, transmitter_uuid: str, dates: list[str]
+    session: OpFSession, receptor_uuid: str, transmitter_uuid: str, dates: list[str],
+    phase: str = PHASE_TRANSACTIONAL,
 ) -> bool:
     """Probe L1: receptor + transmitter, sem api/endpoint/status.
     Retorna True se tem dados, False se vazio. Conservador em erros."""
     body = {
         "axis":         "date",
-        "phase":        "transactional-data",
+        "phase":        phase,
         "receivers":    [receptor_uuid],
         "transmitters": [transmitter_uuid],
         "dates":        dates,
@@ -712,13 +864,14 @@ def probe_transmitter(
 
 def probe_api(
     session: OpFSession, receptor_uuid: str, transmitter_uuid: str,
-    api_id: str, dates: list[str]
+    api_id: str, dates: list[str],
+    phase: str = PHASE_TRANSACTIONAL,
 ) -> bool:
     """Probe L2: receptor + transmitter + api, sem endpoint/status.
     Retorna True se tem dados, False se vazio. Conservador em erros."""
     body = {
         "axis":         "date",
-        "phase":        "transactional-data",
+        "phase":        phase,
         "receivers":    [receptor_uuid],
         "transmitters": [transmitter_uuid],
         "apis":         [api_id],
@@ -740,6 +893,7 @@ def fetch_api_combo(
     dates: list[str],
     transmitter_uuid: str = "",
     endpoint_id: int = 0,
+    phase: str = PHASE_TRANSACTIONAL,
 ) -> list[dict]:
     """POST /api/api-requests para uma combinação
     (receptor, transmissor, api, endpoint, status) via OpFSession,
@@ -749,7 +903,7 @@ def fetch_api_combo(
     """
     body: dict = {
         "axis":      "date",
-        "phase":     "transactional-data",
+        "phase":     phase,
         "apis":      [api_id],
         "receivers": [receptor_uuid],
         "dates":     dates,
@@ -820,6 +974,8 @@ def _worker_run_api_requests(
     run_id: str,
     apis: list[str],
     endpoints_map: dict[str, list[dict]],
+    phase: str = PHASE_TRANSACTIONAL,
+    target_prefix: str = "",
 ) -> list[dict]:
     """
     Roda em processo separado: abre 1 OpFSession e itera combinações
@@ -844,7 +1000,7 @@ def _worker_run_api_requests(
                 t0 = time.time()
                 queue.put(("start", worker_id, receptor["label"], i))
 
-                has_data = probe_receptor(session, receptor["value"], dates)
+                has_data = probe_receptor(session, receptor["value"], dates, phase=phase)
                 if not has_data:
                     queue.put(("skipped", worker_id, receptor["label"]))
                     elapsed = time.time() - t0
@@ -863,12 +1019,14 @@ def _worker_run_api_requests(
                     if t_uuid:
                         p_started = datetime.now(timezone.utc).isoformat()
                         p_t0 = time.time()
-                        has_t = probe_transmitter(session, receptor["value"], t_uuid, dates)
+                        has_t = probe_transmitter(
+                            session, receptor["value"], t_uuid, dates, phase=phase,
+                        )
                         p_ms = int((time.time() - p_t0) * 1000)
                         if not has_t:
                             log_attempt(
                                 db_path, run_id, "api_requests",
-                                probe_transmitter_target(
+                                target_prefix + probe_transmitter_target(
                                     receptor["value"], t_uuid, date_first, date_last
                                 ),
                                 p_started, p_ms, "skipped",
@@ -882,13 +1040,14 @@ def _worker_run_api_requests(
                             p_started = datetime.now(timezone.utc).isoformat()
                             p_t0 = time.time()
                             has_a = probe_api(
-                                session, receptor["value"], t_uuid, api_id, dates
+                                session, receptor["value"], t_uuid, api_id, dates,
+                                phase=phase,
                             )
                             p_ms = int((time.time() - p_t0) * 1000)
                             if not has_a:
                                 log_attempt(
                                     db_path, run_id, "api_requests",
-                                    probe_api_target(
+                                    target_prefix + probe_api_target(
                                         api_id, receptor["value"], t_uuid,
                                         date_first, date_last
                                     ),
@@ -905,7 +1064,7 @@ def _worker_run_api_requests(
                             for status in STATUSES:
                                 ep_id  = endpoint["id"] if endpoint else 0
                                 t_uuid_str = t_uuid or ""
-                                target = api_target(
+                                target = target_prefix + api_target(
                                     api_id, ep_id, status,
                                     receptor["value"], t_uuid_str,
                                     date_first, date_last,
@@ -931,6 +1090,7 @@ def _worker_run_api_requests(
                                         dates,
                                         transmitter_uuid=t_uuid_str,
                                         endpoint_id=ep_id,
+                                        phase=phase,
                                     )
                                     if not raw:
                                         status_label = "empty"
@@ -978,6 +1138,9 @@ def run_api_requests(
     run_id: str = "",
     apis: list[str] | None = None,
     endpoints_map: dict[str, list[dict]] | None = None,
+    phase: str = PHASE_TRANSACTIONAL,
+    target_table: str = "api_requests",
+    target_prefix: str = "",
 ) -> int:
     """
     Coleta chamadas de API por receptor × transmissor × api × endpoint × status.
@@ -987,6 +1150,11 @@ def run_api_requests(
                   Se None ou [], coleta sem filtro de transmissor.
     apis/endpoints_map: se None, usa fallback hardcoded APIS/ENDPOINTS.
                        Caller pode passar valores de discovery dinâmico (F2).
+    phase: "transactional-data" (default) ou "payment-initiation".
+    target_table: nome da tabela onde gravar os registros.
+                  "api_requests" (default) ou "payment_api_requests".
+    target_prefix: prefixo aplicado aos targets de telemetria, para que
+                   checkpointing em fetch_attempts seja isolado por phase.
     """
     log = logger or logging.getLogger(__name__)
     fetched_at = datetime.now(timezone.utc).isoformat()
@@ -997,9 +1165,9 @@ def run_api_requests(
 
     total_eps = sum(len(endpoints_map.get(a, [])) + 1 for a in apis)
     log.info(
-        f"API Requests: {len(receptors)} receptores · {len(transmitters)} transmissores · "
-        f"{len(apis)} APIs · ~{total_eps} endpoints · "
-        f"{len(STATUSES)} statuses · {workers} workers"
+        f"API Requests [{phase}]: {len(receptors)} receptores · "
+        f"{len(transmitters)} transmissores · {len(apis)} APIs · "
+        f"~{total_eps} endpoints · {len(STATUSES)} statuses · {workers} workers"
     )
 
     n = min(workers, len(receptors))
@@ -1008,6 +1176,9 @@ def run_api_requests(
     con = open_db(db_path)
     con.execute("PRAGMA journal_mode=WAL")
     total_upserted = 0
+
+    def _upsert(records: list[dict]) -> int:
+        return _upsert_records_into(con, target_table, records)
 
     with mp.Manager() as mgr:
         queue = mgr.Queue()
@@ -1018,6 +1189,7 @@ def run_api_requests(
                     i + 1, chunk, dates, fetched_at, queue, delay_min, delay_max,
                     transmitters, str(db_path), run_id,
                     apis, endpoints_map,
+                    phase, target_prefix,
                 ): i + 1
                 for i, chunk in enumerate(chunks) if chunk
             }
@@ -1028,7 +1200,7 @@ def run_api_requests(
                     msg = queue.get_nowait()
                     _handle_queue_msg(msg, log, "API Requests")
                     if msg[0] == "combo" and len(msg) > 5 and msg[5]:
-                        total_upserted += upsert_api_requests(con, msg[5])
+                        total_upserted += _upsert(msg[5])
 
                 for future, wid in list(futures.items()):
                     if future.done() and wid not in completed:
@@ -1044,11 +1216,11 @@ def run_api_requests(
                 msg = queue.get_nowait()
                 _handle_queue_msg(msg, log, "API Requests")
                 if msg[0] == "combo" and len(msg) > 5 and msg[5]:
-                    total_upserted += upsert_api_requests(con, msg[5])
+                    total_upserted += _upsert(msg[5])
 
     con.close()
 
-    log.info(f"API Requests: {total_upserted} registros inseridos/atualizados no SQLite")
+    log.info(f"API Requests [{phase}]: {total_upserted} registros inseridos/atualizados no SQLite")
     return total_upserted
 
 

@@ -385,3 +385,117 @@ def run_collection(
         "api_ok":         summary.get("phase_api_ok", 0),
         "api_failed":     summary.get("phase_api_failed", 0),
     }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Pipeline payment-initiation
+# ─────────────────────────────────────────────────────────────────────────────
+
+def run_payment_initiation_collection(
+    start_date: str = "4w",
+    end_date: str = "today",
+    workers: int | None = None,
+    delay_min: float = 3.0,
+    delay_max: float = 8.0,
+    receptor_filter: list[str] | None = None,
+) -> dict:
+    """Pipeline de coleta para payment-initiation (Iniciação de Pagamentos).
+
+    Diferenças em relação a run_collection():
+      - Sem fase de consentimentos (endpoint /api/unique-consents não é usado nessa phase)
+      - APIs e endpoints descobertos dinamicamente via /api/apis e /api/endpoints
+      - Receptores = iniciadoras (PISPs, role=client); transmissores = detentores
+      - Persiste em payment_api_requests
+    """
+    run_logger = RunLogger()
+    log = run_logger.global_()
+    run_id = run_logger.run_id
+    _workers = workers if workers is not None else config.DEFAULT_WORKERS
+
+    log.info(f"=== Execução payment-initiation iniciada: {run_id} ===")
+    log.info(f"Período: {start_date} → {end_date} | workers={_workers}")
+    t0 = time.time()
+
+    from telemetry import start_run, finalize_run
+    scrapers.open_db(config.DB_PATH).close()
+    start_run(config.DB_PATH, run_id)
+
+    dates = _resolve_dates(start_date, end_date)
+    if not dates:
+        log.error("Nenhuma sexta-feira encontrada no período.")
+        return {"error": "Nenhuma sexta-feira no período", "run_id": run_id}
+    log.info(f"Sextas-feiras: {dates[0][:10]} → {dates[-1][:10]} ({len(dates)} semanas)")
+
+    log.info("--- Descoberta de receptores, transmissores e metadata ---")
+    from playwright.sync_api import sync_playwright
+    from session import OpFSession
+    with sync_playwright() as _p:
+        with OpFSession(_p, logger=log) as _session:
+            receptors_all, transmitters = scrapers.fetch_payment_orgs(_session)
+            apis, endpoints_map = scrapers.fetch_apis_endpoints(
+                _session, phase=scrapers.PHASE_PAYMENT_INITIATION,
+            )
+
+    receptors = _filter_receptors(receptors_all, receptor_filter)
+    total_eps = sum(len(v) for v in endpoints_map.values())
+    log.info(
+        f"PI: {len(receptors_all)} PISPs (filtro: {len(receptors)}) · "
+        f"{len(transmitters)} detentores · {len(apis)} APIs · {total_eps} endpoints"
+    )
+
+    if not receptors:
+        log.warning("Nenhum receptor (PISP) selecionado — coleta abortada.")
+        return {"error": "sem receptores", "run_id": run_id}
+
+    if not apis or total_eps == 0:
+        log.error(
+            f"Discovery vazio (apis={len(apis)}, endpoints={total_eps}). "
+            f"Sem fallback hardcoded para payment-initiation — abortando."
+        )
+        return {"error": "discovery vazio", "run_id": run_id}
+
+    # Persiste snapshot de endpoints (source='live-pi') para rastreio de drift.
+    _persist_endpoint_history(
+        config.DB_PATH, endpoints_map, source="live-pi", log=log,
+    )
+
+    n_api = scrapers.run_api_requests(
+        dates=dates, receptors=receptors, db_path=config.DB_PATH,
+        workers=_workers, logger=log,
+        delay_min=delay_min, delay_max=delay_max,
+        transmitters=transmitters, run_id=run_id,
+        apis=apis, endpoints_map=endpoints_map,
+        phase=scrapers.PHASE_PAYMENT_INITIATION,
+        target_table="payment_api_requests",
+        target_prefix="pi:",
+    )
+
+    # Exportação CSV local (espelha api_requests.csv).
+    log.info("--- Exportação CSV local ---")
+    start_d, end_d = dates[0][:10], dates[-1][:10]
+    n_new, n_upd = _sync_csv(
+        "SELECT * FROM payment_api_requests WHERE date BETWEEN ? AND ?",
+        config.DB_PATH, config.DATA_DIR / "payment_api_requests.csv",
+        ["date", "receptor_uuid", "transmitter_uuid", "api", "endpoint_id", "status"],
+        log, (start_d, end_d),
+    )
+
+    duration = round(time.time() - t0, 1)
+    summary = finalize_run(config.DB_PATH, run_id, total_upserted=(n_new + n_upd))
+    log.info(f"=== Concluído em {duration}s ===")
+
+    return {
+        "run_id":     run_id,
+        "phase":      scrapers.PHASE_PAYMENT_INITIATION,
+        "period":     f"{start_d} → {end_d}",
+        "weeks":      len(dates),
+        "receptors":  len(receptors),
+        "apis":       len(apis),
+        "endpoints":  total_eps,
+        "n_api_db":   n_api,
+        "n_new":      n_new,
+        "n_upd":      n_upd,
+        "duration_s": duration,
+        "api_ok":     summary.get("phase_api_ok", 0),
+        "api_failed": summary.get("phase_api_failed", 0),
+    }
