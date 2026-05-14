@@ -5,7 +5,9 @@ Servidor web local que expõe dados extraídos de sqlite
 e os entrega formatados (JSON) para a interface HTML/JS.
 """
 
+import math
 import sqlite3
+import statistics
 import threading
 import time as _time
 import uvicorn
@@ -29,14 +31,14 @@ from services.constants import (
 )
 
 # ── Agrupamentos e Cores ───────────────────────────────────────────────────────
-# Exposed as API_GROUPS[label] -> list[str] of api ids (flat shape for this
-# module's heatmap code). The canonical source (with colors) lives in
-# services.constants — imported above.
-API_GROUPS: dict[str, list[str]] = {
-    label: [a for a in info["apis"] if a != "customers"]  # ecossistema splits "customers" into customers-pf/pj
-    for label, info in _SHARED_API_GROUPS.items()
+# Local view of the canonical API_GROUPS (services.constants) keyed by DB slug.
+# "customers" is dropped here: ecossistema splits it into customers-pf/pj.
+API_GROUPS: dict[str, dict] = {
+    slug: {"display": info["display"],
+           "apis":    [a for a in info["apis"] if a != "customers"]}
+    for slug, info in _SHARED_API_GROUPS.items()
 }
-_ORDERED_APIS = [api for apis in API_GROUPS.values() for api in apis]
+_ORDERED_APIS = [api for info in API_GROUPS.values() for api in info["apis"]]
 
 _API_LABELS = {
     "accounts":                      "Conta",
@@ -348,7 +350,8 @@ def _ensure_dashboard_indexes() -> None:
 
 
 def _ensure_api_group_weekly():
-    """Cria e popula api_group_weekly se vazio — compatibilidade com DBs antigos."""
+    """Garante schema de api_group_weekly em DBs antigos. A população é responsabilidade
+    do data-loader (scrapers.refresh_api_group_weekly) — aqui só criamos a tabela se ausente."""
     con = sqlite3.connect(str(config.DB_PATH))
     try:
         con.execute("""
@@ -361,44 +364,7 @@ def _ensure_api_group_weekly():
                 consents_total INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY (date, receptor_uuid, grp))
         """)
-        n = con.execute("SELECT COUNT(*) FROM api_group_weekly").fetchone()[0]
-        if n == 0:
-            con.executescript("""
-                INSERT INTO api_group_weekly
-                    (date, receptor_uuid, receptor, grp, req_week, consents_total)
-                SELECT r.date, r.receptor_uuid, r.receptor,
-                       CASE WHEN r.api='accounts' THEN 'Conta'
-                            WHEN r.api='credit-cards-accounts' THEN 'Cartao'
-                            WHEN r.api IN ('bank-fixed-incomes','credit-fixed-incomes',
-                                'variable-incomes','funds','treasure-titles') THEN 'Investimento'
-                            WHEN r.api IN ('loans','financings','invoice-financings',
-                                'unarranged-accounts-overdraft') THEN 'Credito'
-                            WHEN r.api='exchanges' THEN 'Cambio'
-                            WHEN r.api='customers' THEN 'Identidade'
-                            WHEN r.api='resources' THEN 'Resource'
-                       END AS grp,
-                       SUM(r.total), c.total
-                FROM api_requests r
-                JOIN unique_consents c ON r.date=c.date AND r.receptor_uuid=c.receptor_uuid
-                WHERE r.api NOT IN ('consents') AND r.status=200
-                GROUP BY r.date, r.receptor_uuid, grp HAVING grp IS NOT NULL;
-            """)
-        # Garante que Resource esteja presente mesmo em DBs já populados sem ele.
-        n_resource = con.execute(
-            "SELECT COUNT(*) FROM api_group_weekly WHERE grp='Resource'"
-        ).fetchone()[0]
-        if n_resource == 0:
-            con.execute("""
-                INSERT OR REPLACE INTO api_group_weekly
-                    (date, receptor_uuid, receptor, grp, req_week, consents_total)
-                SELECT r.date, r.receptor_uuid, r.receptor, 'Resource',
-                       SUM(r.total), COALESCE(c.total, 0)
-                FROM api_requests r
-                LEFT JOIN unique_consents c ON r.date=c.date AND r.receptor_uuid=c.receptor_uuid
-                WHERE r.api='resources' AND r.status=200
-                GROUP BY r.date, r.receptor_uuid
-            """)
-            con.commit()
+        con.commit()
     finally:
         con.close()
 
@@ -674,10 +640,10 @@ def get_api_requests(start: str = None, end: str = None, receptors: str = None, 
 
     groups_info = []
     col_idx = 0
-    for grupo, apis in API_GROUPS.items():
-        cols = [a for a in apis if a in available_apis]
+    for slug, info in API_GROUPS.items():
+        cols = [a for a in info["apis"] if a in available_apis]
         if not cols: continue
-        groups_info.append({"label": grupo, "start": col_idx, "span": len(cols)})
+        groups_info.append({"label": info["display"], "start": col_idx, "span": len(cols)})
         col_idx += len(cols)
 
     max_val = float(data.max()) if data.size > 0 else 0
@@ -903,6 +869,261 @@ def get_resources(start: str = None, end: str = None, receptors: str = None, sta
         "colors":    sorted_colors,
         "normalize": norm,
     })
+
+def _signal_from_quantiles(momentum: float | None, qs: list[float]) -> str:
+    if momentum is None or not qs:
+        return "flat"
+    if momentum > qs[3]: return "up_strong"
+    if momentum > qs[2]: return "up"
+    if momentum > qs[1]: return "flat"
+    if momentum > qs[0]: return "down"
+    return "down_strong"
+
+
+def _assign_signals(items: list[dict], key: str = "momentum") -> None:
+    moms = [r[key] for r in items if r[key] is not None]
+    if len(moms) < 2 or min(moms) == max(moms):
+        return
+    try:
+        qs = statistics.quantiles(moms, n=5)  # [p20, p40, p60, p80]
+        for r in items:
+            r["signal"] = _signal_from_quantiles(r[key], qs)
+    except Exception:
+        pass
+
+
+@app.get("/api/acceleration", response_class=JSONResponse)
+@cached_response("acceleration")
+def get_acceleration(start: str = None, end: str = None, receptors: str = None):
+    today    = date.today()
+    dt_start = _parse_date(start, today - timedelta(days=365))
+    dt_end   = _parse_date(end, today)
+    sel      = _parse_receptors(receptors)
+
+    # ── Consentimentos: dados semanais ────────────────────────────────────────
+    df_cons = _get_consents(dt_start, dt_end)
+    consent_series: list[dict] = []
+    consent_summary: list[dict] = []
+    labels_cons: list[str] = []
+    recs:   list[str] = []
+    colors: dict      = {}
+
+    if not df_cons.empty:
+        if sel:
+            df_cons = df_cons[df_cons["receptor"].isin(sel)]
+        recs   = df_cons["receptor"].unique().tolist()
+        colors = _build_color_map(recs)
+        all_dates   = sorted(df_cons["date"].dt.date.unique())
+        labels_cons = [d.isoformat() for d in all_dates[1:]]
+
+        for rec in recs:
+            rdf = df_cons[df_cons["receptor"] == rec].sort_values("date")
+            if len(rdf) < 2:
+                continue
+            tots = rdf["total"].tolist()
+            cpfs = rdf["cpf"].tolist()
+            cnjs = rdf["cnpj"].tolist()
+            consent_series.append({
+                "receptor":   rec,
+                "color":      colors.get(rec, "#4A9EFF"),
+                "deltas_all": [tots[i] - tots[i-1] for i in range(1, len(tots))],
+                "deltas_pf":  [cpfs[i] - cpfs[i-1] for i in range(1, len(cpfs))],
+                "deltas_pj":  [cnjs[i] - cnjs[i-1] for i in range(1, len(cnjs))],
+            })
+
+        # ── Resumo 4 semanas vs 4 semanas (consentimentos) ───────────────────
+        for rec in recs:
+            rdf = df_cons[df_cons["receptor"] == rec].sort_values("date")
+            weeks = rdf["date"].dt.date.unique()
+            if len(weeks) < 5:   # precisa de pelo menos 5 snapshots para 2 janelas
+                continue
+            tots = rdf.set_index(rdf["date"].dt.date)["total"]
+            cpfs = rdf.set_index(rdf["date"].dt.date)["cpf"]
+            cnjs = rdf.set_index(rdf["date"].dt.date)["cnpj"]
+            # Últimos 5 snapshots disponíveis: [w-8, w-4, w0] mínimo
+            # last_4w  = total[w0]  - total[w-4]
+            # prev_4w  = total[w-4] - total[w-8]
+            w = sorted(weeks)
+            last_delta    = int(tots[w[-1]] - tots[w[-5]])
+            prev_delta    = int(tots[w[-5]] - tots[w[-9]]) if len(w) >= 9 else int(tots[w[-5]] - tots[w[0]])
+            last_delta_pf = int(cpfs[w[-1]] - cpfs[w[-5]])
+            prev_delta_pf = int(cpfs[w[-5]] - cpfs[w[-9]]) if len(w) >= 9 else int(cpfs[w[-5]] - cpfs[w[0]])
+            last_delta_pj = int(cnjs[w[-1]] - cnjs[w[-5]])
+            prev_delta_pj = int(cnjs[w[-5]] - cnjs[w[-9]]) if len(w) >= 9 else int(cnjs[w[-5]] - cnjs[w[0]])
+            consent_summary.append({
+                "receptor":      rec,
+                "color":         colors.get(rec, "#4A9EFF"),
+                "last_delta":    last_delta,
+                "last_delta_pf": last_delta_pf,
+                "last_delta_pj": last_delta_pj,
+                "prev_delta":    prev_delta,
+                "momentum":      last_delta - prev_delta,
+                "momentum_pf":   last_delta_pf - prev_delta_pf,
+                "momentum_pj":   last_delta_pj - prev_delta_pj,
+                "signal":        "flat",
+            })
+        _assign_signals(consent_summary)
+
+    # ── Intensidade: dados semanais ───────────────────────────────────────────
+    intensity_series:  list[dict] = []
+    intensity_summary: list[dict] = []
+    labels_int: list[str] = []
+    recs_int:   list[str] = []
+    colors_int: dict      = {}
+    df_agw = pd.DataFrame()
+
+    try:
+        con = _db_con()
+        df_agw = pd.read_sql(
+            """SELECT date, receptor_uuid, receptor,
+                      SUM(req_week) AS req_week, MAX(consents_total) AS consents_total
+               FROM api_group_weekly
+               WHERE date BETWEEN ? AND ? AND grp != 'Resource'
+               GROUP BY date, receptor_uuid, receptor ORDER BY date""",
+            con, params=[dt_start.isoformat(), dt_end.isoformat()], parse_dates=["date"],
+        )
+        con.close()
+    except Exception:
+        pass
+
+    if not df_agw.empty:
+        if sel:
+            df_agw = df_agw[df_agw["receptor"].isin(sel)]
+        recs_int   = df_agw["receptor"].unique().tolist()
+        colors_int = _build_color_map(recs_int)
+        all_dates_int = sorted(df_agw["date"].dt.date.unique())
+        labels_int    = [d.isoformat() for d in all_dates_int[1:]]
+
+        for rec in recs_int:
+            rdf = df_agw[df_agw["receptor"] == rec].sort_values("date")
+            if len(rdf) < 2:
+                continue
+            intens = [
+                row.req_week * 30.0 / (row.consents_total * 7) if row.consents_total > 0 else 0.0
+                for row in rdf.itertuples()
+            ]
+            intensity_series.append({
+                "receptor": rec,
+                "color":    colors_int.get(rec, "#4A9EFF"),
+                "deltas":   [round(intens[i] - intens[i-1], 3) for i in range(1, len(intens))],
+            })
+
+        # ── Resumo 4 semanas vs 4 semanas (intensidade) ───────────────────────
+        for rec in recs_int:
+            rdf = df_agw[df_agw["receptor"] == rec].sort_values("date")
+            w = sorted(rdf["date"].dt.date.unique())
+            if len(w) < 5:
+                continue
+            def _avg_intens(rows):
+                vals = [r.req_week * 30.0 / (r.consents_total * 7) if r.consents_total > 0 else 0.0
+                        for r in rows.itertuples()]
+                return sum(vals) / len(vals) if vals else 0.0
+            last4 = rdf[rdf["date"].dt.date.isin(w[-4:])]
+            prev4 = rdf[rdf["date"].dt.date.isin(w[-8:-4] if len(w) >= 8 else w[:max(1, len(w)-4)])]
+            last_delta = round(_avg_intens(last4), 3)
+            prev_delta = round(_avg_intens(prev4), 3)
+            momentum   = round(last_delta - prev_delta, 3)
+            intensity_summary.append({
+                "receptor":   rec,
+                "color":      colors_int.get(rec, "#4A9EFF"),
+                "last_delta": last_delta,
+                "prev_delta": prev_delta,
+                "momentum":   momentum,
+                "signal":     "flat",
+            })
+        _assign_signals(intensity_summary)
+
+    return JSONResponse({
+        "labels_consents":   labels_cons,
+        "labels_intensity":  labels_int,
+        "consent_series":    consent_series,
+        "intensity_series":  intensity_series,
+        "consent_summary":   consent_summary,
+        "intensity_summary": intensity_summary,
+    })
+
+
+@app.get("/api/efficiency", response_class=JSONResponse)
+@cached_response("efficiency")
+def get_efficiency(start: str = None, end: str = None):
+    today    = date.today()
+    dt_start = _parse_date(start, today - timedelta(days=365))
+    dt_end   = _parse_date(end, today)
+
+    try:
+        con = _db_con()
+        df = pd.read_sql(
+            """SELECT date, receptor_uuid, receptor,
+                      SUM(req_week) AS req_week, MAX(consents_total) AS consents_total
+               FROM api_group_weekly
+               WHERE date BETWEEN ? AND ? AND grp != 'Resource'
+               GROUP BY date, receptor_uuid, receptor ORDER BY date""",
+            con, params=[dt_start.isoformat(), dt_end.isoformat()], parse_dates=["date"],
+        )
+        con.close()
+    except Exception:
+        return JSONResponse({"points": [], "median_consents": 0, "median_intensity": 0})
+
+    if df.empty:
+        return JSONResponse({"points": [], "median_consents": 0, "median_intensity": 0})
+
+    results = []
+    colors_map = _build_color_map(df["receptor"].unique().tolist())
+    for (uuid, rec), grp in df.groupby(["receptor_uuid", "receptor"]):
+        grp = grp.sort_values("date")
+        consents_last = int(grp["consents_total"].iloc[-1])
+        if consents_last <= 0:
+            continue
+        weekly_int = [
+            row.req_week * 30.0 / (row.consents_total * 7)
+            for row in grp.itertuples() if row.consents_total > 0
+        ]
+        if not weekly_int:
+            continue
+        results.append({
+            "receptor":  rec,
+            "uuid":      uuid,
+            "color":     colors_map.get(rec, "#4A9EFF"),
+            "consents":  consents_last,
+            "intensity": round(sum(weekly_int) / len(weekly_int), 3),
+        })
+
+    if not results:
+        return JSONResponse({"points": [], "median_consents": 0, "median_intensity": 0})
+
+    med_cons = statistics.median(r["consents"]  for r in results)
+    med_int  = statistics.median(r["intensity"] for r in results)
+
+    # View inicial enquadrada no miolo (P20–P80). X em log space pois o eixo é
+    # logarítmico; Y em valor bruto (linear). Outliers ficam fora — usuário
+    # usa pan/zoom para inspecioná-los.
+    x_lo, x_hi = _p20_p80([r["consents"]  for r in results], log_space=True)
+    y_lo, y_hi = _p20_p80([r["intensity"] for r in results], log_space=False)
+    # Pequena folga em Y para não cortar pontos exatamente nas bordas
+    y_lo = max(0.0, y_lo * 0.9)
+    y_hi = y_hi * 1.1
+
+    return JSONResponse({
+        "points":           results,
+        "median_consents":  med_cons,
+        "median_intensity": round(med_int, 3),
+        "view_x_min":       x_lo,
+        "view_x_max":       x_hi,
+        "view_y_min":       y_lo,
+        "view_y_max":       y_hi,
+    })
+
+
+def _p20_p80(vals: list[float], log_space: bool = False) -> tuple[float, float]:
+    """Percentis P20/P80 — em log space (eixos log) ou linear."""
+    arr = [v for v in vals if v > 0] if log_space else list(vals)
+    if len(arr) < 3:
+        return (min(arr), max(arr)) if arr else (0.0, 1.0)
+    work = sorted(math.log10(v) for v in arr) if log_space else sorted(arr)
+    qs = statistics.quantiles(work, n=5)  # 4 cortes em P20, P40, P60, P80
+    lo, hi = qs[0], qs[3]
+    return (10 ** lo, 10 ** hi) if log_space else (lo, hi)
+
 
 @app.get("/api/stats", response_class=JSONResponse)
 @cached_response("stats")

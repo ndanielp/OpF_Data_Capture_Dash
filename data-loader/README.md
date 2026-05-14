@@ -1,23 +1,12 @@
-# Open Finance Data Loading & Dashboard
+# OpF Data Loader
 
-Coleta automatizada de dados do Open Finance Brasil com **Dashboard Analítico** publicado no Google Cloud Run.
+Coleta automatizada de dados do Open Finance Brasil via Playwright. Escreve em
+`data/consents.db` (SQLite) e sincroniza para o Google Cloud Storage, de onde o
+[dashboard](../dashboard/) lê em produção.
 
-- **Coleta (Batch)**: roda localmente com Playwright, salva em `data/consents.db`
-- **Dashboard**: publicado no Google Cloud Run, lê dados do GCS
-
-🌐 **Dashboard ao vivo:** https://opf-dashboard-904097901801.us-central1.run.app
-
----
-
-## Arquitetura
-
-```
-[Local] python main.py run  →  data/consents.db
-                ↓
-        python sync_to_gcs.py  →  gs://opf-data-bucket/data/consents.db
-                                            ↓
-                                [Cloud Run: Dashboard FastAPI]
-```
+> **Onde fica o DB**: o arquivo `data/consents.db` deste diretório é a **fonte
+> única** em dev local. O dashboard auto-detecta esse caminho via
+> [`dashboard/config.py`](../dashboard/config.py) — não há cópia separada.
 
 ---
 
@@ -25,120 +14,127 @@ Coleta automatizada de dados do Open Finance Brasil com **Dashboard Analítico**
 
 | Ferramenta | Para quê |
 |---|---|
-| [Docker Desktop](https://www.docker.com/products/docker-desktop/) | Rodar localmente ou fazer deploy |
-| [Google Cloud SDK (gcloud)](https://cloud.google.com/sdk/docs/install) | Deploy no Cloud Run |
-| Python 3.11+ | Coleta local e sync |
+| Python 3.11+ | Executar a coleta |
+| [Playwright](https://playwright.dev/python/) Chromium | Browser headless |
+| [gcloud CLI](https://cloud.google.com/sdk/docs/install) | `sync_to_gcs.py` (opcional) |
 
 ---
 
-## Coleta de Dados (Local)
-
-### Via Python direto
+## Setup
 
 ```bash
-# Instalar dependências
+cd data-loader
 pip install -r requirements.txt
 playwright install chromium
 
-# Executar coleta (padrão: últimas 4 semanas)
+cp .env.example .env   # ajuste se quiser (LOCAL_LOG_DIR, DB_PATH, DEFAULT_WORKERS)
+```
+
+---
+
+## Comandos (CLI)
+
+```bash
+# Coleta padrão: últimas 4 semanas, todos os receptores
 python main.py run
 
-# Outros comandos disponíveis
-python main.py status          # resumo dos dados coletados
-python main.py last-run        # último log de execução
+# Recortes
+python main.py run -s 1w -e today -r Bradesco        # 1 semana, 1 receptor
+python main.py run -s 3m -r Itau Nubank              # 3 meses, vários (substring match)
+python main.py run --start-date 2025-06-01           # data absoluta
+python main.py run -w 4                              # workers paralelos
+
+# Inspeção
+python main.py status                # CSV stats + recent runs
+python main.py last-run              # tail do log mais recente
 python main.py preview consents --rows 20
+python main.py preview api_requests
 ```
 
-### Via Docker
-
-```bash
-docker compose up batch
-```
-
-Coleta os dados e encerra automaticamente. Para customizar o período:
-
-```yaml
-# docker-compose.yml → seção batch:
-command: ["python", "main.py", "run", "--start-date", "2024-01-01", "--end-date", "2024-12-31"]
-```
+Cada run gera `logs/_global/<run_id>.log` + um log por receptor em
+`logs/<receptor>/<run_id>.log`.
 
 ---
 
-## Dashboard Local
+## Agendamento
 
-```bash
-# Via Python
-python main.py dashboard --port 8000
+`run_job.bat` é o entry point para o **Task Scheduler** do Windows:
 
-# Via Docker
-docker compose up dashboard
+```bat
+call .venv\Scripts\python.exe main.py run --start-date "2025-06-01" --workers 1
 ```
 
-Acesse: **http://localhost:8000**
+Ajuste parâmetros conforme a frequência desejada. O collector é **resumível**:
+chamadas já feitas com `status='ok'` ou `'empty'` em `fetch_attempts` são puladas
+no próximo run do mesmo dia.
 
 ---
 
-## Publicar no Google Cloud Run
+## Sincronizar para o GCS
 
-### 1. Sincronizar dados após cada coleta
+Após cada coleta, suba o DB para o bucket de onde o Cloud Run lê:
 
-```powershell
+```bash
 python sync_to_gcs.py
 ```
 
-Sobe `data/consents.db` para `gs://opf-data-bucket/data/consents.db`.
+Requer:
 
-> Requer autenticação: `gcloud auth application-default login`
+- Autenticação: `gcloud auth application-default login`
+- Variáveis de ambiente (ou edite os defaults em `sync_to_gcs.py`):
+  - `GCS_BUCKET=opf-data-bucket`
+  - `GOOGLE_CLOUD_PROJECT=opf-dash`
 
-### 2. Deploy após alterações de código
+Só o(s) `.db` é(são) sincronizado(s); CSVs ficam apenas locais.
 
-```powershell
-# Deploy completo (sync + build + push + deploy)
-.\deploy.ps1
+---
 
-# Só sincronizar dados (sem rebuild)
-.\deploy.ps1 -SyncOnly
+## Estrutura
 
-# Só rebuild + deploy (sem sync de dados)
-.\deploy.ps1 -SkipSync
+```
+data-loader/
+├── main.py             # CLI (run, status, last-run, preview)
+├── collector.py        # Orquestrador: consents → probes → api_requests + telemetria
+├── scrapers.py         # POST /api/unique-consents, /api/api-requests + api_group_weekly
+├── session.py          # OpFSession (Playwright + CloudFront cookies + retry)
+├── browser.py          # Anti-detection, proxy, parse de datas
+├── telemetry.py        # fetch_attempts + run_summary
+├── config.py           # Caminhos (DB_PATH, LOG_DIR, DATA_DIR, META_CACHE_PATH)
+├── gcs_sync.py         # Módulo compartilhado upload/download GCS
+├── sync_to_gcs.py      # Script CLI para subir o DB ao bucket
+├── run_job.bat         # Entry point para Task Scheduler
+├── requirements.txt
+├── .env.example
+├── data/               # consents.db (SQLite, ignorado pelo git)
+└── logs/               # logs por run (ignorado pelo git)
 ```
 
 ---
 
-## Estrutura do Projeto
+## Schema SQLite
 
-```
-opf_data_loading_batch/
-├── main.py               # CLI principal (run, status, dashboard, ...)
-├── collector.py          # Orquestrador da coleta
-├── scrapers.py           # Scrapers Playwright
-├── browser.py            # Gerenciamento de browsers
-├── dashboard_server.py   # Backend FastAPI do dashboard
-├── config.py             # Caminhos e configurações
-│
-├── gcs_sync.py           # Módulo de sync bidirecional com GCS
-├── sync_to_gcs.py        # Script: sobe consents.db para o GCS
-├── deploy.ps1            # Script: rebuild + deploy no Cloud Run
-├── entrypoint.sh         # Startup do container (baixa DB do GCS)
-│
-├── Dockerfile            # Imagem para o Cloud Run (dashboard only)
-├── docker-compose.yml    # Uso local (dashboard + batch)
-│
-├── gui/                  # Frontend HTML/JS do dashboard
-├── data/                 # banco SQLite (ignorado pelo git)
-└── logs/                 # logs das coletas (ignorado pelo git)
-```
+Cinco tabelas em `data/consents.db`:
+
+| Tabela | Conteúdo |
+|---|---|
+| `unique_consents`  | Contagens semanais de consentimentos por receptor (total, cpf, cnpj). |
+| `api_requests`     | Métricas de chamadas API por receptor × transmissor × api × endpoint × status × data. |
+| `fetch_attempts`   | Telemetria: 1 linha por chamada HTTP (phase, target, status, duration_ms). |
+| `run_summary`      | 1 linha por `run_id` com contadores agregados. |
+| `api_group_weekly` | Pré-agregação por grupo (Conta, Cartao, Credito, Investimento, Cambio, Identidade, Resource) — populada por `scrapers.refresh_api_group_weekly`. Consumida pelo dashboard. |
 
 ---
 
-## Variáveis de Ambiente (.env)
+## Variáveis de ambiente
 
-Copie `.env.example` para `.env` e ajuste:
+Override via `.env`:
 
 ```env
 LOCAL_LOG_DIR=logs
 DB_PATH=data/consents.db
 DEFAULT_WORKERS=4
-```
 
-Para o Cloud Run, as variáveis `GCS_BUCKET` e `GOOGLE_CLOUD_PROJECT` são definidas automaticamente pelo `deploy.ps1`.
+# Opcionais
+# CHROMIUM_BIN=/usr/bin/chromium
+# HTTPS_PROXY=http://user:pass@host:port
+```

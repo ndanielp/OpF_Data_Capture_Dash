@@ -9,6 +9,8 @@ System for collecting and visualizing Open Finance Brasil (OpF) data. Two indepe
 - **`data-loader/`** — runs locally; collects data via Playwright + stores in SQLite + syncs to GCS
 - **`dashboard/`** — deployed on Google Cloud Run; reads `consents.db` from GCS; serves FastAPI + Chart.js frontend
 
+**Single DB in dev local**: `data-loader/data/consents.db` is the only physical SQLite file. `dashboard/config.py` auto-detects it (resolution order: `OPF_DB_PATH` env → `../data-loader/data/consents.db` → `./data/consents.db`). In Cloud Run, the `entrypoint.sh` downloads from GCS to `/app/data/consents.db`.
+
 ## Commands
 
 ### data-loader
@@ -76,11 +78,12 @@ docker compose up
 
 ### SQLite Schema (`data/consents.db`)
 
-Four tables:
+Five tables:
 - `unique_consents` — weekly consent counts per receptor (`receptor_uuid`, `date`, `total`, `cpf`, `cnpj`)
 - `api_requests` — API call metrics per receptor × transmitter × api × endpoint × status × date
 - `fetch_attempts` — telemetry: 1 row per HTTP call (phase, target, status, duration_ms, records_count)
 - `run_summary` — 1 row per run_id with aggregated counters (ok/failed/skipped)
+- `api_group_weekly` — pre-aggregation by group (Conta, Cartao, Credito, Investimento, Cambio, Identidade, Resource) joined with consents_total. Populated by `scrapers.refresh_api_group_weekly`; consumed by the dashboard (strategic map, temporal intensity, efficiency, acceleration).
 
 ### Session & HTTP
 
@@ -123,11 +126,15 @@ GROUP BY 1, 2;
 
 ### Dashboard API
 
-`dashboard/server.py` exposes FastAPI endpoints that read SQLite directly (no ORM). Key filters accepted via query params: `start`, `end` (YYYY-MM-DD), `receptors` (comma-separated substring match). The frontend is a single HTML file at `dashboard/gui/dashboard.html` using Chart.js.
+`dashboard/server.py` exposes FastAPI endpoints that read SQLite directly (no ORM). Key filters accepted via query params: `start`, `end` (YYYY-MM-DD), `receptors` (comma-separated substring match). Frontend is two HTML files: `gui/dashboard.html` (Ecossistema) and `gui/receptor_profile.html` (Perfil Receptor), both using Chart.js.
+
+**Group metadata is centralized** in `dashboard/services/constants.py::API_GROUPS`, keyed by DB slug (`Conta`, `Cartao`, `Credito`, `Investimento`, `Cambio`, `Identidade`, `Resource`) — same values stored in `api_group_weekly.grp`. Each entry has `{display, color, apis}`. The router `dashboard/routers/openfinance.py` exposes this as `/api/of/api-groups` and `/api/of/brand-colors`; the frontend (`receptor_profile.html`) fetches both at boot to populate `SM_GROUPS`/`SM_LABELS`/`SM_COLORS`/`_TS_STACK_GROUPS`/`GROUP_META`.
 
 ## Key Configuration
 
 **`data-loader/config.py`**: `DB_PATH`, `LOG_DIR`, `DATA_DIR`, `META_CACHE_PATH` (API/endpoint discovery cache, 24h TTL), `DEFAULT_WORKERS=4`.
+
+**`dashboard/config.py`**: only exposes `DB_PATH` (auto-resolved per environment) and `LOG_DIR`. Override the DB location with `OPF_DB_PATH` env var if needed.
 
 **`.env` overrides** (copy `.env.example`): `LOCAL_LOG_DIR`, `DB_PATH`, `DEFAULT_WORKERS`.
 

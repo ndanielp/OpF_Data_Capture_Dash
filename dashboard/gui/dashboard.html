@@ -6,6 +6,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Open Finance Brasil — Dashboard</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.2.0/dist/chartjs-plugin-zoom.min.js"></script>
   <style>
     /* ============================================================
    DESIGN TOKENS
@@ -24,14 +26,6 @@
       --success: #2ECC7F;
       --warning: #F5A623;
       --error: #FF4D4D;
-      /* Canonical group colors — kept in sync with receptor_profile.html and services/constants.py */
-      --c-conta: #4A9EFF;
-      --c-cartao: #8B5CF6;
-      --c-invest: #2ECC7F;
-      --c-credito: #FF6B6B;
-      --c-cambio: #A855F7;
-      --c-identidade: #F5A623;
-      --c-resource: #14B8A6;
     }
 
     [data-theme="light"] {
@@ -959,6 +953,29 @@
       .api-time-card  { flex: none; width: 100%; height: 400px; min-width: 0; }
     }
 
+    .acceleration-row {
+      display: flex;
+      gap: var(--s4);
+      flex-wrap: wrap;
+    }
+
+    .accel-signal { font-size: 11px; font-weight: 700; min-width: 24px; text-align: center; }
+    .accel-signal.up_strong   { color: var(--success); }
+    .accel-signal.up          { color: var(--success); opacity: 0.7; }
+    .accel-signal.flat        { color: var(--text-muted); }
+    .accel-signal.down        { color: #F59E0B; }
+    .accel-signal.down_strong { color: var(--error); }
+
+    .efficiency-quadrants {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 4px;
+      margin-top: 8px;
+      font-size: 10px;
+      color: var(--text-muted);
+      text-align: center;
+    }
+
     .page-footnote {
       display: flex;
       align-items: flex-start;
@@ -1182,6 +1199,13 @@
           <button class="quick-btn" data-months="ytd">Ano atual</button>
           <button class="quick-btn" data-months="0">Tudo</button>
         </div>
+        <div class="date-spacer"></div>
+        <span class="date-bar-label">Consentimentos</span>
+        <div class="chart-toggles" id="consent-view-toggles-bar">
+          <button data-view="all" class="active">Total</button>
+          <button data-view="pf">PF</button>
+          <button data-view="pj">PJ</button>
+        </div>
       </div>
 
       <div class="top-row">
@@ -1237,11 +1261,6 @@
               <div class="chart-subtitle" id="chart1-subtitle">Evolução no período · Top receptores</div>
             </div>
             <div class="chart-actions">
-              <div class="chart-toggles" id="consent-view-toggles">
-                <button data-view="pf">PF</button>
-                <button data-view="pj">PJ</button>
-                <button data-view="all" class="active">All</button>
-              </div>
               <button class="chart-action-btn" id="btn-export-consents">Exportar CSV</button>
             </div>
           </div>
@@ -1250,6 +1269,51 @@
             <canvas id="lineChart"></canvas>
           </div>
         </div>
+      </div>
+
+      <!-- Acceleration Row -->
+      <div class="acceleration-row">
+
+        <!-- Aceleração de Consentimentos -->
+        <div id="card-accel-consents" class="chart-card" style="flex:1;min-width:300px;">
+          <div class="chart-head">
+            <div>
+              <div class="chart-title">Aceleração de Consentimentos</div>
+              <div class="chart-subtitle">Últimas 4 semanas vs 4 semanas anteriores</div>
+            </div>
+          </div>
+          <div id="accel-consents-empty" class="chart-empty" style="display:none">Sem dados suficientes (mínimo 2 meses)</div>
+          <div style="display:flex; justify-content:space-between; font-size:10px; color:var(--text-muted); padding-bottom:4px; border-bottom:1px solid var(--border-default); margin-top:var(--s2);">
+            <div>Instituição</div>
+            <div style="display:flex; gap:6px;">
+              <div style="width:52px; text-align:right;" title="Delta do mês mais recente">Mês atual</div>
+              <div style="width:52px; text-align:right; color:var(--text-accent)" title="Variação vs mês anterior (momentum)">Variação</div>
+              <div style="width:24px; text-align:center;">Sinal</div>
+            </div>
+          </div>
+          <ul class="ranking-list" id="accel-consent-list" style="max-height:220px; overflow-y:auto;"></ul>
+        </div>
+
+        <!-- Aceleração de Intensidade -->
+        <div id="card-accel-intensity" class="chart-card" style="flex:1;min-width:300px;">
+          <div class="chart-head">
+            <div>
+              <div class="chart-title">Aceleração de Intensidade de API</div>
+              <div class="chart-subtitle">Últimas 4 semanas vs 4 semanas anteriores</div>
+            </div>
+          </div>
+          <div id="accel-intensity-empty" class="chart-empty" style="display:none">Sem dados suficientes (mínimo 2 meses)</div>
+          <div style="display:flex; justify-content:space-between; font-size:10px; color:var(--text-muted); padding-bottom:4px; border-bottom:1px solid var(--border-default); margin-top:var(--s2);">
+            <div>Instituição</div>
+            <div style="display:flex; gap:6px;">
+              <div style="width:52px; text-align:right;" title="Delta de intensidade do mês mais recente">Mês atual</div>
+              <div style="width:52px; text-align:right; color:var(--text-accent)" title="Variação vs mês anterior (momentum)">Variação</div>
+              <div style="width:24px; text-align:center;">Sinal</div>
+            </div>
+          </div>
+          <ul class="ranking-list" id="accel-intensity-list" style="max-height:220px; overflow-y:auto;"></ul>
+        </div>
+
       </div>
 
       <!-- Chart 2 + Temporal: side-by-side -->
@@ -1306,6 +1370,27 @@
         </div>
       </div>
 
+      <!-- Efficiency Scatter -->
+      <div id="card-efficiency" class="chart-card">
+        <div class="chart-head">
+          <div>
+            <div class="chart-title">Eficiência de Consumo</div>
+            <div class="chart-subtitle">Consentimentos × Intensidade · scroll para zoom · arraste para pan</div>
+          </div>
+          <button id="eff-reset-zoom" type="button" title="Resetar zoom" style="background:transparent;border:1px solid var(--border-default);color:var(--text-secondary);padding:4px 10px;border-radius:6px;font-size:11px;cursor:pointer;font-family:inherit">↺ Reset</button>
+        </div>
+        <div id="efficiency-empty" class="chart-empty" style="display:none">Sem dados suficientes</div>
+        <div style="position:relative;height:360px;width:100%">
+          <canvas id="efficiencyChart"></canvas>
+        </div>
+        <div class="efficiency-quadrants">
+          <div>↖ Especialista · baixo consent, alta intensidade</div>
+          <div>↗ Maduro · alto consent, alta intensidade</div>
+          <div>↙ Iniciante · baixo consent, baixa intensidade</div>
+          <div>↘ Dormente · alto consent, baixa intensidade</div>
+        </div>
+      </div>
+
       <footer class="page-footnote">
         <svg width="12" height="12" viewBox="0 0 13 13" fill="none" style="flex-shrink:0;margin-top:2px"><circle cx="6.5" cy="6.5" r="6" stroke="currentColor" stroke-width="1.1"/><text x="6.5" y="10" text-anchor="middle" font-size="8" fill="currentColor" font-family="sans-serif">i</text></svg>
         <span>
@@ -1331,10 +1416,13 @@
        ============================================================ */
     let lineChart = null;
     let barChart = null;
+    let efficiencyChart = null;
     let _allReceptors = [];   // [{label, color, top}]
     let _apiData = null;     // last api-requests response (for export)
     let _consentsData = null; // last consents response (for export)
     let _resData = null;     // last resources response (for export)
+    let _accelData = null;
+    let _efficiencyData = null;
     let _dbMinDate = null;
     let _dbMaxDate = null;
 
@@ -1379,6 +1467,15 @@
         barChart.options.plugins.tooltip.bodyColor = Chart.defaults.color;
         barChart.update();
       }
+      [efficiencyChart].filter(Boolean).forEach(ch => {
+        ch.options.scales.x.grid.color = gridColor;
+        ch.options.scales.y.grid.color = gridColor;
+        ch.options.plugins.tooltip.backgroundColor = tooltipBg;
+        ch.options.plugins.tooltip.borderColor = tooltipBorder;
+        ch.options.plugins.tooltip.titleColor = tooltipTitle;
+        ch.options.plugins.tooltip.bodyColor = Chart.defaults.color;
+        ch.update();
+      });
       if (_lineChartApi) {
         _lineChartApi.options.scales.x.grid.color = gridColor;
         _lineChartApi.options.scales.y.grid.color = gridColor;
@@ -1664,12 +1761,13 @@
 
     let currentConsentView = 'all';
 
-    document.querySelectorAll('#consent-view-toggles button').forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        document.querySelectorAll('#consent-view-toggles button').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('#consent-view-toggles-bar button').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('#consent-view-toggles-bar button').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
         currentConsentView = btn.dataset.view;
         if (_consentsData) renderConsentsView();
+        if (_accelData) renderAccelSummary();
       });
     });
 
@@ -2060,6 +2158,208 @@
     }
 
     /* ============================================================
+       ACELERAÇÃO — INIT + UPDATE
+       ============================================================ */
+    function initEfficiencyChart() {
+      const isLight = document.body.getAttribute('data-theme') === 'light';
+      // Registro defensivo do plugin (no-op se já auto-registrado)
+      const _zp = window.ChartZoom || window['chartjs-plugin-zoom'];
+      if (_zp && Chart && Chart.registry && !Chart.registry.plugins.get('zoom')) {
+        try { Chart.register(_zp); } catch (_) {}
+      }
+      const _canvas = document.getElementById('efficiencyChart');
+      _canvas.style.cursor = 'grab';
+      _canvas.addEventListener('mousedown', () => _canvas.style.cursor = 'grabbing');
+      window.addEventListener('mouseup',   () => _canvas.style.cursor = 'grab');
+      efficiencyChart = new Chart(
+        document.getElementById('efficiencyChart').getContext('2d'),
+        {
+          type: 'scatter',
+          data: { datasets: [] },
+          options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: {
+              legend: { display: false },
+              tooltip: {
+                backgroundColor: isLight ? '#FFF' : '#1B1F2E',
+                borderColor: isLight ? '#D1D5DB' : '#333B54',
+                borderWidth: 1,
+                titleColor: isLight ? '#111827' : '#EEF0F6',
+                bodyColor: isLight ? '#4B5563' : '#8B95B0',
+                padding: 10,
+                filter: item => item.datasetIndex === 0,
+                callbacks: {
+                  title: items => items[0]?.raw?.receptor || '',
+                  label: ctx => {
+                    const r = ctx.raw;
+                    return [`  Consentimentos: ${fmtVal(r.x, false)}`, `  Intensidade: ${r.y.toFixed(1)} req/c/30d`];
+                  }
+                }
+              },
+              zoom: {
+                pan:  { enabled: true, mode: 'xy', modifierKey: null, threshold: 0 },
+                zoom: { wheel: { enabled: true }, pinch: { enabled: true }, drag: { enabled: false }, mode: 'xy' },
+                limits: {}   // preenchido em updateEfficiencyChart com os extremos reais
+              }
+            },
+            scales: {
+              x: {
+                type: 'logarithmic',
+                grid: { color: isLight ? '#E5E7EB' : '#252A3A' },
+                border: { display: false },
+                ticks: { color: '#4A5270', callback: v => fmtVal(v, false) },
+                title: { display: true, text: 'Consentimentos únicos (escala log)', color: '#4A5270', font: { size: 10 } },
+              },
+              y: {
+                grid: { color: isLight ? '#E5E7EB' : '#252A3A' },
+                border: { display: false },
+                ticks: { color: '#4A5270', callback: v => v.toFixed(1) },
+                title: { display: true, text: 'Intensidade média (req/consent/30d)', color: '#4A5270', font: { size: 10 } },
+              }
+            }
+          }
+        }
+      );
+      // Botão Reset volta à view P5–P95 definida em scales.x/y.min/max
+      const resetBtn = document.getElementById('eff-reset-zoom');
+      if (resetBtn && !resetBtn._wired) {
+        resetBtn._wired = true;
+        resetBtn.addEventListener('click', () => {
+          if (efficiencyChart && typeof efficiencyChart.resetZoom === 'function') {
+            efficiencyChart.resetZoom();
+          }
+        });
+      }
+    }
+
+    const _SIGNAL_ICON  = { up_strong:'↑↑', up:'↑', flat:'→', down:'↓', down_strong:'↓↓' };
+
+    function _accelRow(r, delta, momentum) {
+      const sign = delta >= 0 ? '+' : '';
+      const mSign = momentum != null ? (momentum >= 0 ? '+' : '') : '';
+      const mFmt  = momentum != null ? mSign + fmtVal(momentum, false) : '—';
+      const sig   = r.signal || 'flat';
+      return `<li class="ranking-item">
+        <div class="ranking-label">
+          <div class="ranking-color" style="background:${r.color}"></div>
+          <div class="ranking-name" style="text-overflow:ellipsis;overflow:hidden;max-width:90px;white-space:nowrap" title="${r.receptor}">${r.receptor}</div>
+        </div>
+        <div style="display:flex;gap:6px;align-items:center;">
+          <div class="ranking-value" style="width:52px;text-align:right;">${sign}${fmtVal(delta, false)}</div>
+          <div style="font-size:9px;width:52px;text-align:right;font-weight:600;color:var(--text-accent)">${mFmt}</div>
+          <div class="accel-signal ${sig}">${_SIGNAL_ICON[sig]}</div>
+        </div>
+      </li>`;
+    }
+
+    function renderAccelSummary() {
+      if (!_accelData) return;
+
+      const csummary = _accelData.consent_summary || [];
+      const emptyC   = document.getElementById('accel-consents-empty');
+      const listC    = document.getElementById('accel-consent-list');
+      if (csummary.length === 0) {
+        emptyC.style.display = 'flex'; listC.innerHTML = '';
+      } else {
+        emptyC.style.display = 'none';
+        const _mom = r => currentConsentView === 'pf' ? (r.momentum_pf ?? r.momentum) : currentConsentView === 'pj' ? (r.momentum_pj ?? r.momentum) : r.momentum;
+        const sorted = [...csummary].sort((a, b) => Math.abs(_mom(b) ?? 0) - Math.abs(_mom(a) ?? 0));
+        listC.innerHTML = sorted.map(r => {
+          const delta = currentConsentView === 'pf' ? r.last_delta_pf : currentConsentView === 'pj' ? r.last_delta_pj : r.last_delta;
+          return _accelRow(r, delta, _mom(r));
+        }).join('');
+      }
+
+      const isummary = _accelData.intensity_summary || [];
+      const emptyI   = document.getElementById('accel-intensity-empty');
+      const listI    = document.getElementById('accel-intensity-list');
+      if (isummary.length === 0) {
+        emptyI.style.display = 'flex'; listI.innerHTML = '';
+      } else {
+        emptyI.style.display = 'none';
+        const sorted = [...isummary].sort((a, b) => Math.abs(b.momentum ?? 0) - Math.abs(a.momentum ?? 0));
+        listI.innerHTML = sorted.map(r => _accelRow(r, r.last_delta, r.momentum)).join('');
+      }
+    }
+
+    async function updateAccelChart(params, signal) {
+      ['card-accel-consents', 'card-accel-intensity'].forEach(id => setCardLoading(id, true));
+      try {
+        const resp = await fetch('/api/acceleration?' + params, { signal });
+        const data = await resp.json();
+        _accelData = data;
+        renderAccelSummary();
+      } finally {
+        ['card-accel-consents', 'card-accel-intensity'].forEach(id => setCardLoading(id, false));
+      }
+    }
+
+    async function updateEfficiencyChart(params, signal) {
+      setCardLoading('card-efficiency', true);
+      try {
+        const effParams = new URLSearchParams({ start: params.get('start'), end: params.get('end') });
+        const resp = await fetch('/api/efficiency?' + effParams, { signal });
+        const data = await resp.json();
+        _efficiencyData = data;
+        const empty  = document.getElementById('efficiency-empty');
+        const canvas = document.getElementById('efficiencyChart');
+        if (!data.points || data.points.length === 0) {
+          empty.style.display = 'flex'; canvas.style.display = 'none'; return;
+        }
+        empty.style.display = 'none'; canvas.style.display = '';
+        const selectedRecs = new Set(
+          [...document.querySelectorAll('.receptor-item.selected')].map(el => el.dataset.label)
+        );
+        const pts = data.points;
+        const xVals = pts.map(p => p.consents);
+        const yVals = pts.map(p => p.intensity);
+        const xMin  = Math.min(...xVals);
+        const xMax  = Math.max(...xVals);
+        const yAbsMax = Math.max(...yVals) * 1.15;
+        // Linhas de mediana cobrem o range absoluto (continuam visíveis após pan/zoom out)
+        efficiencyChart.data.datasets = [
+          {
+            type: 'scatter',
+            data: pts.map(p => ({ x: p.consents, y: p.intensity, receptor: p.receptor })),
+            backgroundColor: pts.map(p =>
+              selectedRecs.size === 0 || selectedRecs.has(p.receptor) ? p.color + 'CC' : p.color + '33'
+            ),
+            borderColor: pts.map(p =>
+              selectedRecs.size > 0 && selectedRecs.has(p.receptor) ? '#FFFFFF88' : p.color + '66'
+            ),
+            borderWidth: pts.map(p => selectedRecs.size > 0 && selectedRecs.has(p.receptor) ? 2 : 1),
+            pointRadius: pts.map(p => selectedRecs.size > 0 && selectedRecs.has(p.receptor) ? 9 : 6),
+            pointHoverRadius: 9,
+          },
+          {
+            type: 'line', showLine: true, pointRadius: 0,
+            data: [{ x: xMin * 0.5, y: data.median_intensity }, { x: xMax * 2, y: data.median_intensity }],
+            borderColor: 'rgba(140,140,140,0.4)', borderDash: [6,4], borderWidth: 1,
+          },
+          {
+            type: 'line', showLine: true, pointRadius: 0,
+            data: [{ x: data.median_consents, y: 0 }, { x: data.median_consents, y: yAbsMax }],
+            borderColor: 'rgba(140,140,140,0.4)', borderDash: [6,4], borderWidth: 1,
+          },
+        ];
+        // View inicial enquadrada no miolo (P20–P80 vinda do backend)
+        const sx = efficiencyChart.options.scales.x;
+        const sy = efficiencyChart.options.scales.y;
+        sx.min = data.view_x_min;
+        sx.max = data.view_x_max;
+        sy.min = data.view_y_min;
+        sy.max = data.view_y_max;
+        // Limites absolutos do pan/zoom out (clamp para evitar zoom out infinito)
+        efficiencyChart.options.plugins.zoom.limits = {
+          x: { min: xMin * 0.8, max: xMax * 1.25 },
+          y: { min: 0,           max: yAbsMax    },
+        };
+        efficiencyChart.update('none');
+      } finally { setCardLoading('card-efficiency', false); }
+    }
+
+
+    /* ============================================================
        CHART API — TEMPORAL (LINE)
        ============================================================ */
     function initChartApiTime() {
@@ -2283,6 +2583,8 @@
           updateChart2(params, mySignal),
           updateChart3(params, mySignal),
           updateChartApiTime(params, mySignal),
+          updateAccelChart(params, mySignal),
+          updateEfficiencyChart(params, mySignal),
         ]);
       } catch (e) {
         if (e?.name !== 'AbortError') console.error(e);
@@ -2357,6 +2659,7 @@
     async function loadAll() {
       initLineChart();
       initBarChart();
+      initEfficiencyChart();
       initChartApiTime();
       // Stats e receptors em paralelo — sem dependência entre si
       await Promise.all([

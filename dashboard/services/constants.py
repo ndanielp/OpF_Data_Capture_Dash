@@ -1,33 +1,20 @@
 """Shared constants for the OpF dashboard — canonical source of truth.
 
-Both Ecossistema (dashboard.html) and Perfil Receptor (receptor_profile.html)
-must consume API_GROUPS, API_LABELS and GROUP_COLORS from here so that
-group names, API labels and per-group colors are identical across tabs.
+API_GROUPS is keyed by **DB slug** (same value stored in `api_group_weekly.grp`)
+so analytics code can join DB rows to group metadata directly. Each entry
+carries a `display` label for the UI, a color, and the list of api ids that
+belong to the group (including the virtual `customers-pf`/`customers-pj`
+flavors created by server.py's PF/PJ split).
 """
 
-# Group name → {color, apis}. Group names are the CANONICAL labels exposed
-# to the UI. APIs include both the raw DB names ("customers") and the virtual
-# flavors created by server.py's PF/PJ split ("customers-pf", "customers-pj"),
-# so both ecossistema (which splits) and perfil (which doesn't) see their
-# API names inside the group.
 API_GROUPS: dict[str, dict] = {
-    "Contas":            {"color": "#4A9EFF", "apis": ["accounts"]},
-    "Cartão de Crédito": {"color": "#8B5CF6", "apis": ["credit-cards-accounts"]},
-    "Empréstimos":       {"color": "#FF6B6B", "apis": ["loans", "financings", "invoice-financings", "unarranged-accounts-overdraft"]},
-    "Investimentos":     {"color": "#2ECC7F", "apis": ["bank-fixed-incomes", "credit-fixed-incomes", "variable-incomes", "funds", "treasure-titles"]},
-    "Câmbio":            {"color": "#A855F7", "apis": ["exchanges"]},
-    "Cadastro":          {"color": "#F5A623", "apis": ["customers", "customers-pf", "customers-pj"]},
-}
-
-# Mapping from api_group_weekly.grp (ASCII, legacy) → canonical display label.
-# Used by of_analytics when reading from the pre-aggregated weekly table.
-DB_GROUP_TO_DISPLAY: dict[str, str] = {
-    "Conta":        "Contas",
-    "Cartao":       "Cartão de Crédito",
-    "Credito":      "Empréstimos",
-    "Investimento": "Investimentos",
-    "Cambio":       "Câmbio",
-    "Identidade":   "Cadastro",
+    "Conta":        {"display": "Contas",            "color": "#4A9EFF", "apis": ["accounts"]},
+    "Cartao":       {"display": "Cartão de Crédito", "color": "#8B5CF6", "apis": ["credit-cards-accounts"]},
+    "Credito":      {"display": "Empréstimos",       "color": "#FF6B6B", "apis": ["loans", "financings", "invoice-financings", "unarranged-accounts-overdraft"]},
+    "Investimento": {"display": "Investimentos",     "color": "#2ECC7F", "apis": ["bank-fixed-incomes", "credit-fixed-incomes", "variable-incomes", "funds", "treasure-titles"]},
+    "Cambio":       {"display": "Câmbio",            "color": "#A855F7", "apis": ["exchanges"]},
+    "Identidade":   {"display": "Cadastro",          "color": "#F5A623", "apis": ["customers", "customers-pf", "customers-pj"]},
+    "Resource":     {"display": "Resource",          "color": "#14B8A6", "apis": ["resources"]},
 }
 
 # Long-form labels for the UI (tooltips, lists, tables). Chart axis labels
@@ -46,14 +33,6 @@ API_LABELS: dict[str, str] = {
     "treasure-titles":               "Títulos do Tesouro",
     "customers":                     "Cadastro",
     "exchanges":                     "Câmbio",
-}
-
-# Flat list in group-display order — used for column ordering in heatmaps.
-ORDERED_APIS: list[str] = [api for g in API_GROUPS.values() for api in g["apis"]]
-
-# Reverse lookup: api → group name.
-API_TO_GROUP: dict[str, str] = {
-    api: name for name, g in API_GROUPS.items() for api in g["apis"]
 }
 
 # APIs excluded from product breakdowns (infra / meta endpoints).
