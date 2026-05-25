@@ -7,7 +7,7 @@ Tests:
   2. upsert_active_consents() inserts rows and returns correct count.
   3. Row values are stored and readable with correct types.
   4. Re-upserting with same PK (receptor×transmitter×date) updates — no duplicate rows.
-  5. cpf/cnpj are nullable — absent in source maps to NULL in DB.
+  5. receptor/transmitter name columns are stored correctly.
 """
 
 import sqlite3
@@ -30,28 +30,28 @@ SAMPLE_RECORDS = [
     {
         "receptor_uuid":    "rec-uuid-001",
         "transmitter_uuid": "tra-uuid-AAA",
+        "receptor":         "Banco Bradesco S.A.",
+        "transmitter":      "99PAY INSTITUICAO DE PAGAMENTO S.A.",
         "date":             "2026-05-19",
         "total":            150,
-        "cpf":              100,
-        "cnpj":             50,
         "fetched_at":       FETCHED_AT,
     },
     {
         "receptor_uuid":    "rec-uuid-001",
         "transmitter_uuid": "tra-uuid-BBB",
+        "receptor":         "Banco Bradesco S.A.",
+        "transmitter":      "Itaú Unibanco S.A.",
         "date":             "2026-05-19",
         "total":            75,
-        "cpf":              None,
-        "cnpj":             None,
         "fetched_at":       FETCHED_AT,
     },
     {
         "receptor_uuid":    "rec-uuid-002",
         "transmitter_uuid": "tra-uuid-AAA",
+        "receptor":         "Banco do Brasil S.A.",
+        "transmitter":      "99PAY INSTITUICAO DE PAGAMENTO S.A.",
         "date":             "2026-05-19",
         "total":            30,
-        "cpf":              20,
-        "cnpj":             10,
         "fetched_at":       FETCHED_AT,
     },
 ]
@@ -77,8 +77,10 @@ def test_open_db_creates_active_consents_table(in_memory_db):
 def test_open_db_active_consents_columns(in_memory_db):
     con, _ = in_memory_db
     cols = {r[1] for r in con.execute("PRAGMA table_info(active_consents)").fetchall()}
-    assert {"receptor_uuid", "transmitter_uuid", "date", "total",
-            "cpf", "cnpj", "fetched_at"}.issubset(cols)
+    assert {"receptor_uuid", "transmitter_uuid", "receptor", "transmitter",
+            "date", "total", "fetched_at"}.issubset(cols)
+    assert "cpf" not in cols
+    assert "cnpj" not in cols
 
 
 def test_open_db_active_consents_primary_key(in_memory_db):
@@ -103,7 +105,7 @@ def test_upsert_rows_readable(in_memory_db):
     con.commit()
 
     rows = con.execute(
-        "SELECT receptor_uuid, transmitter_uuid, date, total, cpf, cnpj "
+        "SELECT receptor_uuid, transmitter_uuid, receptor, transmitter, date, total "
         "FROM active_consents ORDER BY receptor_uuid, transmitter_uuid"
     ).fetchall()
 
@@ -112,24 +114,25 @@ def test_upsert_rows_readable(in_memory_db):
     r0 = rows[0]
     assert r0[0] == "rec-uuid-001"
     assert r0[1] == "tra-uuid-AAA"
-    assert r0[2] == "2026-05-19"
-    assert r0[3] == 150
-    assert r0[4] == 100   # cpf
-    assert r0[5] == 50    # cnpj
+    assert r0[2] == "Banco Bradesco S.A."
+    assert r0[3] == "99PAY INSTITUICAO DE PAGAMENTO S.A."
+    assert r0[4] == "2026-05-19"
+    assert r0[5] == 150
 
 
-def test_upsert_nullable_cpf_cnpj(in_memory_db):
+def test_upsert_receptor_transmitter_names(in_memory_db):
+    """receptor e transmitter (nomes) são armazenados e retornados corretamente."""
     con, _ = in_memory_db
     upsert_active_consents(con, SAMPLE_RECORDS, FETCHED_AT)
     con.commit()
 
     row = con.execute(
-        "SELECT cpf, cnpj FROM active_consents "
+        "SELECT receptor, transmitter FROM active_consents "
         "WHERE receptor_uuid='rec-uuid-001' AND transmitter_uuid='tra-uuid-BBB'"
     ).fetchone()
     assert row is not None
-    assert row[0] is None   # cpf absent → NULL
-    assert row[1] is None   # cnpj absent → NULL
+    assert row[0] == "Banco Bradesco S.A."
+    assert row[1] == "Itaú Unibanco S.A."
 
 
 def test_upsert_no_duplicates_on_rerun(in_memory_db):

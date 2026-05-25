@@ -92,10 +92,10 @@ def test_no_duplicate_active_consents_rows_on_two_runs(db_path, tmp_path):
         {
             "receptor_uuid":    RECEPTOR_UUID,
             "transmitter_uuid": "tra-uuid-X",
+            "receptor":         "Receptor Teste",
+            "transmitter":      "Transmissor Teste",
             "date":             "2026-05-19",
             "total":            42,
-            "cpf":              None,
-            "cnpj":             None,
             "fetched_at":       STARTED_AT,
         }
     ]

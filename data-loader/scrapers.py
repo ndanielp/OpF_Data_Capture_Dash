@@ -326,14 +326,33 @@ def open_db(path: Path) -> sqlite3.Connection:
         CREATE TABLE IF NOT EXISTS active_consents (
             receptor_uuid    TEXT    NOT NULL,
             transmitter_uuid TEXT    NOT NULL,
+            receptor         TEXT    NOT NULL DEFAULT '',
+            transmitter      TEXT    NOT NULL DEFAULT '',
             date             TEXT    NOT NULL,
             total            INTEGER NOT NULL,
-            cpf              INTEGER,
-            cnpj             INTEGER,
             fetched_at       TEXT    NOT NULL,
             PRIMARY KEY (receptor_uuid, transmitter_uuid, date)
         )
     """)
+
+    # Migration: add name columns se a tabela já existia sem elas.
+    for _col in [
+        "ALTER TABLE active_consents ADD COLUMN receptor TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE active_consents ADD COLUMN transmitter TEXT NOT NULL DEFAULT ''",
+    ]:
+        try:
+            con.execute(_col)
+            con.commit()
+        except sqlite3.OperationalError:
+            pass  # coluna já existe
+
+    # Migration: remove cpf/cnpj — API não fornece esse breakdown.
+    for _drop in ["cpf", "cnpj"]:
+        try:
+            con.execute(f"ALTER TABLE active_consents DROP COLUMN {_drop}")
+            con.commit()
+        except sqlite3.OperationalError:
+            pass  # coluna já removida ou nunca existiu
 
     # Pré-agregação semanal por grupo de API — alimenta Mapa Estratégico e Evolução Temporal.
     con.execute("""
@@ -735,13 +754,18 @@ def fetch_active_consents_for_org(
 
 
 def build_active_consent_records(
-    raw: list[dict], receptor_uuid: str, transmitter_uuid: str, fetched_at: str,
+    raw: list[dict],
+    receptor_uuid: str,
+    transmitter_uuid: str,
+    fetched_at: str,
+    receptor: str = "",
+    transmitter: str = "",
 ) -> list[dict]:
     """Transforma a resposta de /api/consents em registros para active_consents.
 
-    A API retorna [{"value": int, "date": "ISO datetime"}] — sem campo transmitter.
-    O transmitter_uuid vem do contexto da chamada (foi usado como filtro `servers`).
-    cpf/cnpj armazenados como NULL — a API não fornece esse breakdown por par.
+    A API retorna [{"value": int, "date": "ISO datetime"}] — sem campos de nome.
+    receptor/transmitter (nomes legíveis) vêm do contexto da chamada, onde já
+    temos os dicts {label, value} de fetch_orgs()/fetch_transmitters().
     """
     records = []
     for item in raw:
@@ -757,10 +781,10 @@ def build_active_consent_records(
         records.append({
             "receptor_uuid":    receptor_uuid,
             "transmitter_uuid": transmitter_uuid,
+            "receptor":         receptor,
+            "transmitter":      transmitter,
             "date":             date,
             "total":            int(total),
-            "cpf":              None,
-            "cnpj":             None,
             "fetched_at":       fetched_at,
         })
     return records
@@ -774,13 +798,14 @@ def upsert_active_consents(
     Retorna número de linhas escritas.
     """
     rows = [
-        (r["receptor_uuid"], r["transmitter_uuid"], r["date"],
-         r["total"], r.get("cpf"), r.get("cnpj"), fetched_at)
+        (r["receptor_uuid"], r["transmitter_uuid"],
+         r.get("receptor", ""), r.get("transmitter", ""),
+         r["date"], r["total"], fetched_at)
         for r in records
     ]
     con.executemany("""
         INSERT OR REPLACE INTO active_consents
-            (receptor_uuid, transmitter_uuid, date, total, cpf, cnpj, fetched_at)
+            (receptor_uuid, transmitter_uuid, receptor, transmitter, date, total, fetched_at)
         VALUES (?, ?, ?, ?, ?, ?, ?)
     """, rows)
     return len(rows)
@@ -833,6 +858,7 @@ def _worker_run_active_consents(
                     )
                     records = build_active_consent_records(
                         raw, receptor["value"], transmitter["value"], fetched_at,
+                        receptor=receptor["label"], transmitter=transmitter["label"],
                     )
                     if not records:
                         status_label = "empty"
