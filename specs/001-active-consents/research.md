@@ -6,41 +6,30 @@
 
 ---
 
-## R-01: Endpoint Shape (⚠️ RUNTIME DISCOVERY REQUIRED)
+## R-01: Endpoint Shape (✅ CONFIRMED via Playwright Probe — 2026-05-25)
 
 ### Status
-**Partially confirmed via spec assumptions; final payload/response shape must be verified at runtime.**
+**Confirmed.** Endpoint discovered by intercepting webpack chunks and validated with real HTTP calls.
 
-### What is known
-- Source URL: `https://dashboard.openfinancebrasil.org.br/transactional-data/active-consents/receivers`
-- Spec SC-003 commits to: ≤ 1 call per receptor per week; that single call returns ALL transmitters for the receptor
-- Spec Assumption: the endpoint behaves like `unique-consents` — POST with receptor UUID, returns multi-transmitter breakdown
+### Confirmed findings
 
-### Likely hypothesis (must confirm)
+| Attribute | Confirmed value | Note |
+|-----------|----------------|-------|
+| Method | `POST` | ✅ |
+| Path | `/api/consents` | ✅ — NOT `/api/active-consents` as hypothesised |
+| Request body | `{"dates": [...], "clients": [receptor_uuid], "servers": [transmitter_uuid], "role": "client"}` | Field is `clients` (not `orgs`); `servers` filters to one transmitter |
+| Response structure | `[{"value": int, "date": "YYYY-MM-DDTHH:MM:SS.000Z"}]` | One entry per date — aggregated total, NO transmitter_uuid field |
+| CPF/CNPJ breakdown | Not present | API returns only `value` + `date` |
 
-| Attribute | Hypothesis | Basis |
-|-----------|-----------|-------|
-| Method | `POST` | All other collection endpoints use POST |
-| Path | `/api/active-consents` | Mirrors `unique-consents` → `/api/unique-consents` naming |
-| Request body | `{"dates": [...], "orgs": [receiver_uuid], "role": "client"}` | Same shape as unique-consents payload |
-| Response structure | Array of objects with at least `transmitter_uuid` and `total` per date | Required by FR-001 and SC-003 |
-| CPF/CNPJ breakdown | May or may not be present | Spec says "if available, may be stored" |
+### Key implication: per-transmitter breakdown requires one call per receptor×transmitter pair
+Without the `servers` filter, the API returns the aggregate total across all transmitters for the receptor.
+To obtain per-transmitter data, the caller must issue one call per pair with `servers=[transmitter_uuid]`.
+This was validated by comparing:
+- `clients=[Bradesco]`, no `servers` → `value=8,587,003`
+- `clients=[Bradesco]`, `servers=[99PAY]` → `value=23,792`
 
-### Runtime verification steps (operator task)
-1. Navigate to `https://dashboard.openfinancebrasil.org.br/transactional-data/active-consents/receivers` in Chrome DevTools (Network tab)
-2. Select any receptor and a date range
-3. Identify the XHR/Fetch call triggered — capture: URL, method, request body, response body
-4. Confirm or update:
-   - Actual API path
-   - Actual request fields
-   - Response structure (does transmitter breakdown exist at all? is it `transmitter_uuid` or `transmitter_id`?)
-   - Whether CPF/CNPJ breakdown is present
-
-### Impact on implementation
-- If path ≠ `/api/active-consents`: update `_ACTIVE_CONSENTS_API_URL` constant in `scrapers.py`
-- If request body differs: update `fetch_active_consents_for_org()`
-- If response does NOT have per-transmitter breakdown: the feature cannot fulfil FR-001; escalate to spec owner before implementing
-- If response DOES include CPF/CNPJ: add `cpf`/`cnpj` columns to `active_consents` table (additive, safe)
+The hypothesis in the original spec (SC-003: "1 call per receptor returns all transmitters") was **incorrect**.
+Revised approach: 1 call per receptor×transmitter pair; `transmitter_uuid` stored from call context.
 
 ---
 
@@ -65,13 +54,12 @@
 
 ### Decision
 - **Phase string** (used in `fetch_attempts.phase` and `run_summary` aggregation): `"active_consents"`
-- **Target string** (used in `fetch_attempts.target` and `already_done()` lookup): `f"active_consents|||{receptor_uuid}|{date_first}_{date_last}"`
+- **Target string**: `f"active_consents|||{receptor_uuid}|||{transmitter_uuid}|{date_first}_{date_last}"`
 
 ### Rationale
 - Existing patterns: `"consents"` for unique_consents, `"api_requests"` for api_requests, `"payment_initiation"` for payment
-- The double-pipe separator `|||` matches the existing `consents_target()` helper format
-- Using receptor_uuid + date range as the key enables `already_done()` to skip per-receptor per-date on resume (checkpoint at the right granularity — SC-003 confirms 1 call per receptor per week, so this is the natural checkpoint unit)
-- A helper `active_consents_target(receptor_uuid, dates)` should be added to `telemetry.py` alongside `consents_target()`
+- With the per-pair iteration approach (see R-01), the checkpoint key must include both receptor and transmitter — otherwise the second pair for the same receptor would be incorrectly skipped by `already_done()`
+- `active_consents_target(receptor_uuid, dates, transmitter_uuid="")` helper added to `telemetry.py`; `transmitter_uuid` defaults to `""` to allow future aggregate-only collection without a transmitter filter
 
 ---
 
@@ -82,7 +70,7 @@ Add two new columns to `run_summary` using the established additive-migration pa
 - `phase_active_consents_ok INTEGER NOT NULL DEFAULT 0`
 - `phase_active_consents_failed INTEGER NOT NULL DEFAULT 0`
 
-No `_skipped` column needed: active-consents has no probe hierarchy — the single per-receptor call either succeeds, returns empty, or fails.
+No `_skipped` column needed for the active-consents probe hierarchy; `empty` status is counted as `ok` in run_summary (data absent is a valid final state for a pair).
 
 ### Migration pattern (existing, from `telemetry.py:71-74`)
 ```python
@@ -112,11 +100,13 @@ except sqlite3.OperationalError:
 - Worker stagger `_WORKER_STAGGER` avoids simultaneous browser bootstraps (same as current)
 - Each worker owns its own `OpFSession` (required by Playwright thread-safety model)
 
+### Scale consideration (confirmed 2026-05-25)
+The per-pair approach produces N_receptors × N_transmitters pairs. With ~50 receptors × ~100 transmitters = ~5,000 pairs per run. Workers process pairs in parallel; `already_done()` checkpoint avoids re-collecting pairs already fetched on the same day.
+
 ### Probe pruning (Constitution IV)
-- **Pruning N/A for this collection path**: SC-003 explicitly states 1 call per receptor returns all transmitters — there is no per-transmitter or per-api iteration
-- Constitution IV says "any new collection path MUST implement the same three-level pruning _before_ the full `fetch_api_combo()` call" — this applies to api_requests-style endpoints; active_consents is a consent-level endpoint (same category as `run_consents`, not `run_api_requests`)
-- No `fetch_api_combo()` call is made; the equivalent is `fetch_active_consents_for_org()`
-- **Constitution Check**: Mark IV as N/A with justification (consent endpoint, not API-request endpoint)
+- **Pruning N/A for this collection path**: active_consents is a consent-level endpoint (same category as `run_consents`, not `run_api_requests`)
+- Constitution IV applies to api_requests-style hierarchical probing; no `fetch_api_combo()` is called here
+- **Constitution Check**: IV marked N/A with justification (consent endpoint)
 
 ---
 

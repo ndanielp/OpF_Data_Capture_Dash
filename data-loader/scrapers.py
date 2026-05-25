@@ -46,12 +46,12 @@ _RETRY_POLICY = retry(
 _CONSENTS_PAGE_URL = f"{BASE_URL}/transactional-data/unique-consents/receivers"
 _CONSENTS_API_URL  = f"{BASE_URL}/api/unique-consents"
 
-# Consentimentos ativos: endpoint retorna todos os transmissores de um receptor
-# em uma única chamada — não há iteração por transmissor (veja spec SC-003).
-# ⚠️ ENDPOINT NÃO VERIFICADO — confirmar via DevTools antes de usar em produção
-#    (quickstart.md → Step 0). Atualizar _ACTIVE_CONSENTS_API_URL se o path divergir.
+# Consentimentos ativos: endpoint POST /api/consents (confirmado via DevTools).
+# Body: {"dates": [...], "clients": [receptor_uuid], "servers": [transmitter_uuid], "role": "client"}
+# Resposta: [{"value": int, "date": "ISO datetime"}] — sem campo transmitter_uuid;
+# o breakdown por par exige 1 chamada por receptor×transmissor.
 _ACTIVE_CONSENTS_PAGE_URL = f"{BASE_URL}/transactional-data/active-consents/receivers"
-_ACTIVE_CONSENTS_API_URL  = f"{BASE_URL}/api/active-consents"
+_ACTIVE_CONSENTS_API_URL  = f"{BASE_URL}/api/consents"
 
 _API_REQUESTS_PAGE_URL  = f"{BASE_URL}/transactional-data/api-requests/evolution"
 _API_REQUESTS_ENDPOINT  = f"{BASE_URL}/api/api-requests"
@@ -710,18 +710,24 @@ def run_consents(
 
 @_RETRY_POLICY
 def fetch_active_consents_for_org(
-    session: OpFSession, org_uuid: str, dates: list[str],
+    session: OpFSession,
+    receptor_uuid: str,
+    transmitter_uuid: str,
+    dates: list[str],
 ) -> list[dict]:
-    """POST _ACTIVE_CONSENTS_API_URL para um receptor, retornando todos os
-    transmissores com consentimentos ativos no período.
+    """POST /api/consents para um par receptor×transmissor.
 
-    Uma única chamada retorna todos os transmissores (sem iteração por transmissor).
+    Retorna [{"value": int, "date": "ISO datetime"}] — um item por data no período.
+    O campo `servers` filtra para o transmissor específico; sem ele a API agrega
+    todos os transmissores (não fornece breakdown). Por isso iteramos um par por request.
+
     Propaga OpFTransientError (retentado) ou OpFFatalError (imediato).
     """
     data = session.post(_ACTIVE_CONSENTS_API_URL, {
-        "dates": dates,
-        "orgs":  [org_uuid],
-        "role":  "client",
+        "dates":   dates,
+        "clients": [receptor_uuid],
+        "servers": [transmitter_uuid],
+        "role":    "client",
     })
     if isinstance(data, list):
         return data
@@ -729,50 +735,32 @@ def fetch_active_consents_for_org(
 
 
 def build_active_consent_records(
-    raw: list[dict], receptor_uuid: str, fetched_at: str,
+    raw: list[dict], receptor_uuid: str, transmitter_uuid: str, fetched_at: str,
 ) -> list[dict]:
-    """Transforma a resposta bruta do endpoint em registros para active_consents.
+    """Transforma a resposta de /api/consents em registros para active_consents.
 
-    Cada item do raw é esperado ter: transmitter_uuid (ou transmitter/value),
-    date (ou _id), total (ou cpf+cnpj). Os campos cpf/cnpj são opcionais —
-    armazenados se presentes na resposta.
-
-    ⚠️ O mapeamento de campos deve ser ajustado após verificação de DevTools
-    (research.md R-01 / quickstart.md Step 0).
+    A API retorna [{"value": int, "date": "ISO datetime"}] — sem campo transmitter.
+    O transmitter_uuid vem do contexto da chamada (foi usado como filtro `servers`).
+    cpf/cnpj armazenados como NULL — a API não fornece esse breakdown por par.
     """
     records = []
     for item in raw:
-        # Transmitter UUID: tenta campos alternativos que o endpoint pode usar.
-        transmitter_uuid = (
-            item.get("transmitter_uuid")
-            or item.get("transmitterUuid")
-            or item.get("transmitter")
-            or item.get("value")
-            or ""
-        )
-        if not transmitter_uuid:
-            continue  # linha inválida sem transmissor identificável — descarta
-
-        date_raw = str(item.get("date") or item.get("_id") or "")
+        date_raw = str(item.get("date") or "")
         date = parse_record_date(date_raw) if date_raw else ""
         if not date:
             continue
 
-        cpf  = item.get("cpf")
-        cnpj = item.get("cnpj")
-        total = item.get("total")
+        total = item.get("value")
         if total is None:
-            cpf_val  = cpf  if isinstance(cpf,  int) else 0
-            cnpj_val = cnpj if isinstance(cnpj, int) else 0
-            total = cpf_val + cnpj_val
+            continue
 
         records.append({
             "receptor_uuid":    receptor_uuid,
             "transmitter_uuid": transmitter_uuid,
             "date":             date,
             "total":            int(total),
-            "cpf":              cpf  if isinstance(cpf,  int) else None,
-            "cnpj":             cnpj if isinstance(cnpj, int) else None,
+            "cpf":              None,
+            "cnpj":             None,
             "fetched_at":       fetched_at,
         })
     return records
@@ -802,44 +790,50 @@ def _worker_run_active_consents(
     worker_id: int, chunk: list[dict], dates: list[str], fetched_at: str, queue,
     delay_min: float, delay_max: float, db_path: str, run_id: str,
 ) -> None:
-    """Worker para coleta de consentimentos ativos (processo separado).
+    """Worker para coleta de consentimentos ativos por par receptor×transmissor.
 
-    Abre 1 OpFSession reutilizável e faz 1 POST por receptor para o endpoint
-    de consentimentos ativos. Registra cada tentativa em fetch_attempts via
-    telemetry.log_attempt. Usa already_done() para checkpoint cross-run.
+    Cada item em `chunk` é {"receptor": {label, value}, "transmitter": {label, value}}.
+    Faz 1 POST /api/consents por par, com `clients`=[receptor] e `servers`=[transmitter].
+    Registra cada tentativa em fetch_attempts; usa already_done() para checkpoint cross-run.
     """
     from telemetry import active_consents_target, already_done, log_attempt
 
-    date_first, date_last = dates[0][:10], dates[-1][:10]
-    queue.put(("log", worker_id, f"W{worker_id} active_consents: {len(chunk)} receptores"))
+    queue.put(("log", worker_id, f"W{worker_id} active_consents: {len(chunk)} pares"))
 
     time.sleep((worker_id - 1) * _WORKER_STAGGER)
 
     with sync_playwright() as p:
         queue.put(("ready", worker_id, len(chunk)))
         with OpFSession(p) as session:
-            for i, org in enumerate(chunk, 1):
-                target = active_consents_target(org["value"], dates)
+            for i, pair in enumerate(chunk, 1):
+                receptor    = pair["receptor"]
+                transmitter = pair["transmitter"]
+                pair_label  = f"{receptor['label']} x {transmitter['label']}"
+                target = active_consents_target(receptor["value"], dates, transmitter["value"])
 
                 # Checkpoint: pula se já coletado com sucesso hoje.
                 if already_done(db_path, target):
                     queue.put(("log", worker_id,
-                               f"active_consents skip (já coletado): {org['label']}"))
-                    queue.put(("start", worker_id, org["label"], i))
-                    queue.put(("org_done", worker_id, org["label"], 0, 0, []))
+                               f"active_consents skip (ja coletado): {pair_label}"))
+                    queue.put(("start", worker_id, pair_label, i))
+                    queue.put(("org_done", worker_id, pair_label, 0, 0, []))
                     continue
 
                 t0 = time.time()
                 started_iso = datetime.now(timezone.utc).isoformat()
-                queue.put(("start", worker_id, org["label"], i))
+                queue.put(("start", worker_id, pair_label, i))
 
                 records: list[dict] = []
                 status_label = "ok"
                 err_class = None
                 err_msg = None
                 try:
-                    raw = fetch_active_consents_for_org(session, org["value"], dates)
-                    records = build_active_consent_records(raw, org["value"], fetched_at)
+                    raw = fetch_active_consents_for_org(
+                        session, receptor["value"], transmitter["value"], dates,
+                    )
+                    records = build_active_consent_records(
+                        raw, receptor["value"], transmitter["value"], fetched_at,
+                    )
                     if not records:
                         status_label = "empty"
                 except OpFError as exc:
@@ -847,7 +841,7 @@ def _worker_run_active_consents(
                     err_class = type(exc).__name__
                     err_msg = str(exc)[:500]
                     queue.put(("log", worker_id,
-                               f"active_consents FALHOU para '{org['label']}': "
+                               f"active_consents FALHOU para '{pair_label}': "
                                f"{err_class}: {exc}"))
 
                 duration_ms = int((time.time() - t0) * 1000)
@@ -858,8 +852,8 @@ def _worker_run_active_consents(
                     records_count=len(records),
                 )
 
-                queue.put(("org_done", worker_id, org["label"], len(records), 0, records))
-                queue.put(("timing", worker_id, org["label"], duration_ms / 1000.0))
+                queue.put(("org_done", worker_id, pair_label, len(records), 0, records))
+                queue.put(("timing", worker_id, pair_label, duration_ms / 1000.0))
                 time.sleep(random.uniform(delay_min, delay_max))
 
     queue.put(("done", worker_id))
@@ -871,35 +865,46 @@ def run_active_consents(
     run_id: str = "",
     receptor_filter: list[str] | None = None,
 ) -> dict[str, int]:
-    """Coleta consentimentos ativos para todos os receptores × transmissores.
+    """Coleta consentimentos ativos por par receptor×transmissor via POST /api/consents.
 
     Retorna {"ok": N, "failed": M, "skipped": K}.
-    Uma chamada por receptor retorna todos os transmissores (SC-003).
+    A API retorna um valor agregado por request; o breakdown por transmissor
+    exige 1 call por par — `clients`=[receptor] + `servers`=[transmitter].
     """
     log = logger or logging.getLogger(__name__)
     fetched_at = datetime.now(timezone.utc).isoformat()
     db_path = Path(db_path)
 
-    log.info("Consentimentos ativos: carregando lista de receptores...")
+    log.info("Consentimentos ativos: carregando lista de receptores e transmissores...")
     with sync_playwright() as p:
         with OpFSession(p, logger=log) as session:
-            orgs = fetch_orgs(session)
+            orgs         = fetch_orgs(session)
+            transmitters = fetch_transmitters(session)
 
     if receptor_filter:
         lower = [n.lower() for n in receptor_filter]
         orgs = [o for o in orgs if any(n in o["label"].lower() for n in lower)]
 
-    log.info(f"Consentimentos ativos: {len(orgs)} receptores encontrados")
-    if not orgs:
+    log.info(
+        f"Consentimentos ativos: {len(orgs)} receptores x {len(transmitters)} transmissores"
+    )
+    if not orgs or not transmitters:
         return {"ok": 0, "failed": 0, "skipped": 0}
 
+    # Produto cartesiano receptor×transmissor — cada par vira 1 HTTP call.
+    pairs = [
+        {"receptor": org, "transmitter": txm}
+        for org in orgs
+        for txm in transmitters
+    ]
+
     log.info(
-        f"Consentimentos ativos: período {dates[0][:10]} → {dates[-1][:10]} "
-        f"({len(dates)} semanas · {len(orgs)} receptores · {workers} workers)"
+        f"Consentimentos ativos: periodo {dates[0][:10]} -> {dates[-1][:10]} "
+        f"({len(dates)} semanas . {len(pairs)} pares . {workers} workers)"
     )
 
-    n = min(workers, len(orgs))
-    chunks = [orgs[i::n] for i in range(n)]
+    n = min(workers, len(pairs))
+    chunks = [pairs[i::n] for i in range(n)]
 
     con = open_db(db_path)
     con.execute("PRAGMA journal_mode=WAL")

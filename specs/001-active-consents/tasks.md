@@ -14,7 +14,7 @@ description: "Task list for active consents collection feature"
 - [research.md](research.md) — endpoint hypothesis, telemetry naming, pipeline decisions
 - [quickstart.md](quickstart.md) — acceptance SQL queries, endpoint verification steps
 
-> ⚠️ **Runtime prerequisite before T006**: Confirm API endpoint shape via browser DevTools per [quickstart.md → Step 0](quickstart.md). Verify: (1) API path (expected `/api/active-consents`), (2) request body shape, (3) response structure has transmitter-level breakdown. Update `_ACTIVE_CONSENTS_API_URL` if path differs.
+> ✅ **Endpoint confirmed (2026-05-25)**: Verified via Playwright probe. Real endpoint is `POST /api/consents` (NOT `/api/active-consents`). Body: `{"dates", "clients", "servers", "role"}`. Response: `[{"value", "date"}]` — aggregated, no transmitter field. Per-transmitter breakdown requires 1 call per receptor×transmissor pair. Implementation updated accordingly.
 
 **Tests**: Integration tests are **mandatory** per [Constitution II](../../.specify/memory/constitution.md) — every new DB upsert and the `already_done()` guard must have integration tests against a real in-memory SQLite instance.
 

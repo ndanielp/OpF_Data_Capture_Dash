@@ -2,6 +2,7 @@
 
 **Feature**: `001-active-consents`  
 **Created**: 2026-05-25  
+**Updated**: 2026-05-25 — endpoint confirmed via Playwright probe (R-01)  
 **Component**: `data-loader/scrapers.py`
 
 ---
@@ -11,32 +12,36 @@
 ```python
 def fetch_active_consents_for_org(
     session: OpFSession,
-    org_uuid: str,
+    receptor_uuid: str,
+    transmitter_uuid: str,
     dates: list[str],
 ) -> list[dict]:
     ...
 ```
 
 ### Responsibility
-Post a single HTTP request to the active-consents endpoint for one receptor UUID, returning a list of per-transmitter-per-date records. Raises `OpFTransientError` or `OpFFatalError` on HTTP failure (caught by `@_RETRY_POLICY`).
+POST to `POST /api/consents` for one receptor×transmitter pair, returning a list of per-date value records. Raises `OpFTransientError` or `OpFFatalError` on HTTP failure (caught by `@_RETRY_POLICY`).
+
+### Confirmed endpoint (R-01)
+- **Path**: `/api/consents` (NOT `/api/active-consents`)
+- **Body**: `{"dates": [...], "clients": [receptor_uuid], "servers": [transmitter_uuid], "role": "client"}`
+- **Response**: `[{"value": int, "date": "YYYY-MM-DDTHH:MM:SS.000Z"}]` — one entry per date, NO transmitter field
 
 ### Preconditions
 - `session` is an authenticated `OpFSession` (browser bootstrapped, CloudFront cookies valid)
-- `org_uuid` is a valid receptor UUID string (e.g. `"a1b2c3d4-..."`)
+- `receptor_uuid` is a valid receptor UUID string (e.g. `"a1b2c3d4-..."`)
+- `transmitter_uuid` is a valid transmitter UUID string — used as `servers` filter
 - `dates` is a non-empty list of ISO-date strings (weekly grain, e.g. `["2026-04-28", "2026-05-05"]`)
 
 ### Postconditions (success)
-Returns `list[dict]`, where each element has at minimum:
+Returns `list[dict]`, where each element has:
 ```python
 {
-    "transmitter_uuid": str,   # ⚠️ field name subject to R-01 confirmation
-    "date": str,               # ISO date
-    "total": int,
-    # "cpf": int | None,       # optional — present only if source provides
-    # "cnpj": int | None,      # optional — present only if source provides
+    "value": int,   # total active consents for the pair on this date
+    "date": str,    # ISO datetime "YYYY-MM-DDTHH:MM:SS.000Z"
 }
 ```
-Returns `[]` (empty list) when the source returns no data for this receptor/date range.
+Returns `[]` (empty list) when the source returns no data for this pair/date range.
 
 ### Error contract
 - `OpFTransientError` — 5xx or network timeout → retried by `@_RETRY_POLICY`
@@ -45,6 +50,26 @@ Returns `[]` (empty list) when the source returns no data for this receptor/date
 
 ### Side effects
 None. Does not write to DB. Does not log telemetry. Callers are responsible for both.
+
+---
+
+## `build_active_consent_records`
+
+```python
+def build_active_consent_records(
+    raw: list[dict],
+    receptor_uuid: str,
+    transmitter_uuid: str,
+    fetched_at: str,
+) -> list[dict]:
+    ...
+```
+
+### Responsibility
+Transform the raw API response `[{"value", "date"}]` into DB-ready records. The `transmitter_uuid` comes from the call context (it was used as the `servers` filter — the response does not include it).
+
+### Postconditions
+Returns list of dicts with keys: `receptor_uuid`, `transmitter_uuid`, `date`, `total`, `cpf` (None), `cnpj` (None), `fetched_at`.
 
 ---
 
@@ -94,7 +119,7 @@ def run_active_consents(
 ```
 
 ### Responsibility
-Orchestrate parallel collection of active consents for all receptors × date range. Returns a summary dict with `ok`, `failed`, `skipped` counts (for `run_summary` aggregation).
+Orchestrate parallel collection of active consents for all receptor×transmitter pairs × date range. Returns a summary dict with `ok`, `failed`, `skipped` counts (for `run_summary` aggregation).
 
 ### Preconditions
 - DB at `db_path` is initialized (tables exist)
@@ -104,23 +129,23 @@ Orchestrate parallel collection of active consents for all receptors × date ran
 
 ### Postconditions
 - `active_consents` table populated/updated for all matching receptor × transmitter × date combinations
-- `fetch_attempts` table has one row per receptor per date range chunk (status = `ok`, `empty`, or `failed`)
-- Returns `{"ok": N, "failed": M, "skipped": 0}` — no skipped rows (no probe pruning for this endpoint)
+- `fetch_attempts` table has one row per receptor×transmitter pair per date range chunk (status = `ok`, `empty`, or `failed`)
+- Returns `{"ok": N, "failed": M, "skipped": K}` where K = pairs skipped via `already_done()`
 
 ### Checkpoint behaviour
-Calls `telemetry.already_done(db_path, target, run_id=None)` for each receptor before fetching; skips and counts as skipped if already done in any prior run on the same calendar day.
+Calls `telemetry.already_done(db_path, target)` for each pair before fetching; target includes both receptor and transmitter UUIDs for per-pair granularity. Skips if already done in any prior run on the same calendar day.
 
 ### Side effects
 - Writes to `active_consents` table (upsert)
-- Writes to `fetch_attempts` table (one row per receptor)
+- Writes to `fetch_attempts` table (one row per receptor×transmitter pair)
 - Does NOT write to `run_summary` (caller `run_collection()` does that via `finalize_run()`)
 
 ---
 
 ## `open_db` additions
 
-```python
-# New table DDL (added to open_db())
+```sql
+-- New table DDL (added to open_db())
 CREATE TABLE IF NOT EXISTS active_consents (
     receptor_uuid    TEXT    NOT NULL,
     transmitter_uuid TEXT    NOT NULL,
@@ -143,9 +168,16 @@ Additive only — existing tables and indexes are not modified.
 ## `telemetry.py` additions
 
 ```python
-def active_consents_target(receptor_uuid: str, dates: list[str]) -> str:
-    """Build the canonical target string for an active-consents fetch attempt."""
-    return f"active_consents|||{receptor_uuid}|{dates[0]}_{dates[-1]}"
+def active_consents_target(
+    receptor_uuid: str, dates: list[str], transmitter_uuid: str = "",
+) -> str:
+    """Build the canonical target string for an active-consents fetch attempt.
+
+    Includes transmitter_uuid for per-pair checkpoint granularity.
+    Format: active_consents|||{receptor}|||{transmitter}|{date_first}_{date_last}
+    """
+    txm = transmitter_uuid or ""
+    return f"active_consents|||{receptor_uuid}|||{txm}|{dates[0][:10]}_{dates[-1][:10]}"
 ```
 
 Added alongside existing `consents_target()`.

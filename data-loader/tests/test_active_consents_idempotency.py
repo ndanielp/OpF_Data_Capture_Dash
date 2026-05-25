@@ -44,8 +44,17 @@ def db_path(tmp_path):
 
 
 def test_active_consents_target_format():
+    """Formato inclui transmitter_uuid para checkpoint por par receptor×transmissor."""
+    transmitter_uuid = "txm-uuid-001"
+    target = active_consents_target(RECEPTOR_UUID, DATES, transmitter_uuid)
+    assert target == f"active_consents|||{RECEPTOR_UUID}|||{transmitter_uuid}|{DATES[0]}_{DATES[-1]}"
+
+
+def test_active_consents_target_format_no_transmitter():
+    """Sem transmitter_uuid: campo vazio — separadores |||<empty>| ficam concatenados."""
     target = active_consents_target(RECEPTOR_UUID, DATES)
-    assert target == f"active_consents|||{RECEPTOR_UUID}|{DATES[0]}_{DATES[-1]}"
+    # txm="" → f"...|||{receptor}|||{txm}|{dates}" = "...|||receptor||||dates"
+    assert target == f"active_consents|||{RECEPTOR_UUID}||||{DATES[0]}_{DATES[-1]}"
 
 
 def test_not_done_before_any_attempt(db_path):

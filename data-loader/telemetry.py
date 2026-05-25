@@ -85,12 +85,18 @@ def consents_target(receptor_uuid: str, date_first: str, date_last: str) -> str:
     return f"consents|||{receptor_uuid}|{date_first}_{date_last}"
 
 
-def active_consents_target(receptor_uuid: str, dates: list[str]) -> str:
+def active_consents_target(
+    receptor_uuid: str, dates: list[str], transmitter_uuid: str = "",
+) -> str:
     """Target canônico para uma tentativa de coleta de consentimentos ativos.
 
-    Segue o mesmo padrão de consents_target para consistência no already_done().
+    Inclui transmitter_uuid para checkpoint granular por par receptor×transmissor
+    — a API /api/consents retorna um agregado por chamada, então iteramos um par
+    por request. transmitter_uuid omitido (padrão "") preserva compatibilidade
+    com chamadas sem filtro de transmissor (coleta agregada).
     """
-    return f"active_consents|||{receptor_uuid}|{dates[0][:10]}_{dates[-1][:10]}"
+    txm = transmitter_uuid or ""
+    return f"active_consents|||{receptor_uuid}|||{txm}|{dates[0][:10]}_{dates[-1][:10]}"
 
 
 def api_target(
