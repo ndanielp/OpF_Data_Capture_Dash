@@ -13,3 +13,7 @@ data-loader/data/
 data-loader/logs/
 dashboard/data/
 dashboard/logs/
+
+# Spec Kit / Claude Code — estado local (por máquina, não por projeto)
+.specify/feature.json
+.claude/settings.local.json
