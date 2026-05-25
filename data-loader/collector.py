@@ -250,12 +250,26 @@ def run_collection(
     log.info(f"Sextas-feiras: {dates[0][:10]} → {dates[-1][:10]} ({len(dates)} semanas)")
 
     # ── 2. Consentimentos ──────────────────────────────────────────────────────
-    log.info("--- Fase 1: Consentimentos ---")
+    log.info("--- Fase 1a: Consentimentos únicos ---")
     n_consents = scrapers.run_consents(dates=dates, db_path=config.DB_PATH,
                                        workers=_workers, logger=log,
                                        delay_min=delay_min, delay_max=delay_max,
                                        run_id=run_id,
                                        receptor_filter=receptor_filter)
+
+    # ── 2b. Consentimentos ativos (receptor × transmissor) ─────────────────────
+    log.info("--- Fase 1b: Consentimentos ativos ---")
+    ac_summary = scrapers.run_active_consents(
+        dates=dates, db_path=config.DB_PATH,
+        workers=_workers, logger=log,
+        delay_min=delay_min, delay_max=delay_max,
+        run_id=run_id,
+        receptor_filter=receptor_filter,
+    )
+    log.info(
+        f"Consentimentos ativos: ok={ac_summary['ok']} "
+        f"failed={ac_summary['failed']} skipped={ac_summary['skipped']}"
+    )
 
     # ── 3. Receptores ativos ───────────────────────────────────────────────────
     receptors = _active_receptors(config.DB_PATH, dates)
@@ -340,13 +354,18 @@ def run_collection(
         config.DB_PATH, config.DATA_DIR / "api_requests.csv",
         ["date", "receptor_uuid", "transmitter_uuid", "api", "endpoint_id", "status"], log, (start_d, end_d),
     )
+    n_new_ac, n_upd_ac = _sync_csv(
+        "SELECT * FROM active_consents WHERE date BETWEEN ? AND ?",
+        config.DB_PATH, config.DATA_DIR / "active_consents.csv",
+        ["receptor_uuid", "transmitter_uuid", "date"], log, (start_d, end_d),
+    )
 
     duration = round(time.time() - t0, 1)
 
     # Finaliza run_summary e loga resumo de saúde.
     summary = finalize_run(
         config.DB_PATH, run_id,
-        total_upserted=(n_new_c + n_upd_c + n_new_a + n_upd_a),
+        total_upserted=(n_new_c + n_upd_c + n_new_ac + n_upd_ac + n_new_a + n_upd_a),
     )
     api_total = summary.get("phase_api_ok", 0) + summary.get("phase_api_failed", 0)
     api_fail_pct = (
@@ -356,6 +375,8 @@ def run_collection(
     log.info(
         f"Saúde da coleta: consents ok/fail = "
         f"{summary.get('phase_consents_ok', 0)}/{summary.get('phase_consents_failed', 0)} | "
+        f"active_consents ok/fail = "
+        f"{summary.get('phase_active_consents_ok', 0)}/{summary.get('phase_active_consents_failed', 0)} | "
         f"api ok/fail = {summary.get('phase_api_ok', 0)}/{summary.get('phase_api_failed', 0)} "
         f"({api_fail_pct:.1f}% falha)"
     )
@@ -371,19 +392,23 @@ def run_collection(
     log.info("api_group_weekly atualizado.")
 
     return {
-        "run_id":         run_id,
-        "period":         f"{start_d} → {end_d}",
-        "weeks":          len(dates),
-        "receptors":      len(receptors),
-        "n_consents_db":  n_consents,
-        "n_api_db":       n_api,
-        "n_new_consents": n_new_c,
-        "n_upd_consents": n_upd_c,
-        "n_new_api":      n_new_a,
-        "n_upd_api":      n_upd_a,
-        "duration_s":     duration,
-        "api_ok":         summary.get("phase_api_ok", 0),
-        "api_failed":     summary.get("phase_api_failed", 0),
+        "run_id":                    run_id,
+        "period":                    f"{start_d} → {end_d}",
+        "weeks":                     len(dates),
+        "receptors":                 len(receptors),
+        "n_consents_db":             n_consents,
+        "n_api_db":                  n_api,
+        "n_new_consents":            n_new_c,
+        "n_upd_consents":            n_upd_c,
+        "n_new_active_consents":     n_new_ac,
+        "n_upd_active_consents":     n_upd_ac,
+        "n_new_api":                 n_new_a,
+        "n_upd_api":                 n_upd_a,
+        "duration_s":                duration,
+        "active_consents_ok":        summary.get("phase_active_consents_ok", 0),
+        "active_consents_failed":    summary.get("phase_active_consents_failed", 0),
+        "api_ok":                    summary.get("phase_api_ok", 0),
+        "api_failed":                summary.get("phase_api_failed", 0),
     }
 
 

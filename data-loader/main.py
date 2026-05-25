@@ -144,7 +144,12 @@ def cmd_last_run(args):
 
 def cmd_preview(args):
     """Exibe preview do CSV."""
-    name = "consents.csv" if args.dataset == "consents" else "api_requests.csv"
+    name_map = {
+        "consents":        "consents.csv",
+        "api_requests":    "api_requests.csv",
+        "active_consents": "active_consents.csv",
+    }
+    name = name_map.get(args.dataset, f"{args.dataset}.csv")
     csv_path = config.DATA_DIR / name
 
     if not csv_path.exists():
@@ -219,7 +224,7 @@ def main():
 
     # Sub-comando: preview
     parser_preview = subparsers.add_parser("preview", help="Mostra as N últimas linhas de um banco gerado (X.csv).")
-    parser_preview.add_argument("dataset", choices=["consents", "api_requests"], help="Qual base exibir.")
+    parser_preview.add_argument("dataset", choices=["consents", "api_requests", "active_consents"], help="Qual base exibir.")
     parser_preview.add_argument("--rows", "-r", type=int, default=10, help="Número de linhas a exibir do final.")
     parser_preview.set_defaults(func=cmd_preview)
 

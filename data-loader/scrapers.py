@@ -46,6 +46,13 @@ _RETRY_POLICY = retry(
 _CONSENTS_PAGE_URL = f"{BASE_URL}/transactional-data/unique-consents/receivers"
 _CONSENTS_API_URL  = f"{BASE_URL}/api/unique-consents"
 
+# Consentimentos ativos: endpoint retorna todos os transmissores de um receptor
+# em uma única chamada — não há iteração por transmissor (veja spec SC-003).
+# ⚠️ ENDPOINT NÃO VERIFICADO — confirmar via DevTools antes de usar em produção
+#    (quickstart.md → Step 0). Atualizar _ACTIVE_CONSENTS_API_URL se o path divergir.
+_ACTIVE_CONSENTS_PAGE_URL = f"{BASE_URL}/transactional-data/active-consents/receivers"
+_ACTIVE_CONSENTS_API_URL  = f"{BASE_URL}/api/active-consents"
+
 _API_REQUESTS_PAGE_URL  = f"{BASE_URL}/transactional-data/api-requests/evolution"
 _API_REQUESTS_ENDPOINT  = f"{BASE_URL}/api/api-requests"
 
@@ -313,6 +320,21 @@ def open_db(path: Path) -> sqlite3.Connection:
         )
     """)
 
+    # Consentimentos ativos por receptor × transmissor (granularidade semanal).
+    # PK composta garante upsert seguro por INSERT OR REPLACE.
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS active_consents (
+            receptor_uuid    TEXT    NOT NULL,
+            transmitter_uuid TEXT    NOT NULL,
+            date             TEXT    NOT NULL,
+            total            INTEGER NOT NULL,
+            cpf              INTEGER,
+            cnpj             INTEGER,
+            fetched_at       TEXT    NOT NULL,
+            PRIMARY KEY (receptor_uuid, transmitter_uuid, date)
+        )
+    """)
+
     # Pré-agregação semanal por grupo de API — alimenta Mapa Estratégico e Evolução Temporal.
     con.execute("""
         CREATE TABLE IF NOT EXISTS api_group_weekly (
@@ -351,6 +373,10 @@ def open_db(path: Path) -> sqlite3.Connection:
         -- Índices para api_group_weekly
         CREATE INDEX IF NOT EXISTS idx_agw_receptor ON api_group_weekly(receptor_uuid, date);
         CREATE INDEX IF NOT EXISTS idx_agw_date     ON api_group_weekly(date);
+
+        -- active_consents: filtragem por receptor + data (padrão do dashboard).
+        CREATE INDEX IF NOT EXISTS idx_active_consents_receptor_date
+            ON active_consents (receptor_uuid, date);
 
         -- Índices para payment_api_requests (espelha api_requests).
         CREATE INDEX IF NOT EXISTS idx_pi_api_by_receptor
@@ -676,6 +702,274 @@ def run_consents(
 
     log.info(f"Consentimentos: {total_upserted} registros inseridos/atualizados no SQLite")
     return total_upserted
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CONSENTIMENTOS ATIVOS
+# ─────────────────────────────────────────────────────────────────────────────
+
+@_RETRY_POLICY
+def fetch_active_consents_for_org(
+    session: OpFSession, org_uuid: str, dates: list[str],
+) -> list[dict]:
+    """POST _ACTIVE_CONSENTS_API_URL para um receptor, retornando todos os
+    transmissores com consentimentos ativos no período.
+
+    Uma única chamada retorna todos os transmissores (sem iteração por transmissor).
+    Propaga OpFTransientError (retentado) ou OpFFatalError (imediato).
+    """
+    data = session.post(_ACTIVE_CONSENTS_API_URL, {
+        "dates": dates,
+        "orgs":  [org_uuid],
+        "role":  "client",
+    })
+    if isinstance(data, list):
+        return data
+    return []
+
+
+def build_active_consent_records(
+    raw: list[dict], receptor_uuid: str, fetched_at: str,
+) -> list[dict]:
+    """Transforma a resposta bruta do endpoint em registros para active_consents.
+
+    Cada item do raw é esperado ter: transmitter_uuid (ou transmitter/value),
+    date (ou _id), total (ou cpf+cnpj). Os campos cpf/cnpj são opcionais —
+    armazenados se presentes na resposta.
+
+    ⚠️ O mapeamento de campos deve ser ajustado após verificação de DevTools
+    (research.md R-01 / quickstart.md Step 0).
+    """
+    records = []
+    for item in raw:
+        # Transmitter UUID: tenta campos alternativos que o endpoint pode usar.
+        transmitter_uuid = (
+            item.get("transmitter_uuid")
+            or item.get("transmitterUuid")
+            or item.get("transmitter")
+            or item.get("value")
+            or ""
+        )
+        if not transmitter_uuid:
+            continue  # linha inválida sem transmissor identificável — descarta
+
+        date_raw = str(item.get("date") or item.get("_id") or "")
+        date = parse_record_date(date_raw) if date_raw else ""
+        if not date:
+            continue
+
+        cpf  = item.get("cpf")
+        cnpj = item.get("cnpj")
+        total = item.get("total")
+        if total is None:
+            cpf_val  = cpf  if isinstance(cpf,  int) else 0
+            cnpj_val = cnpj if isinstance(cnpj, int) else 0
+            total = cpf_val + cnpj_val
+
+        records.append({
+            "receptor_uuid":    receptor_uuid,
+            "transmitter_uuid": transmitter_uuid,
+            "date":             date,
+            "total":            int(total),
+            "cpf":              cpf  if isinstance(cpf,  int) else None,
+            "cnpj":             cnpj if isinstance(cnpj, int) else None,
+            "fetched_at":       fetched_at,
+        })
+    return records
+
+
+def upsert_active_consents(
+    con: sqlite3.Connection, records: list[dict], fetched_at: str,
+) -> int:
+    """INSERT OR REPLACE em active_consents. Não comita — caller é responsável.
+
+    Retorna número de linhas escritas.
+    """
+    rows = [
+        (r["receptor_uuid"], r["transmitter_uuid"], r["date"],
+         r["total"], r.get("cpf"), r.get("cnpj"), fetched_at)
+        for r in records
+    ]
+    con.executemany("""
+        INSERT OR REPLACE INTO active_consents
+            (receptor_uuid, transmitter_uuid, date, total, cpf, cnpj, fetched_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, rows)
+    return len(rows)
+
+
+def _worker_run_active_consents(
+    worker_id: int, chunk: list[dict], dates: list[str], fetched_at: str, queue,
+    delay_min: float, delay_max: float, db_path: str, run_id: str,
+) -> None:
+    """Worker para coleta de consentimentos ativos (processo separado).
+
+    Abre 1 OpFSession reutilizável e faz 1 POST por receptor para o endpoint
+    de consentimentos ativos. Registra cada tentativa em fetch_attempts via
+    telemetry.log_attempt. Usa already_done() para checkpoint cross-run.
+    """
+    from telemetry import active_consents_target, already_done, log_attempt
+
+    date_first, date_last = dates[0][:10], dates[-1][:10]
+    queue.put(("log", worker_id, f"W{worker_id} active_consents: {len(chunk)} receptores"))
+
+    time.sleep((worker_id - 1) * _WORKER_STAGGER)
+
+    with sync_playwright() as p:
+        queue.put(("ready", worker_id, len(chunk)))
+        with OpFSession(p) as session:
+            for i, org in enumerate(chunk, 1):
+                target = active_consents_target(org["value"], dates)
+
+                # Checkpoint: pula se já coletado com sucesso hoje.
+                if already_done(db_path, target):
+                    queue.put(("log", worker_id,
+                               f"active_consents skip (já coletado): {org['label']}"))
+                    queue.put(("start", worker_id, org["label"], i))
+                    queue.put(("org_done", worker_id, org["label"], 0, 0, []))
+                    continue
+
+                t0 = time.time()
+                started_iso = datetime.now(timezone.utc).isoformat()
+                queue.put(("start", worker_id, org["label"], i))
+
+                records: list[dict] = []
+                status_label = "ok"
+                err_class = None
+                err_msg = None
+                try:
+                    raw = fetch_active_consents_for_org(session, org["value"], dates)
+                    records = build_active_consent_records(raw, org["value"], fetched_at)
+                    if not records:
+                        status_label = "empty"
+                except OpFError as exc:
+                    status_label = "failed"
+                    err_class = type(exc).__name__
+                    err_msg = str(exc)[:500]
+                    queue.put(("log", worker_id,
+                               f"active_consents FALHOU para '{org['label']}': "
+                               f"{err_class}: {exc}"))
+
+                duration_ms = int((time.time() - t0) * 1000)
+                log_attempt(
+                    db_path, run_id, "active_consents", target,
+                    started_iso, duration_ms, status_label,
+                    error_class=err_class, error_msg=err_msg,
+                    records_count=len(records),
+                )
+
+                queue.put(("org_done", worker_id, org["label"], len(records), 0, records))
+                queue.put(("timing", worker_id, org["label"], duration_ms / 1000.0))
+                time.sleep(random.uniform(delay_min, delay_max))
+
+    queue.put(("done", worker_id))
+
+
+def run_active_consents(
+    dates: list[str], db_path: str | Path, workers: int = _WORKER_COUNT,
+    logger=None, delay_min: float = 3.0, delay_max: float = 8.0,
+    run_id: str = "",
+    receptor_filter: list[str] | None = None,
+) -> dict[str, int]:
+    """Coleta consentimentos ativos para todos os receptores × transmissores.
+
+    Retorna {"ok": N, "failed": M, "skipped": K}.
+    Uma chamada por receptor retorna todos os transmissores (SC-003).
+    """
+    log = logger or logging.getLogger(__name__)
+    fetched_at = datetime.now(timezone.utc).isoformat()
+    db_path = Path(db_path)
+
+    log.info("Consentimentos ativos: carregando lista de receptores...")
+    with sync_playwright() as p:
+        with OpFSession(p, logger=log) as session:
+            orgs = fetch_orgs(session)
+
+    if receptor_filter:
+        lower = [n.lower() for n in receptor_filter]
+        orgs = [o for o in orgs if any(n in o["label"].lower() for n in lower)]
+
+    log.info(f"Consentimentos ativos: {len(orgs)} receptores encontrados")
+    if not orgs:
+        return {"ok": 0, "failed": 0, "skipped": 0}
+
+    log.info(
+        f"Consentimentos ativos: período {dates[0][:10]} → {dates[-1][:10]} "
+        f"({len(dates)} semanas · {len(orgs)} receptores · {workers} workers)"
+    )
+
+    n = min(workers, len(orgs))
+    chunks = [orgs[i::n] for i in range(n)]
+
+    con = open_db(db_path)
+    con.execute("PRAGMA journal_mode=WAL")
+    total_ok = total_failed = total_skipped = 0
+
+    with mp.Manager() as mgr:
+        queue = mgr.Queue()
+        with ProcessPoolExecutor(max_workers=n) as executor:
+            futures = {
+                executor.submit(
+                    _worker_run_active_consents, i + 1, chunk, dates, fetched_at,
+                    queue, delay_min, delay_max, str(db_path), run_id,
+                ): i + 1
+                for i, chunk in enumerate(chunks) if chunk
+            }
+            completed: set[int] = set()
+
+            while len(completed) < len(futures):
+                while not queue.empty():
+                    msg = queue.get_nowait()
+                    _handle_queue_msg(msg, log, "ConsentAtivos")
+                    if msg[0] == "org_done" and len(msg) > 5 and msg[5]:
+                        records = msg[5]
+                        upsert_active_consents(con, records, fetched_at)
+                        con.commit()
+                        total_ok += 1
+                    elif msg[0] == "org_done" and len(msg) > 5 and not msg[5]:
+                        # empty or failed — counted per log_attempt in worker
+                        pass
+
+                for future, wid in list(futures.items()):
+                    if future.done() and wid not in completed:
+                        completed.add(wid)
+                        try:
+                            future.result()
+                        except Exception as exc:
+                            log.error(f"ConsentAtivos W{wid} falhou: {exc}")
+
+                time.sleep(0.15)
+
+            while not queue.empty():
+                msg = queue.get_nowait()
+                _handle_queue_msg(msg, log, "ConsentAtivos")
+                if msg[0] == "org_done" and len(msg) > 5 and msg[5]:
+                    records = msg[5]
+                    upsert_active_consents(con, records, fetched_at)
+                    con.commit()
+
+    con.close()
+
+    # Contagens definitivas vêm de fetch_attempts (mais precisas que contagem por queue).
+    try:
+        fa_con = sqlite3.connect(str(db_path), timeout=10)
+        row = fa_con.execute("""
+            SELECT
+                SUM(CASE WHEN status IN ('ok','empty') THEN 1 ELSE 0 END),
+                SUM(CASE WHEN status = 'failed'        THEN 1 ELSE 0 END),
+                SUM(CASE WHEN status = 'skipped'       THEN 1 ELSE 0 END)
+            FROM fetch_attempts
+            WHERE run_id = ? AND phase = 'active_consents'
+        """, (run_id,)).fetchone()
+        fa_con.close()
+        total_ok, total_failed, total_skipped = [x or 0 for x in row]
+    except Exception:
+        pass  # mantém contagens parciais da queue
+
+    log.info(
+        f"Consentimentos ativos: ok={total_ok} failed={total_failed} skipped={total_skipped}"
+    )
+    return {"ok": total_ok, "failed": total_failed, "skipped": total_skipped}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
