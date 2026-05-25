@@ -217,23 +217,35 @@ def run_collection(
     delay_min: float = 3.0,
     delay_max: float = 8.0,
     receptor_filter: list[str] | None = None,
+    phase: str | None = None,
 ) -> dict:
     """
-    Pipeline completo:
+    Pipeline completo ou parcial:
       1. Resolve datas → lista de sextas-feiras
-      2. Coleta consentimentos → SQLite
-      3. Busca receptores ativos
-      4. Coleta API requests → SQLite
-      5. Para cada CSV em data/: lê existente, faz upsert, salva
+      2. [1a] Coleta consentimentos únicos → SQLite
+      3. [1b] Coleta consentimentos ativos → SQLite
+      4. Busca receptores ativos (sempre, quando fase 2 está ativa)
+      5. [2]  Coleta API requests → SQLite
+      6. Exporta CSVs das fases executadas
+
+    phase=None executa todas as fases (comportamento padrão).
+    phase='consents'        → só fase 1a
+    phase='active-consents' → só fase 1b
+    phase='api-requests'    → só fase 2
 
     Retorna dict com estatísticas da execução.
     """
+    run_1a = phase is None or phase == "consents"
+    run_1b = phase is None or phase == "active-consents"
+    run_2  = phase is None or phase == "api-requests"
+
     run_logger = RunLogger()
     log = run_logger.global_()
     run_id = run_logger.run_id
     _workers = workers if workers is not None else config.DEFAULT_WORKERS
 
-    log.info(f"=== Execução iniciada: {run_id} ===")
+    phase_label = phase or "all"
+    log.info(f"=== Execução iniciada: {run_id} (phase={phase_label}) ===")
     log.info(f"Período: {start_date} → {end_date} | workers={_workers}")
     t0 = time.time()
 
@@ -249,116 +261,137 @@ def run_collection(
         return {"error": "Nenhuma sexta-feira no período", "run_id": run_id}
     log.info(f"Sextas-feiras: {dates[0][:10]} → {dates[-1][:10]} ({len(dates)} semanas)")
 
-    # ── 2. Consentimentos ──────────────────────────────────────────────────────
-    log.info("--- Fase 1a: Consentimentos únicos ---")
-    n_consents = scrapers.run_consents(dates=dates, db_path=config.DB_PATH,
-                                       workers=_workers, logger=log,
-                                       delay_min=delay_min, delay_max=delay_max,
-                                       run_id=run_id,
-                                       receptor_filter=receptor_filter)
-
-    # ── 2b. Consentimentos ativos (receptor × transmissor) ─────────────────────
-    log.info("--- Fase 1b: Consentimentos ativos ---")
-    ac_summary = scrapers.run_active_consents(
-        dates=dates, db_path=config.DB_PATH,
-        workers=_workers, logger=log,
-        delay_min=delay_min, delay_max=delay_max,
-        run_id=run_id,
-        receptor_filter=receptor_filter,
-    )
-    log.info(
-        f"Consentimentos ativos: ok={ac_summary['ok']} "
-        f"failed={ac_summary['failed']} skipped={ac_summary['skipped']}"
-    )
-
-    # ── 3. Receptores ativos ───────────────────────────────────────────────────
-    receptors = _active_receptors(config.DB_PATH, dates)
-    receptors = _filter_receptors(receptors, receptor_filter)
-    log.info(f"Receptores ativos: {len(receptors)}")
-
-    # ── 4. API Requests ────────────────────────────────────────────────────────
-    n_api = 0
-    if receptors:
-        # Busca lista de transmissores + discovery de APIs/endpoints antes da
-        # coleta granular (uma única sessão reaproveitada para ambos).
-        log.info("--- Fase 2: API Requests ---")
-        log.info("Buscando lista de transmissores e metadata de APIs...")
-        from playwright.sync_api import sync_playwright
-        from session import OpFSession
-        with sync_playwright() as _p:
-            with OpFSession(_p, logger=log) as _session:
-                transmitters = scrapers.fetch_transmitters(_session)
-                meta = _session.discover_apis_and_endpoints(
-                    cache_path=config.META_CACHE_PATH,
-                    cache_ttl=config.META_CACHE_TTL,
-                )
-        log.info(f"Transmissores: {len(transmitters)}")
-
-        # Decide entre metadata descoberto e fallback hardcoded.
-        apis_arg = None
-        endpoints_arg = None
-        if meta:
-            discovered_apis = meta.get("apis") or []
-            discovered_eps = meta.get("endpoints") or {}
-            total_eps = sum(len(v) for v in discovered_eps.values())
-            # Piso mínimo: só usa discovery se estiver coerente com o que
-            # sabemos do domínio. Caso contrário, mantém hardcoded.
-            if len(discovered_apis) >= 10 and total_eps >= 50:
-                apis_arg = discovered_apis
-                endpoints_arg = discovered_eps
-                log.info(
-                    f"Discovery: usando {len(discovered_apis)} APIs e "
-                    f"{total_eps} endpoints ({meta.get('source', 'live')})"
-                )
-                _persist_endpoint_history(
-                    config.DB_PATH, discovered_eps,
-                    source=meta.get("source", "live"), log=log,
-                )
-            else:
-                log.warning(
-                    f"Discovery: resultado abaixo do piso mínimo "
-                    f"({len(discovered_apis)} APIs / {total_eps} endpoints) — "
-                    f"caindo para fallback hardcoded."
-                )
-        else:
-            log.info("Discovery: sem metadata, usando fallback hardcoded.")
-
-        # Persiste também o fallback como snapshot, para rastreio de drift.
-        if apis_arg is None:
-            _persist_endpoint_history(
-                config.DB_PATH, scrapers.ENDPOINTS, source="fallback", log=log,
-            )
-
-        n_api = scrapers.run_api_requests(dates=dates, receptors=receptors,
-                                           db_path=config.DB_PATH,
+    # ── 2. Consentimentos únicos ───────────────────────────────────────────────
+    n_consents = 0
+    n_new_c = n_upd_c = 0
+    if run_1a:
+        log.info("--- Fase 1a: Consentimentos únicos ---")
+        n_consents = scrapers.run_consents(dates=dates, db_path=config.DB_PATH,
                                            workers=_workers, logger=log,
                                            delay_min=delay_min, delay_max=delay_max,
-                                           transmitters=transmitters,
                                            run_id=run_id,
-                                           apis=apis_arg,
-                                           endpoints_map=endpoints_arg)
+                                           receptor_filter=receptor_filter)
     else:
-        log.warning("Nenhum receptor ativo — fase 2 pulada.")
+        log.info("Fase 1a (consents) ignorada.")
 
-    # ── 5. Exportação CSV local ────────────────────────────────────────────────
+    # ── 3. Consentimentos ativos (receptor × transmissor) ──────────────────────
+    ac_summary: dict = {"ok": 0, "failed": 0, "skipped": 0}
+    n_new_ac = n_upd_ac = 0
+    if run_1b:
+        log.info("--- Fase 1b: Consentimentos ativos ---")
+        ac_summary = scrapers.run_active_consents(
+            dates=dates, db_path=config.DB_PATH,
+            workers=_workers, logger=log,
+            delay_min=delay_min, delay_max=delay_max,
+            run_id=run_id,
+            receptor_filter=receptor_filter,
+        )
+        log.info(
+            f"Consentimentos ativos: ok={ac_summary['ok']} "
+            f"failed={ac_summary['failed']} skipped={ac_summary['skipped']}"
+        )
+    else:
+        log.info("Fase 1b (active-consents) ignorada.")
+
+    # ── 4. Receptores ativos ───────────────────────────────────────────────────
+    # Sempre calculado quando fase 2 está ativa; usa dados já existentes na DB
+    # (permite --phase api-requests sem rodar 1a antes).
+    receptors: list[dict] = []
+    n_api = 0
+    n_new_a = n_upd_a = 0
+    if run_2:
+        receptors = _active_receptors(config.DB_PATH, dates)
+        receptors = _filter_receptors(receptors, receptor_filter)
+        log.info(f"Receptores ativos: {len(receptors)}")
+
+    # ── 5. API Requests ────────────────────────────────────────────────────────
+    if run_2:
+        if receptors:
+            # Busca lista de transmissores + discovery de APIs/endpoints antes da
+            # coleta granular (uma única sessão reaproveitada para ambos).
+            log.info("--- Fase 2: API Requests ---")
+            log.info("Buscando lista de transmissores e metadata de APIs...")
+            from playwright.sync_api import sync_playwright
+            from session import OpFSession
+            with sync_playwright() as _p:
+                with OpFSession(_p, logger=log) as _session:
+                    transmitters = scrapers.fetch_transmitters(_session)
+                    meta = _session.discover_apis_and_endpoints(
+                        cache_path=config.META_CACHE_PATH,
+                        cache_ttl=config.META_CACHE_TTL,
+                    )
+            log.info(f"Transmissores: {len(transmitters)}")
+
+            # Decide entre metadata descoberto e fallback hardcoded.
+            apis_arg = None
+            endpoints_arg = None
+            if meta:
+                discovered_apis = meta.get("apis") or []
+                discovered_eps = meta.get("endpoints") or {}
+                total_eps = sum(len(v) for v in discovered_eps.values())
+                # Piso mínimo: só usa discovery se estiver coerente com o que
+                # sabemos do domínio. Caso contrário, mantém hardcoded.
+                if len(discovered_apis) >= 10 and total_eps >= 50:
+                    apis_arg = discovered_apis
+                    endpoints_arg = discovered_eps
+                    log.info(
+                        f"Discovery: usando {len(discovered_apis)} APIs e "
+                        f"{total_eps} endpoints ({meta.get('source', 'live')})"
+                    )
+                    _persist_endpoint_history(
+                        config.DB_PATH, discovered_eps,
+                        source=meta.get("source", "live"), log=log,
+                    )
+                else:
+                    log.warning(
+                        f"Discovery: resultado abaixo do piso mínimo "
+                        f"({len(discovered_apis)} APIs / {total_eps} endpoints) — "
+                        f"caindo para fallback hardcoded."
+                    )
+            else:
+                log.info("Discovery: sem metadata, usando fallback hardcoded.")
+
+            # Persiste também o fallback como snapshot, para rastreio de drift.
+            if apis_arg is None:
+                _persist_endpoint_history(
+                    config.DB_PATH, scrapers.ENDPOINTS, source="fallback", log=log,
+                )
+
+            n_api = scrapers.run_api_requests(dates=dates, receptors=receptors,
+                                               db_path=config.DB_PATH,
+                                               workers=_workers, logger=log,
+                                               delay_min=delay_min, delay_max=delay_max,
+                                               transmitters=transmitters,
+                                               run_id=run_id,
+                                               apis=apis_arg,
+                                               endpoints_map=endpoints_arg)
+        else:
+            log.warning("Nenhum receptor ativo — fase 2 pulada.")
+    else:
+        log.info("Fase 2 (api-requests) ignorada.")
+
+    # ── 6. Exportação CSV local (só das fases executadas) ──────────────────────
     log.info("--- Exportação CSV local ---")
     start_d, end_d = dates[0][:10], dates[-1][:10]
 
-    n_new_c, n_upd_c = _sync_csv(
-        "SELECT * FROM unique_consents WHERE date BETWEEN ? AND ?",
-        config.DB_PATH, config.DATA_DIR / "consents.csv",
-        ["date", "receptor_uuid"], log, (start_d, end_d),
-    )
-    n_new_a, n_upd_a = _sync_csv(
-        "SELECT * FROM api_requests WHERE date BETWEEN ? AND ?",
-        config.DB_PATH, config.DATA_DIR / "api_requests.csv",
-        ["date", "receptor_uuid", "transmitter_uuid", "api", "endpoint_id", "status"], log, (start_d, end_d),
-    )
-    n_new_ac, n_upd_ac = _sync_csv(
-        "SELECT * FROM active_consents WHERE date BETWEEN ? AND ?",
-        config.DB_PATH, config.DATA_DIR / "active_consents.csv",
-        ["receptor_uuid", "transmitter_uuid", "date"], log, (start_d, end_d),
-    )
+    if run_1a:
+        n_new_c, n_upd_c = _sync_csv(
+            "SELECT * FROM unique_consents WHERE date BETWEEN ? AND ?",
+            config.DB_PATH, config.DATA_DIR / "consents.csv",
+            ["date", "receptor_uuid"], log, (start_d, end_d),
+        )
+    if run_2:
+        n_new_a, n_upd_a = _sync_csv(
+            "SELECT * FROM api_requests WHERE date BETWEEN ? AND ?",
+            config.DB_PATH, config.DATA_DIR / "api_requests.csv",
+            ["date", "receptor_uuid", "transmitter_uuid", "api", "endpoint_id", "status"], log, (start_d, end_d),
+        )
+    if run_1b:
+        n_new_ac, n_upd_ac = _sync_csv(
+            "SELECT * FROM active_consents WHERE date BETWEEN ? AND ?",
+            config.DB_PATH, config.DATA_DIR / "active_consents.csv",
+            ["receptor_uuid", "transmitter_uuid", "date"], log, (start_d, end_d),
+        )
 
     duration = round(time.time() - t0, 1)
 
@@ -382,33 +415,35 @@ def run_collection(
     )
     log.info(f"=== Concluído em {duration}s ===")
 
-    # Mantém api_group_weekly em sincronia para o dashboard.
-    log.info("Atualizando api_group_weekly...")
-    _agw_con = sqlite3.connect(str(config.DB_PATH))
-    try:
-        scrapers.refresh_api_group_weekly(_agw_con)
-    finally:
-        _agw_con.close()
-    log.info("api_group_weekly atualizado.")
+    # Mantém api_group_weekly em sincronia para o dashboard (só quando fase 2 rodou).
+    if run_2:
+        log.info("Atualizando api_group_weekly...")
+        _agw_con = sqlite3.connect(str(config.DB_PATH))
+        try:
+            scrapers.refresh_api_group_weekly(_agw_con)
+        finally:
+            _agw_con.close()
+        log.info("api_group_weekly atualizado.")
 
     return {
+        "phase":                     phase_label,
         "run_id":                    run_id,
         "period":                    f"{start_d} → {end_d}",
         "weeks":                     len(dates),
         "receptors":                 len(receptors),
-        "n_consents_db":             n_consents,
-        "n_api_db":                  n_api,
-        "n_new_consents":            n_new_c,
-        "n_upd_consents":            n_upd_c,
-        "n_new_active_consents":     n_new_ac,
-        "n_upd_active_consents":     n_upd_ac,
-        "n_new_api":                 n_new_a,
-        "n_upd_api":                 n_upd_a,
+        "n_consents_db":             n_consents   if run_1a else None,
+        "n_api_db":                  n_api        if run_2  else None,
+        "n_new_consents":            n_new_c      if run_1a else None,
+        "n_upd_consents":            n_upd_c      if run_1a else None,
+        "n_new_active_consents":     n_new_ac     if run_1b else None,
+        "n_upd_active_consents":     n_upd_ac     if run_1b else None,
+        "n_new_api":                 n_new_a      if run_2  else None,
+        "n_upd_api":                 n_upd_a      if run_2  else None,
         "duration_s":                duration,
-        "active_consents_ok":        summary.get("phase_active_consents_ok", 0),
-        "active_consents_failed":    summary.get("phase_active_consents_failed", 0),
-        "api_ok":                    summary.get("phase_api_ok", 0),
-        "api_failed":                summary.get("phase_api_failed", 0),
+        "active_consents_ok":        summary.get("phase_active_consents_ok", 0) if run_1b else None,
+        "active_consents_failed":    summary.get("phase_active_consents_failed", 0) if run_1b else None,
+        "api_ok":                    summary.get("phase_api_ok", 0)     if run_2 else None,
+        "api_failed":                summary.get("phase_api_failed", 0) if run_2 else None,
     }
 
 

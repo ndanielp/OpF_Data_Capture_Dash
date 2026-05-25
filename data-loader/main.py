@@ -42,6 +42,7 @@ def cmd_run(args):
             delay_min=args.delay_min,
             delay_max=args.delay_max,
             receptor_filter=args.receptor_filter,
+            phase=args.phase,
         )
         
         if "error" in result:
@@ -188,6 +189,13 @@ def main():
         metavar="NAME",
         default=None,
         help="Filtra receptores por nome (substring, case-insensitive). Ex: -r Bradesco Itau",
+    )
+    parser_run.add_argument(
+        "--phase", "-p",
+        choices=["consents", "active-consents", "api-requests"],
+        default=None,
+        metavar="PHASE",
+        help="Executa apenas uma fase: consents (1a), active-consents (1b), api-requests (2). Padrão: todas.",
     )
     parser_run.set_defaults(func=cmd_run)
 
