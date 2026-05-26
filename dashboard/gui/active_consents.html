@@ -648,32 +648,6 @@
         </div>
       </div>
 
-      <!-- Card 2: Ranking (two-col) -->
-      <div class="two-col">
-        <div class="chart-card" id="card-ranking-receptor">
-          <div class="chart-head">
-            <div>
-              <div class="chart-title">Top Receptores</div>
-              <div class="chart-subtitle" id="ranking-rec-refdate"></div>
-            </div>
-          </div>
-          <div id="ranking-receptor-wrap">
-            <div class="chart-empty">Carregando…</div>
-          </div>
-        </div>
-        <div class="chart-card" id="card-ranking-transmitter">
-          <div class="chart-head">
-            <div>
-              <div class="chart-title">Top Transmissores</div>
-              <div class="chart-subtitle" id="ranking-txm-refdate"></div>
-            </div>
-          </div>
-          <div id="ranking-transmitter-wrap">
-            <div class="chart-empty">Carregando…</div>
-          </div>
-        </div>
-      </div>
-
       <!-- Card 3: Matriz Receptor × Transmissor -->
       <div class="chart-card" id="card-matrix">
         <div class="chart-head" style="justify-content:space-between; align-items:flex-start;">
@@ -1196,8 +1170,6 @@ async function _refreshNow() {
   _saveFilters();
   await Promise.all([
     loadEvolution(_evolutionBy),
-    loadRanking('receptor'),
-    loadRanking('transmitter'),
     loadTornado(),
     loadMatrix(),
     loadIntensity(),
@@ -1296,59 +1268,7 @@ async function loadEvolution(by) {
 }
 
 /* ============================================================
-   LOAD — Section 2: Ranking
-   ============================================================ */
-async function loadRanking(by) {
-  const cardId  = by === 'receptor' ? 'card-ranking-receptor' : 'card-ranking-transmitter';
-  const wrapId  = by === 'receptor' ? 'ranking-receptor-wrap' : 'ranking-transmitter-wrap';
-  const dateId  = by === 'receptor' ? 'ranking-rec-refdate'   : 'ranking-txm-refdate';
-  const wrap    = document.getElementById(wrapId);
-
-  setCardLoading(cardId, true);
-  wrap.innerHTML = '<div class="chart-empty">Carregando…</div>';
-
-  const p = _filterParams();
-  p.set('by', by);
-  p.set('limit', '10');
-
-  let data;
-  try {
-    const r = await fetch('/api/active-consents/ranking?' + p);
-    data = await r.json();
-  } catch {
-    setCardLoading(cardId, false);
-    wrap.innerHTML = '<div class="chart-empty">Erro ao carregar dados</div>';
-    return;
-  }
-  setCardLoading(cardId, false);
-
-  document.getElementById(dateId).textContent =
-    data.reference_date ? `Semana de ${data.reference_date}` : '';
-
-  if (!data.items || data.items.length === 0) {
-    wrap.innerHTML = '<div class="chart-empty">Nenhum dado disponível</div>';
-    return;
-  }
-
-  const maxTotal = Math.max(...data.items.map(i => i.total));
-  const html = data.items.map(item => {
-    const pct  = maxTotal > 0 ? (item.total / maxTotal * 100).toFixed(1) : 0;
-    const delta = item.delta_pct;
-    const cls  = delta == null ? 'neutral' : delta >= 0 ? 'positive' : 'negative';
-    return `<div class="ranking-item">
-      <div class="ranking-name" title="${item.name}">${item.name}</div>
-      <div class="ranking-bar-wrap">
-        <div class="ranking-bar" style="width:${pct}%;background:${item.color}"></div>
-      </div>
-      <div class="ranking-total">${_fmt(item.total)}</div>
-      <div class="ranking-delta ${cls}">${_fmtDelta(delta)}</div>
-    </div>`;
-  }).join('');
-  wrap.innerHTML = `<div class="ranking-list">${html}</div>`;
-}
-
-/* ============================================================
-   LOAD — Section 2b: Tornado
+   LOAD — Section 2: Tornado
    ============================================================ */
 async function loadTornado() {
   setCardLoading('card-tornado-active', true);
