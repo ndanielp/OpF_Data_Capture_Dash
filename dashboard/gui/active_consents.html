@@ -827,14 +827,14 @@ function renderMatrix(rowPerm, colPerm) {
   const { receptors, transmitters, values, max_value } = _matrixData;
   const table = document.getElementById('matrix-table');
 
-  // Calcular totais marginais
-  const colTotals = transmitters.map((_, j) =>
-    receptors.reduce((s, _, i) => s + (values[i][j] || 0), 0)
-  );
+  // Totais marginais de linha (filtrados — refletem só os receptores visíveis)
   const rowTotals = receptors.map((_, i) =>
     transmitters.reduce((s, _, j) => s + (values[i][j] || 0), 0)
   );
-  const grandTotal = rowTotals.reduce((s, v) => s + v, 0);
+  // Totais de coluna globais (independentes do filtro de receptor) — vindos do backend
+  const _txmGlobal = _matrixData.transmitter_totals || {};
+  const colTotals  = transmitters.map(txm => _txmGlobal[txm] || 0);
+  const grandTotal = _matrixData.grand_total_global ?? rowTotals.reduce((s, v) => s + v, 0);
 
   // Build thead — coluna Total fixada após row-header
   let thead = '<tr><th class="row-header">Receptor \\ Transmissor</th>';
@@ -852,7 +852,7 @@ function renderMatrix(rowPerm, colPerm) {
   const _totalCell = (v) => v === 0
     ? `<td style="background:var(--bg-elevated);color:var(--text-muted)">—</td>`
     : `<td style="background:var(--bg-elevated);color:var(--text-secondary);font-weight:600">${_fmtShort(v)}</td>`;
-  let totalRow = `<tr><td class="row-label" style="font-weight:600">Total</td>${_totalCell(grandTotal)}`;
+  let totalRow = `<tr><td class="row-label" style="font-weight:600" title="Totais globais por transmissor — independentes do filtro de receptores">Total</td>${_totalCell(grandTotal)}`;
   colPerm.forEach((j) => { totalRow += _totalCell(colTotals[j] || 0); });
   totalRow += '</tr>';
   tbody += totalRow;
@@ -896,12 +896,15 @@ function _applyMatrixSort() {
 
   let rowPerm, colPerm;
 
+  // Totais globais de transmissor (independentes do filtro de receptor) para ordenação padrão
+  const _txmG = (_matrixData && _matrixData.transmitter_totals) || {};
+  const _colGlobalTotals = transmitters.map(txm => _txmG[txm] || 0);
+
   if (_matrixSort === null) {
-    // Default: sort by totals
+    // Default: sort by totals — colunas por total global do transmissor
     const rowTotals = receptors.map((_, i) => _rowTotal(i));
-    const colTotals = transmitters.map((_, j) => _colTotal(j));
     rowPerm = _sortedPerm(rowTotals, receptors);
-    colPerm = _sortedPerm(colTotals, transmitters);
+    colPerm = _sortedPerm(_colGlobalTotals, transmitters);
   } else if (_matrixSort.axis === 'row') {
     // Row (receptor) clicked → sort columns by that receptor's values
     const i = _matrixSort.index;
@@ -915,9 +918,8 @@ function _applyMatrixSort() {
     const j = _matrixSort.index;
     const rowVals = receptors.map((_, i) => _matrixData.values[i][j] || 0);
     rowPerm = _sortedPerm(rowVals, receptors);
-    // Col order stays as default
-    const colTotals = transmitters.map((_, ci) => _colTotal(ci));
-    colPerm = _sortedPerm(colTotals, transmitters);
+    // Col order stays as default (totais globais para consistência visual)
+    colPerm = _sortedPerm(_colGlobalTotals, transmitters);
   }
 
   renderMatrix(rowPerm, colPerm);

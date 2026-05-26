@@ -209,6 +209,14 @@ def matrix(
                     "ORDER BY receptor, transmitter",
                     (latest,),
                 ).fetchall()
+
+            # Totais globais por transmissor (sem filtro de receptor) — mesma semana
+            global_txm_rows = con.execute(
+                "SELECT transmitter, SUM(total) AS total "
+                "FROM active_consents WHERE date = ? "
+                "GROUP BY transmitter",
+                (latest,),
+            ).fetchall()
         finally:
             con.close()
     except Exception:
@@ -235,12 +243,19 @@ def matrix(
         for rec in rec_order
     ]
 
+    # transmitter_totals: global (all receptors); grand_total_global: soma dos
+    # transmissores visíveis na matriz (não necessariamente todos do ecossistema)
+    txm_global: dict[str, int] = {r[0]: r[1] for r in global_txm_rows}
+    grand_total_global = sum(txm_global.get(txm, 0) for txm in txm_order)
+
     return JSONResponse({
-        "receptors":      rec_order,
-        "transmitters":   txm_order,
-        "values":         values,
-        "reference_date": latest,
-        "max_value":      max_value,
+        "receptors":          rec_order,
+        "transmitters":       txm_order,
+        "values":             values,
+        "reference_date":     latest,
+        "max_value":          max_value,
+        "transmitter_totals": txm_global,
+        "grand_total_global": grand_total_global,
     })
 
 
