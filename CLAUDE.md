@@ -152,5 +152,5 @@ Omitting optional fields in `/api/api-requests` acts as "no filter" — used by 
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan
-at `specs/002-active-consents-views/plan.md`.
+at `specs/004-matrix-sort/plan.md`.
 <!-- SPECKIT END -->
