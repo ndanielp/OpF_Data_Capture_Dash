@@ -382,6 +382,12 @@
       font-family: inherit; font-size: var(--tx-xs);
       max-width: 200px; overflow: hidden; text-overflow: ellipsis;
     }
+    #matrix-table th[data-col-idx],
+    #matrix-table th[data-row-idx]  { cursor: pointer; user-select: none; }
+    #matrix-table th[data-col-idx]:hover,
+    #matrix-table th[data-row-idx]:hover { background: var(--bg-hover); }
+    #matrix-table th.sort-active    { font-weight: 700; text-decoration: underline dotted; color: var(--text-accent); }
+
     #matrix-tooltip {
       position: fixed;
       background: var(--bg-elevated);
@@ -611,11 +617,12 @@
 
       <!-- Card 3: Matriz Receptor × Transmissor -->
       <div class="chart-card" id="card-matrix">
-        <div class="chart-head">
+        <div class="chart-head" style="justify-content:space-between; align-items:flex-start;">
           <div>
             <div class="chart-title">Matriz Receptor × Transmissor</div>
             <div class="chart-subtitle" id="matrix-refdate">Semana mais recente no período</div>
           </div>
+          <button id="btn-matrix-reset" class="quick-btn" style="display:none; font-size:var(--tx-sm); margin-top:2px;" title="Restaurar ordenação padrão">↺ Redefinir</button>
         </div>
         <div id="matrix-empty" class="chart-empty" style="display:none">
           Nenhum dado disponível para o período selecionado
@@ -700,6 +707,8 @@ let _evolutionBy = 'receptor';
 let _allReceptors = [];      // [{label, color, top, uuid}]
 let _dbMinDate   = null;
 let _dbMaxDate   = null;
+let _matrixData  = null;     // raw API response: {receptors, transmitters, values, max_value, reference_date}
+let _matrixSort  = null;     // null=default | {axis:'row',index:i} | {axis:'col',index:j}
 
 /* ============================================================
    HELPERS
@@ -744,6 +753,122 @@ function setCardLoading(id, on) {
   const el = document.getElementById(id);
   if (el) el.classList.toggle('card-loading', on);
 }
+
+/* ============================================================
+   MATRIX SORT HELPERS — client-side, no network call
+   ============================================================ */
+// Returns array of indices sorted by totals[i] desc; ties broken alphabetically by labels[i]
+function _sortedPerm(totals, labels) {
+  return totals.map((_, i) => i).sort((a, b) => {
+    if (totals[b] !== totals[a]) return totals[b] - totals[a];
+    return labels[a].localeCompare(labels[b]);
+  });
+}
+
+// Sum of row i across all transmitter columns
+function _rowTotal(i) {
+  if (!_matrixData) return 0;
+  return _matrixData.transmitters.reduce((s, _, j) => s + (_matrixData.values[i][j] || 0), 0);
+}
+
+// Sum of column j across all receptor rows
+function _colTotal(j) {
+  if (!_matrixData) return 0;
+  return _matrixData.receptors.reduce((s, _, i) => s + (_matrixData.values[i][j] || 0), 0);
+}
+
+function renderMatrix(rowPerm, colPerm) {
+  const { receptors, transmitters, values, max_value } = _matrixData;
+  const table = document.getElementById('matrix-table');
+
+  // Build thead
+  let thead = '<tr><th class="row-header">Receptor \\ Transmissor</th>';
+  colPerm.forEach((j, colPos) => {
+    const t = transmitters[j];
+    const short = t.length > 12 ? t.slice(0, 12) + '…' : t;
+    const isActive = _matrixSort?.axis === 'col' && _matrixSort.index === j;
+    thead += `<th title="${t}" data-col-idx="${j}" class="${isActive ? 'sort-active' : ''}">${short}</th>`;
+  });
+  thead += '</tr>';
+
+  // Build tbody
+  let tbody = '';
+  rowPerm.forEach((i, rowPos) => {
+    const rec = receptors[i];
+    const isActive = _matrixSort?.axis === 'row' && _matrixSort.index === i;
+    let row = `<tr><td class="row-label" title="${rec}" data-row-idx="${i}" style="cursor:pointer${isActive ? ';font-weight:700;text-decoration:underline dotted;color:var(--text-accent)' : ''}">${rec.length > 22 ? rec.slice(0, 22) + '…' : rec}</td>`;
+    colPerm.forEach((j) => {
+      const v  = values[i][j] || 0;
+      const bg = heatColor(v, max_value);
+      const fg = v > max_value * 0.5 ? '#fff' : '#8B95B0';
+      const lbl = v > 0 ? _fmt(v) : '';
+      row += `<td style="background:${bg};color:${fg}"
+                  data-rec="${rec}" data-txm="${transmitters[j]}" data-val="${v}"
+                  onmouseenter="showTip(event)" onmouseleave="hideTip()">${lbl}</td>`;
+    });
+    row += '</tr>';
+    tbody += row;
+  });
+
+  table.innerHTML = `<thead>${thead}</thead><tbody>${tbody}</tbody>`;
+}
+
+function _applyMatrixSort() {
+  if (!_matrixData) return;
+  const { receptors, transmitters } = _matrixData;
+
+  let rowPerm, colPerm;
+
+  if (_matrixSort === null) {
+    // Default: sort by totals
+    const rowTotals = receptors.map((_, i) => _rowTotal(i));
+    const colTotals = transmitters.map((_, j) => _colTotal(j));
+    rowPerm = _sortedPerm(rowTotals, receptors);
+    colPerm = _sortedPerm(colTotals, transmitters);
+  } else if (_matrixSort.axis === 'row') {
+    // Row (receptor) clicked → sort columns by that receptor's values
+    const i = _matrixSort.index;
+    const colVals = transmitters.map((_, j) => _matrixData.values[i][j] || 0);
+    colPerm = _sortedPerm(colVals, transmitters);
+    // Row order stays as default
+    const rowTotals = receptors.map((_, ri) => _rowTotal(ri));
+    rowPerm = _sortedPerm(rowTotals, receptors);
+  } else {
+    // Col (transmitter) clicked → sort rows by that transmitter's values
+    const j = _matrixSort.index;
+    const rowVals = receptors.map((_, i) => _matrixData.values[i][j] || 0);
+    rowPerm = _sortedPerm(rowVals, receptors);
+    // Col order stays as default
+    const colTotals = transmitters.map((_, ci) => _colTotal(ci));
+    colPerm = _sortedPerm(colTotals, transmitters);
+  }
+
+  renderMatrix(rowPerm, colPerm);
+
+  // Show/hide reset button
+  const resetBtn = document.getElementById('btn-matrix-reset');
+  if (resetBtn) resetBtn.style.display = _matrixSort !== null ? 'inline-flex' : 'none';
+}
+
+function _setMatrixSort(sort) {
+  _matrixSort = sort;
+  _applyMatrixSort();
+}
+
+// Event delegation for th clicks on the matrix table
+document.getElementById('matrix-container').addEventListener('click', function (e) {
+  if (!_matrixData) return;
+  // Column header (transmitter) click → sort rows
+  const colTh = e.target.closest('th[data-col-idx]');
+  if (colTh) { _setMatrixSort({ axis: 'col', index: +colTh.dataset.colIdx }); return; }
+  // Row label (receptor) click → sort columns
+  const rowTd = e.target.closest('td[data-row-idx]');
+  if (rowTd) { _setMatrixSort({ axis: 'row', index: +rowTd.dataset.rowIdx }); return; }
+});
+
+document.getElementById('btn-matrix-reset').addEventListener('click', function () {
+  _setMatrixSort(null);
+});
 
 /* ============================================================
    FILTER PARAMS & SESSION STORAGE — III + VI §6.6
@@ -1107,6 +1232,7 @@ async function loadMatrix() {
   setCardLoading('card-matrix', false);
 
   if (!data.receptors || data.receptors.length === 0) {
+    _matrixData = null;
     matEmpty.style.display = 'flex';
     return;
   }
@@ -1118,33 +1244,11 @@ async function loadMatrix() {
     document.getElementById('stat-refdate').textContent = data.reference_date;
   }
 
-  const table = document.getElementById('matrix-table');
-  const { receptors, transmitters, values, max_value } = data;
+  // Store raw data and reset sort state (FR-010: new filter → default order)
+  _matrixData = data;
+  _matrixSort = null;
+  _applyMatrixSort();
 
-  let thead = '<tr><th class="row-header">Receptor \\ Transmissor</th>';
-  transmitters.forEach(t => {
-    const short = t.length > 12 ? t.slice(0, 12) + '…' : t;
-    thead += `<th title="${t}">${short}</th>`;
-  });
-  thead += '</tr>';
-
-  let tbody = '';
-  receptors.forEach((rec, i) => {
-    let row = `<tr><td class="row-label" title="${rec}">${rec.length > 22 ? rec.slice(0, 22) + '…' : rec}</td>`;
-    transmitters.forEach((txm, j) => {
-      const v  = values[i][j];
-      const bg = heatColor(v, max_value);
-      const fg = v > max_value * 0.5 ? '#fff' : '#8B95B0';
-      const lbl = v > 0 ? _fmt(v) : '';
-      row += `<td style="background:${bg};color:${fg}"
-                  data-rec="${rec}" data-txm="${txm}" data-val="${v}"
-                  onmouseenter="showTip(event)" onmouseleave="hideTip()">${lbl}</td>`;
-    });
-    row += '</tr>';
-    tbody += row;
-  });
-
-  table.innerHTML = `<thead>${thead}</thead><tbody>${tbody}</tbody>`;
   matCont.style.display = 'block';
 }
 
