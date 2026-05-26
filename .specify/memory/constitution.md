@@ -1,31 +1,31 @@
 <!--
 SYNC IMPACT REPORT
 ==================
-Version change: 0.0.0 (template placeholder) → 1.0.0
-Bump type: MINOR — first full ratification of a previously empty template.
+Version change: 1.0.0 → 1.1.0
+Bump type: MINOR — new principle added (VI: UI Shell Contract).
 
 Modified principles:
-  All principles are NEW (template had only bracketed placeholders).
+  Principle III expanded: added explicit reference to Principle VI for shell
+  structure (cross-reference only; no semantic change to III).
 
 Added sections:
-  - Core Principles (I–V)
-  - Stack Constraints
-  - Development Workflow
-  - Governance
+  - Principle VI: UI Shell Contract (new)
+  - Shell Contract reference table in Principle III
 
 Removed sections:
-  - None (template placeholders replaced)
+  - None
 
 Templates reviewed:
-  ✅ .specify/templates/plan-template.md — Constitution Check gates now map to
-     Principles I–V; no structural change needed to the template itself.
-  ✅ .specify/templates/spec-template.md — User stories and acceptance scenarios
-     align with Principle III (UX consistency) and Principle II (testing).
-  ✅ .specify/templates/tasks-template.md — Phase structure and [P] parallel
-     markers align with Principle V (implementation paradigm).
+  ✅ .specify/templates/plan-template.md — Constitution Check gates should
+     now include a VI-gate: "Does this feature touch a dashboard page? If so,
+     does it follow the shell contract?"
+  ✅ .specify/templates/spec-template.md — No structural change needed;
+     acceptance criteria for UI features should reference the shell components.
+  ✅ .specify/templates/tasks-template.md — No structural change needed.
 
 Follow-up TODOs:
-  - None. All fields fully resolved.
+  - Apply shell contract to active_consents.html (feature 003-ui-shell-ativos).
+  - Add Constitution Check VI gate to plan-template.md on next plan run.
 -->
 
 # OpF Data Capture & Dashboard Constitution
@@ -80,26 +80,31 @@ implementation details.
 
 ### III. User Experience Consistency
 
-All dashboard views MUST share a single visual and behavioral contract:
+All dashboard views MUST share a single visual and behavioral contract. The
+structural shell is defined in Principle VI below; the data/behavior rules are:
 
 - **Color palette**: All chart colors MUST be sourced from
   `dashboard/services/constants.py::API_GROUPS`. Hardcoded hex values in HTML
   or JavaScript are PROHIBITED.
 - **Filter behavior**: Date range (`start`/`end`) and receptor filter
-  (`receptors`) MUST behave identically across `dashboard.html` and
-  `receptor_profile.html`. A filter applied in one view MUST produce the same
-  subset of data when the equivalent filter is applied in the other.
+  (`receptors`) MUST behave identically across all dashboard pages. A filter
+  applied in one view MUST produce the same subset of data when the equivalent
+  filter is applied in another.
 - **Group metadata**: Any new API group MUST be added to `API_GROUPS` first.
   The router's `/api/of/api-groups` and `/api/of/brand-colors` endpoints are
   the single source of truth consumed by the frontend at boot.
 - **Loading states and error messages**: Charts MUST display a visible loading
-  indicator during fetch and a human-readable error message (not a raw HTTP
-  status code) on failure.
+  indicator (`.card-loading` sweep animation) during fetch and a human-readable
+  error message (not a raw HTTP status code) on failure.
 - **Responsive baseline**: All pages MUST remain usable at 1280 × 800 viewport
   without horizontal scroll.
+- **Filter persistence**: `sessionStorage['opf:filters']` (`{start, end,
+  receptors, status, normalize, institution}`) MUST be read on page load and
+  written on every filter change. New pages MUST only write the fields they own
+  and MUST preserve (spread) existing fields from other pages.
 
-**Rationale**: Users switch between Ecossistema (dashboard.html) and Perfil
-Receptor views frequently. Inconsistent filters or colors break their mental
+**Rationale**: Users switch between Ecossistema, Perfil Receptor, and Ativos
+frequently. Inconsistent filters, colors, or shell structure break their mental
 model and erode trust in the data.
 
 ### IV. Performance Requirements
@@ -159,6 +164,135 @@ NON-NEGOTIABLE:
 **Rationale**: Keeping the components independently deployable ensures that a
 failed collection run cannot affect the running dashboard, and that the
 dashboard can be redeployed without touching collection logic.
+
+### VI. UI Shell Contract
+
+Every dashboard page MUST implement the canonical shell structure defined here.
+Deviations require an explicit amendment.
+
+#### 6.1 DOM Skeleton
+
+```
+<body data-theme="dark|light">          ← height:100vh; flex-column; overflow:hidden
+  <div class="titlebar">                ← 38px fixed; --bg-elevated; border-bottom subtle
+  <div class="app-body">                ← flex:1; flex-row; overflow:hidden
+    <aside class="sidebar">             ← width:224px; flex-shrink:0; --bg-surface
+    <main class="main-content">         ← flex:1; overflow-y:auto; padding:--s5; gap:--s5
+```
+
+The `<div class="status-bar">` at the bottom is OPTIONAL (omit if no relevant
+stats exist for the page).
+
+#### 6.2 Titlebar
+
+MUST contain, in order: logo badge `"OF"` → app name `"Open Finance Brasil"` →
+`›` separator → **nav tab group** → spacer → theme toggle button.
+
+**Nav tab group** container: `background:rgba(0,0,0,0.1); padding:3px;
+border-radius:var(--r-md); border:1px solid var(--border-subtle)`.
+
+Tab states:
+- **Active tab**: `font-weight:600; background:var(--bg-hover); box-shadow:0 1px 2px rgba(0,0,0,0.2); color:var(--text-primary)`
+- **Inactive tab**: `font-weight:500; color:var(--text-secondary)`
+
+**Canonical tab order** (all three MUST appear on every page):
+1. `Ecossistema` → `/`
+2. `Perfil Receptores` → `/profile`
+3. `Ativos` → `/active-consents`
+
+#### 6.3 Sidebar
+
+Structure (MUST follow exactly):
+```
+.sidebar-inner (overflow-y:auto)
+  .sidebar-group "Receptores"
+    .sidebar-group-header: label + badge count
+    input.sidebar-search  placeholder "Filtrar receptores…"
+    ul.receptor-list
+      li.receptor-item[.selected][.inactive]
+        .receptor-dot (8px circle, brand color)
+        .receptor-name (truncated ellipsis)
+  [additional .sidebar-groups — page-specific, optional]
+.sidebar-footer (border-top, flex-shrink:0)
+  .last-updated (green dot + reference date text)
+  button.btn-refresh
+```
+
+Receptor selection behavior:
+- Click (no modifier) → deselect all, select clicked → fire refresh
+- Click + Ctrl/Meta/Shift → toggle individual → fire refresh
+- Nothing selected = all receptors (no `receptors` param sent)
+- `.inactive` items: dot uses `--border-default`; text is `--text-muted`
+
+Receptor list is populated from the same `/api/receptors` endpoint (or
+equivalent per-page source), carrying `{label, color, top, uuid}`.
+
+#### 6.4 Date Bar
+
+MUST be the **first child** of `.main-content` with
+`position:sticky; top:0; z-index:10`.
+
+Structure:
+```
+.date-bar (--bg-elevated; border --border-subtle; r-md; padding --s2 --s4)
+  .date-bar-label  "PERÍODO"
+  .date-inputs: input[type=date]#date-start  →  input[type=date]#date-end
+  .date-spacer
+  .quick-ranges
+    buttons: 7d | 30d | 3m | 6m | 1a (default active) | Ano atual | Tudo
+  .date-spacer
+  [page-specific slots — e.g. toggles]
+```
+
+Quick-range reference point: `_dbMaxDate` when available, else `today()`.
+Changing any date or quick-range MUST trigger an immediate data reload (no
+"Aplicar" button required).
+
+#### 6.5 Design Tokens
+
+All pages MUST use these exact variable names. Declaring aliases or different
+values for the same concept is PROHIBITED:
+
+```css
+/* Spacing */
+--s1:4px; --s2:8px; --s3:12px; --s4:16px; --s5:20px; --s6:24px; --s8:32px;
+
+/* Font sizes */
+--tx-xs:11px; --tx-sm:12px; --tx-base:13px; --tx-md:15px; --tx-lg:17px; --tx-xl:20px;
+
+/* Border radii */
+--r-sm:4px; --r-md:8px; --r-lg:12px;
+```
+
+#### 6.6 Chart Cards
+
+MUST use `.chart-card` with the loading sweep:
+```css
+.chart-card.card-loading::after { /* sweeping blue gradient, 2px top border */ }
+.chart-card.card-loading canvas,
+.chart-card.card-loading table { opacity: 0.35; }
+```
+
+`setCardLoading(id, true|false)` pattern MUST be called at the start and end
+of every async data fetch.
+
+#### 6.7 Theme Toggle
+
+MUST read/write `localStorage.getItem('theme')` (values: `"dark"` | `"light"`).
+MUST set `data-theme` attribute on `<body>` immediately at script boot (before
+DOM is painted) to avoid flash of wrong theme.
+
+`applyThemeColorsToCharts()` MUST update `Chart.defaults.color`,
+`scales.*.grid.color`, and `plugins.tooltip.*` for all active chart instances,
+then call `chart.update()` on each.
+
+**Rationale**: The three dashboard pages (Ecossistema, Perfil Receptores, Ativos)
+share a single user mental model. Diverging in shell structure — even partially —
+creates a perception of instability and makes onboarding new users harder. The
+shell contract is the minimum unit of visual consistency that must be maintained
+across all future pages.
+
+---
 
 ## Stack Constraints
 
@@ -221,4 +355,4 @@ optional even for "small" changes.
 **Runtime guidance**: See `CLAUDE.md` at the repository root for agent-specific
 development guidance (commands, architecture diagrams, SQL schema reference).
 
-**Version**: 1.0.0 | **Ratified**: 2026-05-18 | **Last Amended**: 2026-05-18
+**Version**: 1.1.0 | **Ratified**: 2026-05-18 | **Last Amended**: 2026-05-26
