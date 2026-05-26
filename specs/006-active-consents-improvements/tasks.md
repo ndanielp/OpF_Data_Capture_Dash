@@ -8,7 +8,7 @@
 
 **Purpose**: Helper function usada por US1 (tornado) e US2 (matriz) — deve existir antes das implementações.
 
-- [ ] T001 Adicionar função `_fmtShort(n)` em `dashboard/gui/active_consents.html` logo após `_fmt()` (linha ~729): retorna `n >= 1e6` → `"X,XX M"`, `n >= 1e3` → `"X,XX k"` com vírgula pt-BR, `n < 1e3` → `n.toLocaleString('pt-BR')`
+- [x] T001 Adicionar função `_fmtShort(n)` em `dashboard/gui/active_consents.html` logo após `_fmt()` (linha ~729): retorna `n >= 1e6` → `"X,XX M"`, `n >= 1e3` → `"X,XX k"` com vírgula pt-BR, `n < 1e3` → `n.toLocaleString('pt-BR')`
 
 ---
 
@@ -18,10 +18,10 @@
 
 **Independent Test**: Abrir `http://localhost:8000/active-consents`, verificar card tornado com barras simétricas lado a lado com evolução em viewport ≥ 900 px; empilhado em < 900 px.
 
-- [ ] T002 [P] [US1] Adicionar bloco de CSS `.tornado-row`, `.tornado-name`, `.tornado-left-bar`, `.tornado-right-bar`, `.t-bar`, `.t-bar-left`, `.t-bar-right`, `.tornado-value`, `.tornado-value-left`, `.tornado-value-right`, `.tornado-missing`, `#tornado-active-container`, `.tornado-header`, `.tornado-header-left`, `.tornado-header-center`, `.tornado-header-right` na seção `<style>` de `dashboard/gui/active_consents.html` (baseado nos estilos de `receptor_profile.html`, substituindo `#tornadoContainer` por `#tornado-active-container`)
-- [ ] T003 [P] [US1] Adicionar função `renderTornado(recItems, txmItems)` em `dashboard/gui/active_consents.html` (antes de `renderMatrix()`): ordenar recItems por total desc+alfa, construir txmMap, calcular scaleMax e barW, gerar HTML com `.tornado-row` para cada instituição usando `_fmtShort()` para valores e `title` para tooltip
-- [ ] T004 [P] [US1] Envolver o card de evolução `<div class="chart-card" id="card-evolution">` em `dashboard/gui/active_consents.html` num `<div class="two-col" id="row-evo-tornado">` e adicionar após ele o novo card `<div class="chart-card" id="card-tornado-active">` com `.chart-head` (título "Tornado — Top Receptores × Transmissores", subtitle id="tornado-active-subtitle"), `.tornado-header` (← Receptores / Instituição / Transmissores →) e `<div id="tornado-active-container"></div>`
-- [ ] T005 [US1] Atualizar `loadRanking()` em `dashboard/gui/active_consents.html`: adicionar `setCardLoading('card-tornado-active', true)` no início, extrair `recItems` e `txmItems` dos resultados já buscados pelo `Promise.allSettled`, chamar `renderTornado(recItems, txmItems)` e `setCardLoading('card-tornado-active', false)` ao final
+- [x] T002 [P] [US1] Adicionar bloco de CSS `.tornado-row`, `.tornado-name`, `.tornado-left-bar`, `.tornado-right-bar`, `.t-bar`, `.t-bar-left`, `.t-bar-right`, `.tornado-value`, `.tornado-value-left`, `.tornado-value-right`, `.tornado-missing`, `#tornado-active-container`, `.tornado-header`, `.tornado-header-left`, `.tornado-header-center`, `.tornado-header-right` na seção `<style>` de `dashboard/gui/active_consents.html` (baseado nos estilos de `receptor_profile.html`, substituindo `#tornadoContainer` por `#tornado-active-container`)
+- [x] T003 [P] [US1] Adicionar função `renderTornado(recItems, txmItems)` em `dashboard/gui/active_consents.html` (antes de `renderMatrix()`): ordenar recItems por total desc+alfa, construir txmMap, calcular scaleMax e barW, gerar HTML com `.tornado-row` para cada instituição usando `_fmtShort()` para valores e `title` para tooltip
+- [x] T004 [P] [US1] Envolver o card de evolução `<div class="chart-card" id="card-evolution">` em `dashboard/gui/active_consents.html` num `<div class="two-col" id="row-evo-tornado">` e adicionar após ele o novo card `<div class="chart-card" id="card-tornado-active">` com `.chart-head` (título "Tornado — Top Receptores × Transmissores", subtitle id="tornado-active-subtitle"), `.tornado-header` (← Receptores / Instituição / Transmissores →) e `<div id="tornado-active-container"></div>`
+- [x] T005 [US1] Atualizar `loadRanking()` em `dashboard/gui/active_consents.html`: adicionar `setCardLoading('card-tornado-active', true)` no início, extrair `recItems` e `txmItems` dos resultados já buscados pelo `Promise.allSettled`, chamar `renderTornado(recItems, txmItems)` e `setCardLoading('card-tornado-active', false)` ao final
 
 **Checkpoint**: Tornado visível com dados, layout responsivo funcionando.
 
@@ -33,9 +33,9 @@
 
 **Independent Test**: Carregar matriz, verificar linha "Total" no topo com soma por transmissor, coluna "Total" após label de receptor com soma por linha, e valor 1514 exibido como "1,51 k".
 
-- [ ] T006 [US2] Em `dashboard/gui/active_consents.html`, substituir `_fmt(v)` por `_fmtShort(v)` nas células de dados da matriz dentro de `renderMatrix()` (linha da chamada `_fmt(v)` na cell não-zero) e substituir `_fmt(Number(td.dataset.val))` por `_fmtShort(Number(td.dataset.val))` no tooltip `showTip()`
-- [ ] T007 [US2] Em `renderMatrix()` de `dashboard/gui/active_consents.html`: (1) antes do thead, calcular `const colTotals = transmitters.map((_, j) => receptors.reduce((s, _, i) => s + (values[i][j] || 0), 0))` e `const grandTotal = colTotals.reduce((s, v) => s + v, 0)`; (2) no thead, adicionar `<th class="row-header" style="min-width:52px">Total</th>` como segunda coluna (após `row-header`, antes das colunas de transmissores via `colPerm`); (3) no início de tbody (antes de `rowPerm.forEach`), inserir linha de totais: `<tr><td class="row-label" style="font-weight:600">Total</td>` + célula de grand total + células `colTotals[j]` para cada `j` em `colPerm`, usando `_fmtShort()` para valores > 0 e `—` para 0
-- [ ] T008 [US2] Em `renderMatrix()` de `dashboard/gui/active_consents.html`: (1) calcular `const rowTotals = receptors.map((_, i) => transmitters.reduce((s, _, j) => s + (values[i][j] || 0), 0))`; (2) em cada linha de receptor no `rowPerm.forEach`, inserir APÓS `<td class="row-label">` e ANTES do `colPerm.forEach` uma célula `<td style="background:var(--bg-elevated);color:var(--text-secondary);font-weight:600">` exibindo `_fmtShort(rowTotals[i])` (ou `—` se zero)
+- [x] T006 [US2] Em `dashboard/gui/active_consents.html`, substituir `_fmt(v)` por `_fmtShort(v)` nas células de dados da matriz dentro de `renderMatrix()` (linha da chamada `_fmt(v)` na cell não-zero) e substituir `_fmt(Number(td.dataset.val))` por `_fmtShort(Number(td.dataset.val))` no tooltip `showTip()`
+- [x] T007 [US2] Em `renderMatrix()` de `dashboard/gui/active_consents.html`: (1) antes do thead, calcular `const colTotals = transmitters.map((_, j) => receptors.reduce((s, _, i) => s + (values[i][j] || 0), 0))` e `const grandTotal = colTotals.reduce((s, v) => s + v, 0)`; (2) no thead, adicionar `<th class="row-header" style="min-width:52px">Total</th>` como segunda coluna (após `row-header`, antes das colunas de transmissores via `colPerm`); (3) no início de tbody (antes de `rowPerm.forEach`), inserir linha de totais: `<tr><td class="row-label" style="font-weight:600">Total</td>` + célula de grand total + células `colTotals[j]` para cada `j` em `colPerm`, usando `_fmtShort()` para valores > 0 e `—` para 0
+- [x] T008 [US2] Em `renderMatrix()` de `dashboard/gui/active_consents.html`: (1) calcular `const rowTotals = receptors.map((_, i) => transmitters.reduce((s, _, j) => s + (values[i][j] || 0), 0))`; (2) em cada linha de receptor no `rowPerm.forEach`, inserir APÓS `<td class="row-label">` e ANTES do `colPerm.forEach` uma célula `<td style="background:var(--bg-elevated);color:var(--text-secondary);font-weight:600">` exibindo `_fmtShort(rowTotals[i])` (ou `—` se zero)
 
 **Checkpoint**: Linha e coluna de totais visíveis, números abreviados em todas as células da matriz, sort (feature 004) preservado com totais fixados.
 
@@ -47,9 +47,9 @@
 
 **Independent Test**: Abrir as 3 URLs e verificar abas em ordem Ecossistema → Consentimentos Ativos → Perfil Receptor; verificar título "Evolução Consentimentos Únicos" em `/`.
 
-- [ ] T009 [P] [US3] Em `dashboard/gui/active_consents.html`: (1) alterar `<title>Ativos …` para `<title>Consentimentos Ativos — Open Finance Brasil</title>`; (2) reordenar nav tabs para: `Ecossistema` (href="/") → `Consentimentos Ativos` (href="/active-consents", estilo ativo) → `Perfil Receptor` (href="/profile")
-- [ ] T010 [P] [US3] Em `dashboard/gui/dashboard.html`: (1) reordenar nav tabs para: `Ecossistema` (ativo) → `Consentimentos Ativos` (href="/active-consents") → `Perfil Receptor` (href="/profile"); (2) alterar `<div class="chart-title">Evolução Consentimentos</div>` para `<div class="chart-title">Evolução Consentimentos Únicos</div>`
-- [ ] T011 [P] [US3] Em `dashboard/gui/receptor_profile.html`: reordenar nav tabs para: `Ecossistema` (href="/") → `Consentimentos Ativos` (href="/active-consents") → `Perfil Receptor` (href="/profile", estilo ativo); renomear "Perfil Receptores" para "Perfil Receptor" no texto do link ativo
+- [x] T009 [P] [US3] Em `dashboard/gui/active_consents.html`: (1) alterar `<title>Ativos …` para `<title>Consentimentos Ativos — Open Finance Brasil</title>`; (2) reordenar nav tabs para: `Ecossistema` (href="/") → `Consentimentos Ativos` (href="/active-consents", estilo ativo) → `Perfil Receptor` (href="/profile")
+- [x] T010 [P] [US3] Em `dashboard/gui/dashboard.html`: (1) reordenar nav tabs para: `Ecossistema` (ativo) → `Consentimentos Ativos` (href="/active-consents") → `Perfil Receptor` (href="/profile"); (2) alterar `<div class="chart-title">Evolução Consentimentos</div>` para `<div class="chart-title">Evolução Consentimentos Únicos</div>`
+- [x] T011 [P] [US3] Em `dashboard/gui/receptor_profile.html`: reordenar nav tabs para: `Ecossistema` (href="/") → `Consentimentos Ativos` (href="/active-consents") → `Perfil Receptor` (href="/profile", estilo ativo); renomear "Perfil Receptores" para "Perfil Receptor" no texto do link ativo
 
 **Checkpoint**: Navegação consistente nas 3 páginas, título do gráfico atualizado.
 
