@@ -349,6 +349,32 @@ def _ensure_dashboard_indexes() -> None:
         pass
 
 
+def _ensure_active_consents_indexes() -> None:
+    """Índices compostos para as queries de consentimentos ativos.
+
+    Cobre os padrões: filter-by-date + group-by-receptor e
+    filter-by-date + group-by-transmitter usados pelos endpoints
+    /api/active-consents/*.
+    """
+    try:
+        con = _db_con()
+        try:
+            con.execute("PRAGMA busy_timeout = 3000")
+            con.execute(
+                "CREATE INDEX IF NOT EXISTS idx_active_date_receptor "
+                "ON active_consents(date, receptor_uuid)"
+            )
+            con.execute(
+                "CREATE INDEX IF NOT EXISTS idx_active_date_transmitter "
+                "ON active_consents(date, transmitter_uuid)"
+            )
+            con.commit()
+        finally:
+            con.close()
+    except Exception:
+        pass
+
+
 def _ensure_api_group_weekly():
     """Garante schema de api_group_weekly em DBs antigos. A população é responsabilidade
     do data-loader (scrapers.refresh_api_group_weekly) — aqui só criamos a tabela se ausente."""
@@ -407,16 +433,19 @@ async def lifespan(app: FastAPI):
     # Garante que api_group_weekly exista e tenha dados (DBs antigos sem a tabela populada).
     _ensure_api_group_weekly()
     _ensure_dashboard_indexes()
+    _ensure_active_consents_indexes()
     # Pré-aquece cache em background — servidor aceita conexões imediatamente.
     threading.Thread(target=lambda: _refresh_cache(force=True), daemon=True).start()
     threading.Thread(target=_warm_profile_cache, daemon=True).start()
     yield
 
 from routers import openfinance
+from routers import active_consents as active_consents_router
 import services.of_analytics as of_analytics
 
 app = FastAPI(title="OPF Batch Dashboard", lifespan=lifespan)
 app.include_router(openfinance.router, prefix="/api/of")
+app.include_router(active_consents_router.router, prefix="/api/active-consents")
 
 GUI_DIR = Path(__file__).parent / "gui"
 
@@ -428,6 +457,11 @@ async def index():
 @app.get("/profile", response_class=HTMLResponse)
 async def profile():
     index_path = GUI_DIR / "receptor_profile.html"
+    return HTMLResponse(index_path.read_text(encoding="utf-8"))
+
+@app.get("/active-consents", response_class=HTMLResponse)
+async def active_consents_page():
+    index_path = GUI_DIR / "active_consents.html"
     return HTMLResponse(index_path.read_text(encoding="utf-8"))
 
 @app.get("/api/receptors", response_class=JSONResponse)

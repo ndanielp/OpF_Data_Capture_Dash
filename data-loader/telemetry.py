@@ -67,17 +67,36 @@ def ensure_tables(con: sqlite3.Connection) -> None:
     con.executescript(TELEMETRY_DDL)
     con.commit()
     # Migração: adiciona colunas novas em DBs existentes.
-    try:
-        con.execute("ALTER TABLE run_summary ADD COLUMN phase_api_skipped INTEGER NOT NULL DEFAULT 0")
-        con.commit()
-    except sqlite3.OperationalError:
-        pass  # coluna já existe
+    for _col_ddl in [
+        "ALTER TABLE run_summary ADD COLUMN phase_api_skipped INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE run_summary ADD COLUMN phase_active_consents_ok INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE run_summary ADD COLUMN phase_active_consents_failed INTEGER NOT NULL DEFAULT 0",
+    ]:
+        try:
+            con.execute(_col_ddl)
+            con.commit()
+        except sqlite3.OperationalError:
+            pass  # coluna já existe
 
 
 # ── Target canônico ───────────────────────────────────────────────────────────
 
 def consents_target(receptor_uuid: str, date_first: str, date_last: str) -> str:
     return f"consents|||{receptor_uuid}|{date_first}_{date_last}"
+
+
+def active_consents_target(
+    receptor_uuid: str, dates: list[str], transmitter_uuid: str = "",
+) -> str:
+    """Target canônico para uma tentativa de coleta de consentimentos ativos.
+
+    Inclui transmitter_uuid para checkpoint granular por par receptor×transmissor
+    — a API /api/consents retorna um agregado por chamada, então iteramos um par
+    por request. transmitter_uuid omitido (padrão "") preserva compatibilidade
+    com chamadas sem filtro de transmissor (coleta agregada).
+    """
+    txm = transmitter_uuid or ""
+    return f"active_consents|||{receptor_uuid}|||{txm}|{dates[0][:10]}_{dates[-1][:10]}"
 
 
 def api_target(
@@ -226,6 +245,8 @@ def finalize_run(
                 SELECT
                     SUM(CASE WHEN phase='consents' AND status IN ('ok','empty') THEN 1 ELSE 0 END),
                     SUM(CASE WHEN phase='consents' AND status='failed' THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN phase='active_consents' AND status IN ('ok','empty') THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN phase='active_consents' AND status='failed' THEN 1 ELSE 0 END),
                     SUM(CASE WHEN phase='api_requests' AND status IN ('ok','empty') THEN 1 ELSE 0 END),
                     SUM(CASE WHEN phase='api_requests' AND status='failed' THEN 1 ELSE 0 END),
                     SUM(CASE WHEN phase='api_requests' AND status='skipped' THEN 1 ELSE 0 END)
@@ -234,7 +255,9 @@ def finalize_run(
                 """,
                 (run_id,),
             ).fetchone()
-            cons_ok, cons_fail, api_ok, api_fail, api_skipped = [x or 0 for x in stats]
+            (cons_ok, cons_fail,
+             ac_ok, ac_fail,
+             api_ok, api_fail, api_skipped) = [x or 0 for x in stats]
 
             con.execute(
                 """
@@ -242,14 +265,16 @@ def finalize_run(
                 SET ended_at = ?,
                     phase_consents_ok = ?,
                     phase_consents_failed = ?,
+                    phase_active_consents_ok = ?,
+                    phase_active_consents_failed = ?,
                     phase_api_ok = ?,
                     phase_api_failed = ?,
                     phase_api_skipped = ?,
                     total_upserted = ?
                 WHERE run_id = ?
                 """,
-                (ended, cons_ok, cons_fail, api_ok, api_fail, api_skipped,
-                 total_upserted, run_id),
+                (ended, cons_ok, cons_fail, ac_ok, ac_fail,
+                 api_ok, api_fail, api_skipped, total_upserted, run_id),
             )
             con.commit()
 
@@ -258,6 +283,8 @@ def finalize_run(
                 "ended_at": ended,
                 "phase_consents_ok": cons_ok,
                 "phase_consents_failed": cons_fail,
+                "phase_active_consents_ok": ac_ok,
+                "phase_active_consents_failed": ac_fail,
                 "phase_api_ok": api_ok,
                 "phase_api_failed": api_fail,
                 "phase_api_skipped": api_skipped,

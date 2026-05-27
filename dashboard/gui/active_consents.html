@@ -1,0 +1,1420 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Consentimentos Ativos — Open Finance Brasil</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+  <style>
+    /* ============================================================
+       DESIGN TOKENS — canonical (VI §6.5)
+       ============================================================ */
+    :root {
+      --bg-base:       #13151E;
+      --bg-surface:    #1B1F2E;
+      --bg-elevated:   #242838;
+      --bg-hover:      #2D3247;
+      --text-primary:  #EEF0F6;
+      --text-secondary:#8B95B0;
+      --text-muted:    #4A5270;
+      --text-accent:   #4A9EFF;
+      --border-subtle: #252A3A;
+      --border-default:#333B54;
+      --success:       #2ECC7F;
+      --warning:       #F5A623;
+      --error:         #FF4D4D;
+    }
+
+    [data-theme="light"] {
+      --bg-base:       #F3F4F6;
+      --bg-surface:    #FFFFFF;
+      --bg-elevated:   #E5E7EB;
+      --bg-hover:      #D1D5DB;
+      --text-primary:  #111827;
+      --text-secondary:#4B5563;
+      --text-muted:    #6B7280;
+      --border-subtle: #D1D5DB;
+      --border-default:#9CA3AF;
+    }
+
+    :root {
+      --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s5:20px; --s6:24px; --s8:32px;
+      --tx-xs:11px; --tx-sm:12px; --tx-base:13px; --tx-md:15px; --tx-lg:17px; --tx-xl:20px;
+      --r-sm:4px; --r-md:8px; --r-lg:12px;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      background: var(--bg-base);
+      color: var(--text-primary);
+      font-size: var(--tx-base);
+      line-height: 1.5;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ============================================================
+       TITLEBAR — VI §6.2
+       ============================================================ */
+    .titlebar {
+      background: var(--bg-elevated);
+      border-bottom: 1px solid var(--border-subtle);
+      height: 38px;
+      display: flex;
+      align-items: center;
+      padding: 0 var(--s4);
+      gap: var(--s2);
+      flex-shrink: 0;
+      user-select: none;
+    }
+
+    .titlebar-logo {
+      width: 20px; height: 20px;
+      background: var(--text-accent);
+      border-radius: var(--r-sm);
+      display: grid; place-items: center;
+      font-size: 10px; font-weight: 700;
+      color: white; flex-shrink: 0;
+    }
+
+    .titlebar-name { font-size: var(--tx-sm); font-weight: 600; }
+    .titlebar-spacer { flex: 1; }
+
+    .theme-btn {
+      background: transparent; border: none;
+      font-size: 14px; cursor: pointer;
+      padding: 4px; border-radius: var(--r-sm);
+      color: var(--text-primary); transition: background 0.15s;
+    }
+    .theme-btn:hover { background: var(--bg-hover); }
+
+    /* ============================================================
+       APP BODY — VI §6.1
+       ============================================================ */
+    .app-body {
+      flex: 1; display: flex; overflow: hidden; min-height: 0;
+    }
+
+    /* ============================================================
+       SIDEBAR — VI §6.3
+       ============================================================ */
+    .sidebar {
+      width: 224px;
+      background: var(--bg-surface);
+      border-right: 1px solid var(--border-subtle);
+      display: flex; flex-direction: column;
+      overflow: hidden; flex-shrink: 0;
+    }
+
+    .sidebar-inner {
+      flex: 1; overflow-y: auto; overflow-x: hidden;
+    }
+    .sidebar-inner::-webkit-scrollbar { width: 4px; }
+    .sidebar-inner::-webkit-scrollbar-thumb { background: var(--border-default); border-radius: 4px; }
+
+    .sidebar-group {
+      padding: var(--s4);
+      border-bottom: 1px solid var(--border-subtle);
+    }
+
+    .sidebar-group-header {
+      display: flex; align-items: center;
+      justify-content: space-between;
+      margin-bottom: var(--s3);
+    }
+
+    .sidebar-group-label {
+      font-size: var(--tx-xs); font-weight: 700;
+      color: var(--text-muted);
+      text-transform: uppercase; letter-spacing: 0.1em;
+    }
+
+    .sidebar-group-badge {
+      font-size: var(--tx-xs); color: var(--text-muted);
+      background: var(--bg-elevated);
+      padding: 1px 6px; border-radius: 10px;
+    }
+
+    .sidebar-search {
+      width: 100%;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border-default);
+      border-radius: var(--r-sm);
+      color: var(--text-primary);
+      font-size: var(--tx-sm); font-family: inherit;
+      padding: 5px var(--s2); outline: none;
+      margin-bottom: var(--s2);
+      transition: border-color 0.15s;
+    }
+    .sidebar-search::placeholder { color: var(--text-muted); }
+    .sidebar-search:focus { border-color: var(--text-accent); }
+
+    .receptor-list {
+      list-style: none;
+      max-height: 320px; overflow-y: auto;
+    }
+    .receptor-list::-webkit-scrollbar { width: 3px; }
+    .receptor-list::-webkit-scrollbar-thumb { background: var(--border-default); border-radius: 3px; }
+
+    .receptor-item {
+      display: flex; align-items: center; gap: var(--s2);
+      padding: 5px var(--s2); border-radius: var(--r-sm);
+      cursor: pointer; font-size: var(--tx-sm);
+      color: var(--text-primary); transition: background 0.12s;
+      white-space: nowrap; overflow: hidden;
+    }
+    .receptor-item:hover { background: var(--bg-hover); }
+    .receptor-item.selected { background: rgba(74,158,255,0.1); }
+    .receptor-item.inactive { color: var(--text-muted); }
+
+    .receptor-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%; flex-shrink: 0;
+    }
+    .receptor-item.inactive .receptor-dot { background: var(--border-default) !important; }
+
+    .receptor-name { overflow: hidden; text-overflow: ellipsis; }
+
+    .sidebar-footer {
+      padding: var(--s4);
+      border-top: 1px solid var(--border-subtle);
+      flex-shrink: 0;
+    }
+
+    .last-updated {
+      font-size: var(--tx-xs); color: var(--text-muted);
+      margin-bottom: var(--s2);
+      display: flex; align-items: center; gap: var(--s1);
+    }
+
+    .update-dot {
+      width: 6px; height: 6px;
+      border-radius: 50%; background: var(--success);
+    }
+
+    .btn-refresh {
+      width: 100%;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border-default);
+      color: var(--text-secondary);
+      font-size: var(--tx-sm); font-family: inherit;
+      padding: var(--s2) var(--s4);
+      border-radius: var(--r-md); cursor: pointer;
+      display: flex; align-items: center;
+      justify-content: center; gap: var(--s2);
+      transition: all 0.15s;
+    }
+    .btn-refresh:hover { background: var(--bg-hover); color: var(--text-primary); }
+    .btn-refresh:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    /* ============================================================
+       MAIN CONTENT — VI §6.1
+       ============================================================ */
+    .main-content {
+      flex: 1; overflow-y: auto; overflow-x: hidden;
+      padding: var(--s5); display: flex;
+      flex-direction: column; gap: var(--s5); min-width: 0;
+    }
+    .main-content::-webkit-scrollbar { width: 6px; }
+    .main-content::-webkit-scrollbar-thumb { background: var(--border-default); border-radius: 6px; }
+
+    /* ============================================================
+       DATE BAR — VI §6.4
+       ============================================================ */
+    .date-bar {
+      background: var(--bg-elevated);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--r-md);
+      padding: var(--s2) var(--s4);
+      display: flex; align-items: center; gap: var(--s4);
+      flex-wrap: wrap; flex-shrink: 0;
+      position: sticky; top: 0; z-index: 10;
+    }
+
+    .date-bar-label {
+      font-size: var(--tx-xs); font-weight: 700;
+      color: var(--text-muted);
+      text-transform: uppercase; letter-spacing: 0.08em;
+      white-space: nowrap;
+    }
+
+    .date-inputs { display: flex; align-items: center; gap: var(--s2); }
+
+    .date-field {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-default);
+      border-radius: var(--r-sm);
+      color: var(--text-primary);
+      font-size: var(--tx-sm); font-family: inherit;
+      padding: 4px var(--s2); outline: none;
+      transition: border-color 0.15s; color-scheme: dark;
+    }
+    .date-field:focus { border-color: var(--text-accent); }
+    .date-arrow { color: var(--text-muted); font-size: 13px; }
+    .date-spacer { flex: 1; }
+
+    .quick-ranges { display: flex; gap: var(--s1); }
+
+    .quick-btn {
+      background: transparent;
+      border: 1px solid var(--border-default);
+      color: var(--text-secondary);
+      font-size: var(--tx-xs); font-family: inherit;
+      padding: 3px var(--s2); border-radius: var(--r-sm);
+      cursor: pointer; transition: all 0.12s; white-space: nowrap;
+    }
+    .quick-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+    .quick-btn.active { background: var(--text-accent); border-color: var(--text-accent); color: white; }
+
+    /* ============================================================
+       CHART TOGGLES (evolution by receptor/transmitter)
+       ============================================================ */
+    .chart-toggles {
+      display: flex; gap: 2px;
+      background: var(--bg-elevated);
+      padding: 2px; border-radius: var(--r-sm);
+      border: 1px solid var(--border-subtle);
+      margin-right: var(--s2);
+    }
+    .chart-toggles button {
+      background: transparent; border: none;
+      color: var(--text-secondary);
+      padding: 4px 10px; font-size: var(--tx-xs);
+      border-radius: 2px; cursor: pointer; transition: all 0.15s;
+      font-family: inherit;
+    }
+    .chart-toggles button.active {
+      background: var(--bg-surface); color: var(--text-primary);
+      box-shadow: 0 1px 2px rgba(0,0,0,0.2);
+    }
+    .chart-toggles button:hover:not(.active) { color: var(--text-primary); }
+
+    /* ============================================================
+       CHART CARDS — VI §6.6
+       ============================================================ */
+    .chart-card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--r-lg);
+      padding: var(--s5); min-width: 0;
+      flex-shrink: 0; position: relative; overflow: hidden;
+    }
+    .chart-card.card-loading::after {
+      content: '';
+      position: absolute; top: 0; left: -60%; width: 60%; height: 2px;
+      background: linear-gradient(90deg, transparent, var(--text-accent), transparent);
+      animation: card-sweep 1.1s linear infinite;
+      pointer-events: none;
+    }
+    @keyframes card-sweep { to { left: 110%; } }
+    .chart-card.card-loading canvas,
+    .chart-card.card-loading table,
+    .chart-card.card-loading .intensity-list { opacity: 0.35; transition: opacity 0.12s; }
+
+    .chart-head {
+      display: flex; align-items: flex-start;
+      justify-content: space-between;
+      margin-bottom: var(--s5); gap: var(--s4);
+    }
+
+    .chart-title { font-size: var(--tx-lg); font-weight: 600; color: var(--text-primary); }
+    .chart-actions { display:flex; gap:var(--s1); flex-shrink:0; align-items:center; }
+    .chart-action-btn {
+      background:transparent; border:1px solid var(--border-default); color:var(--text-secondary);
+      font-size:var(--tx-xs); padding:var(--s1) var(--s3); border-radius:var(--r-sm);
+      cursor:pointer; transition:all 0.12s;
+    }
+    .chart-action-btn:hover { background:var(--bg-hover); color:var(--text-primary); }
+    .chart-subtitle { font-size: var(--tx-sm); color: var(--text-secondary); margin-top: 3px; }
+
+    .chart-empty {
+      display: flex; align-items: center; justify-content: center;
+      height: 120px; color: var(--text-muted); font-size: var(--tx-sm);
+    }
+
+    /* ============================================================
+       CHART WRAP
+       ============================================================ */
+    .chart-wrap { position: relative; height: 320px; }
+
+    /* ============================================================
+       TWO-COLUMN GRID (ranking)
+       ============================================================ */
+    .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s5); }
+    @media (max-width: 900px) { .two-col { grid-template-columns: 1fr; } }
+
+    /* ============================================================
+       MATRIX
+       ============================================================ */
+    .matrix-scroll { overflow-x: auto; }
+
+    #matrix-table {
+      border-collapse: separate; border-spacing: 3px;
+      font-size: var(--tx-xs);
+      white-space: nowrap;
+    }
+    #matrix-table th {
+      background: var(--bg-elevated);
+      color: var(--text-secondary);
+      padding: var(--s2) var(--s3);
+      font-weight: 600;
+      border: 1px solid var(--border-subtle);
+      position: sticky; top: 0;
+    }
+    #matrix-table th.row-header {
+      left: 0; z-index: 2; text-align: left;
+      min-width: 160px; max-width: 200px;
+      overflow: hidden; text-overflow: ellipsis;
+    }
+    #matrix-table td {
+      border-radius: var(--r-sm);
+      padding: 7px 4px;
+      text-align: center; cursor: default;
+      min-width: 52px;
+      font-family: inherit;
+      font-size: 11px; font-weight: 500;
+      transition: opacity 0.15s, transform 0.1s;
+      vertical-align: middle;
+    }
+    #matrix-table td:hover:not(.row-label) { opacity: 0.82; transform: scale(1.03); }
+    #matrix-table td.row-label {
+      background: var(--bg-elevated);
+      color: var(--text-secondary);
+      text-align: left; padding: var(--s2) var(--s3);
+      position: sticky; left: 0; z-index: 1;
+      font-family: inherit; font-size: var(--tx-sm);
+      max-width: 200px; overflow: hidden; text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    #matrix-table td.row-label:hover { color: var(--text-accent); }
+    #matrix-table th[data-col-idx] {
+      color: var(--text-muted);
+      font-weight: 500;
+      vertical-align: bottom;
+      font-size: var(--tx-xs);
+    }
+    #matrix-table th[data-col-idx],
+    #matrix-table td[data-row-idx]  { cursor: pointer; user-select: none; }
+    #matrix-table th[data-col-idx]:hover,
+    #matrix-table td[data-row-idx]:hover { background: var(--bg-hover); }
+    #matrix-table th.sort-active    { font-weight: 700; text-decoration: underline dotted; color: var(--text-accent); }
+
+    #matrix-tooltip {
+      position: fixed;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border-default);
+      border-radius: var(--r-sm);
+      padding: var(--s2) var(--s4);
+      font-size: var(--tx-sm);
+      pointer-events: none; z-index: 1000;
+      display: none; max-width: 320px;
+    }
+
+    /* ============================================================
+       INTENSITY BARS
+       ============================================================ */
+    .intensity-list { display: flex; flex-direction: column; gap: var(--s3); }
+    .intensity-item {
+      display: grid; grid-template-columns: 160px 1fr 55px;
+      gap: var(--s3); align-items: center;
+    }
+    .intensity-name {
+      font-size: var(--tx-sm); font-weight: 500;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .intensity-bar-wrap {
+      background: var(--bg-elevated); border-radius: 3px; height: 18px; overflow: hidden;
+    }
+    .intensity-bar { height: 100%; border-radius: 3px; transition: width 0.4s ease; min-width: 2px; }
+    .intensity-value {
+      font-family: "JetBrains Mono", "Fira Code", monospace;
+      font-size: var(--tx-xs); color: var(--text-primary); text-align: right;
+    }
+    .intensity-value.null-val { color: var(--text-muted); }
+
+    /* ============================================================
+       TORNADO — baseado em receptor_profile.html
+       ============================================================ */
+    .tornado-row { display:flex; align-items:center; gap:0; height:28px; cursor:default }
+    .tornado-name { width:140px; font-size:10px; color:var(--text-secondary); text-align:center;
+      overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex-shrink:0 }
+    .tornado-left-bar  { flex:1; display:flex; justify-content:flex-end; align-items:center; gap:3px }
+    .tornado-right-bar { flex:1; display:flex; justify-content:flex-start; align-items:center; gap:3px }
+    .t-bar { height:16px; border-radius:2px; min-width:2px; transition:width 0.4s ease }
+    .t-bar-left  { background:linear-gradient(to left,#4A9EFF,#2563EB) }
+    .t-bar-right { background:linear-gradient(to right,#14B8A6,#0D9488) }
+    .tornado-value { font-size:10px; color:var(--text-muted); font-variant-numeric:tabular-nums; min-width:36px }
+    .tornado-value-left  { text-align:right }
+    .tornado-value-right { text-align:left }
+    .tornado-missing { font-size:9px; color:var(--text-muted); font-style:italic; padding:0 4px }
+    #tornado-active-container {
+      height:280px; overflow-y:auto; padding-right:4px; scroll-behavior:smooth;
+    }
+    #tornado-active-container::-webkit-scrollbar { width:4px }
+    #tornado-active-container::-webkit-scrollbar-track { background:var(--bg-base); border-radius:4px }
+    #tornado-active-container::-webkit-scrollbar-thumb { background:var(--border-default); border-radius:4px }
+    #tornado-active-container::-webkit-scrollbar-thumb:hover { background:var(--text-muted) }
+    .tornado-header { display:flex; align-items:center; gap:0; margin-bottom:var(--s2) }
+    .tornado-header-left   { flex:1; text-align:right; font-size:var(--tx-xs); font-weight:600;
+      color:#4A5270; padding-right:var(--s3) }
+    .tornado-header-center { width:140px; flex-shrink:0; text-align:center; font-size:var(--tx-xs);
+      color:var(--text-muted); font-weight:600 }
+    .tornado-header-right  { flex:1; text-align:left; font-size:var(--tx-xs); font-weight:600;
+      color:#14B8A6; padding-left:var(--s3) }
+
+    /* ============================================================
+       STATUS BAR (optional — shows reference date)
+       ============================================================ */
+    .status-bar {
+      background: var(--bg-elevated);
+      border-top: 1px solid var(--border-subtle);
+      height: 28px; display: flex; align-items: center;
+      padding: 0 var(--s4); gap: var(--s4);
+      font-size: var(--tx-xs); color: var(--text-muted);
+      flex-shrink: 0;
+    }
+    .status-item { display: flex; align-items: center; gap: var(--s1); }
+    .status-value { color: var(--text-secondary); font-weight: 500; }
+
+    /* ============================================================
+       RESPONSIVE BASELINE — 1280×800 (VI §6.1)
+       ============================================================ */
+    @media (max-width: 768px) {
+      body { height: auto; display: block; overflow-y: auto; }
+      .app-body { flex-direction: column; height: auto; overflow: visible; }
+      .sidebar { width: 100%; border-right: none; border-bottom: 1px solid var(--border-subtle); max-height: 48vh; }
+      .main-content { overflow: visible; padding: var(--s3); gap: var(--s3); }
+      .date-bar { flex-direction: column; align-items: stretch; gap: var(--s2); }
+      .date-inputs { justify-content: space-between; }
+      .quick-ranges { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--s1); }
+      .quick-btn { text-align: center; }
+      .two-col { grid-template-columns: 1fr; }
+      .status-bar { display: none !important; }
+    }
+  </style>
+</head>
+
+<!-- Theme applied immediately before render — VI §6.7 -->
+<script>
+  (function() {
+    const t = localStorage.getItem('theme') || 'dark';
+    document.documentElement.setAttribute('data-theme', t);
+    document.addEventListener('DOMContentLoaded', function() {
+      document.body.setAttribute('data-theme', t);
+    });
+  })();
+</script>
+
+<body>
+
+  <!-- TITLEBAR — VI §6.2 -->
+  <div class="titlebar">
+    <div class="titlebar-logo">OF</div>
+    <span class="titlebar-name">Open Finance Brasil</span>
+    <span style="color: var(--text-muted); margin: 0 var(--s2);">›</span>
+
+    <!-- Nav tab group -->
+    <div style="display:flex; gap:var(--s2); margin-left:var(--s3); background:rgba(0,0,0,0.1); padding:3px; border-radius:var(--r-md); border:1px solid var(--border-subtle);">
+      <a href="/" style="color:var(--text-secondary); text-decoration:none; font-size:var(--tx-sm); font-weight:500; padding:3px 12px; border-radius:var(--r-sm); transition:color 0.15s;">Ecossistema</a>
+      <a href="/active-consents" style="color:var(--text-primary); text-decoration:none; font-size:var(--tx-sm); font-weight:600; padding:3px 12px; border-radius:var(--r-sm); background:var(--bg-hover); box-shadow:0 1px 2px rgba(0,0,0,0.2);">Consentimentos Ativos</a>
+      <a href="/profile" style="color:var(--text-secondary); text-decoration:none; font-size:var(--tx-sm); font-weight:500; padding:3px 12px; border-radius:var(--r-sm); transition:color 0.15s;">Perfil Receptor</a>
+    </div>
+
+    <div class="titlebar-spacer"></div>
+    <button id="theme-toggle" class="theme-btn" title="Alternar Tema">☀️/🌙</button>
+  </div>
+
+  <!-- APP BODY -->
+  <div class="app-body">
+
+    <!-- SIDEBAR — VI §6.3 -->
+    <aside class="sidebar">
+      <div class="sidebar-inner">
+        <div class="sidebar-group">
+          <div class="sidebar-group-header">
+            <span class="sidebar-group-label">Receptores</span>
+            <span class="sidebar-group-badge" id="receptor-count">—</span>
+          </div>
+          <input class="sidebar-search" id="receptor-search" type="text" placeholder="Filtrar receptores…" autocomplete="off">
+          <ul class="receptor-list" id="receptor-list"></ul>
+        </div>
+      </div>
+
+      <!-- Sidebar footer -->
+      <div class="sidebar-footer">
+        <div class="last-updated" id="last-updated">
+          <div class="update-dot"></div>
+          <span id="last-updated-text">Carregando…</span>
+        </div>
+        <button class="btn-refresh" id="btn-refresh">
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+            <path d="M10 6A4 4 0 112.5 3.5M2 1v3h3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          Recarregar dados
+        </button>
+      </div>
+    </aside>
+
+    <!-- MAIN CONTENT -->
+    <main class="main-content">
+
+      <!-- DATE BAR — VI §6.4 -->
+      <div class="date-bar">
+        <span class="date-bar-label">Período</span>
+        <div class="date-inputs">
+          <input class="date-field" type="date" id="date-start">
+          <span class="date-arrow">→</span>
+          <input class="date-field" type="date" id="date-end">
+        </div>
+        <div class="date-spacer"></div>
+        <div class="quick-ranges">
+          <button class="quick-btn" data-months="0.25">7d</button>
+          <button class="quick-btn" data-months="1">30d</button>
+          <button class="quick-btn" data-months="3">3m</button>
+          <button class="quick-btn" data-months="6">6m</button>
+          <button class="quick-btn active" data-months="12">1a</button>
+          <button class="quick-btn" data-months="ytd">Ano atual</button>
+          <button class="quick-btn" data-months="0">Tudo</button>
+        </div>
+        <div class="date-spacer"></div>
+        <span class="date-bar-label">Evolução por</span>
+        <div class="chart-toggles" id="evo-toggles">
+          <button id="evo-by-receptor" class="active" data-by="receptor">Receptor</button>
+          <button id="evo-by-transmitter" data-by="transmitter">Transmissor</button>
+        </div>
+      </div>
+
+      <!-- Card 1+Tornado: Evolução + Tornado lado a lado -->
+      <div class="two-col" id="row-evo-tornado">
+        <div class="chart-card" id="card-evolution">
+          <div class="chart-head">
+            <div>
+              <div class="chart-title">Evolução de Consentimentos Ativos</div>
+              <div class="chart-subtitle">Total de consentimentos vigentes por semana</div>
+            </div>
+            <div class="chart-actions">
+              <button class="chart-action-btn" id="btn-export-evolution">Exportar CSV</button>
+            </div>
+          </div>
+          <div class="chart-wrap">
+            <div id="evo-empty" class="chart-empty" style="display:none">
+              Nenhum dado disponível para o período selecionado
+            </div>
+            <canvas id="chart-evolution"></canvas>
+          </div>
+        </div>
+
+        <div class="chart-card" id="card-tornado-active">
+          <div class="chart-head">
+            <div>
+              <div class="chart-title">Tornado — Top Receptores × Transmissores</div>
+              <div class="chart-subtitle" id="tornado-active-subtitle">Semana mais recente · Top 10</div>
+            </div>
+          </div>
+          <div class="tornado-header">
+            <div class="tornado-header-left">← Receptores</div>
+            <div class="tornado-header-center">Instituição</div>
+            <div class="tornado-header-right">Transmissores →</div>
+          </div>
+          <div id="tornado-active-container">
+            <div class="chart-empty">Carregando…</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Card 3: Matriz Receptor × Transmissor -->
+      <div class="chart-card" id="card-matrix">
+        <div class="chart-head" style="justify-content:space-between; align-items:flex-start;">
+          <div>
+            <div class="chart-title">Matriz Receptor × Transmissor</div>
+            <div class="chart-subtitle" id="matrix-refdate">Semana mais recente no período</div>
+          </div>
+          <button id="btn-matrix-reset" class="quick-btn" style="display:none; font-size:var(--tx-sm); margin-top:2px;" title="Restaurar ordenação padrão">↺ Redefinir</button>
+        </div>
+        <div id="matrix-empty" class="chart-empty" style="display:none">
+          Nenhum dado disponível para o período selecionado
+        </div>
+        <div class="matrix-scroll" id="matrix-container" style="display:none">
+          <div id="matrix-tooltip"></div>
+          <table id="matrix-table"></table>
+        </div>
+      </div>
+
+      <!-- Card 4: Intensidade de Uso -->
+      <div class="chart-card" id="card-intensity">
+        <div class="chart-head">
+          <div>
+            <div class="chart-title">Intensidade de Uso por Receptor</div>
+            <div class="chart-subtitle">
+              Consentimentos ativos ÷ clientes únicos
+              <span id="intensity-refdate"></span>
+            </div>
+          </div>
+        </div>
+        <div id="intensity-wrap">
+          <div class="chart-empty">Carregando…</div>
+        </div>
+      </div>
+
+    </main>
+  </div><!-- /app-body -->
+
+  <!-- STATUS BAR (optional) -->
+  <div class="status-bar">
+    <div class="status-item">
+      Referência: <span class="status-value" id="stat-refdate">—</span>
+    </div>
+  </div>
+
+<script>
+/* ============================================================
+   THEME TOGGLE — VI §6.7
+   ============================================================ */
+const themeToggle = document.getElementById('theme-toggle');
+let currentTheme = localStorage.getItem('theme') || 'dark';
+document.body.setAttribute('data-theme', currentTheme);
+
+function applyThemeColorsToCharts() {
+  const isLight = document.body.getAttribute('data-theme') === 'light';
+  Chart.defaults.color = isLight ? '#4B5563' : '#8B95B0';
+  const gridColor    = isLight ? '#E5E7EB' : '#252A3A';
+  const tooltipBg    = isLight ? '#FFFFFF' : '#1B1F2E';
+  const tooltipBorder = isLight ? '#D1D5DB' : '#333B54';
+  const tooltipTitle = isLight ? '#111827' : '#EEF0F6';
+  if (_evoChart) {
+    _evoChart.options.scales.x.grid.color = gridColor;
+    _evoChart.options.scales.y.grid.color = gridColor;
+    _evoChart.options.plugins.tooltip.backgroundColor = tooltipBg;
+    _evoChart.options.plugins.tooltip.borderColor = tooltipBorder;
+    _evoChart.options.plugins.tooltip.titleColor = tooltipTitle;
+    _evoChart.options.plugins.tooltip.bodyColor = Chart.defaults.color;
+    _evoChart.update();
+  }
+}
+
+themeToggle.addEventListener('click', () => {
+  currentTheme = document.body.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+  document.body.setAttribute('data-theme', currentTheme);
+  localStorage.setItem('theme', currentTheme);
+  applyThemeColorsToCharts();
+});
+
+/* ============================================================
+   CHART.JS DEFAULTS
+   ============================================================ */
+Chart.defaults.color = currentTheme === 'light' ? '#4B5563' : '#8B95B0';
+Chart.defaults.font.family = "-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif";
+Chart.defaults.font.size = 11;
+
+/* ============================================================
+   STATE
+   ============================================================ */
+let _evoChart        = null;
+let _evolutionBy     = 'receptor';
+let _evolutionData   = null;   // última resposta de /api/active-consents/evolution (para export)
+let _allReceptors = [];      // [{label, color, top, uuid}]
+let _dbMinDate   = null;
+let _dbMaxDate   = null;
+let _matrixData  = null;     // raw API response: {receptors, transmitters, values, max_value, reference_date}
+let _matrixSort  = null;     // null=default | {axis:'row',index:i} | {axis:'col',index:j}
+
+/* ============================================================
+   HELPERS
+   ============================================================ */
+function _fmt(n) {
+  if (n == null) return '—';
+  return n.toLocaleString('pt-BR');
+}
+
+function _fmtShort(n) {
+  if (n == null) return '—';
+  if (n >= 1e6) return (n / 1e6).toFixed(2).replace('.', ',') + ' M';
+  if (n >= 1e3) return (n / 1e3).toFixed(2).replace('.', ',') + ' k';
+  return n.toLocaleString('pt-BR');
+}
+
+function _hexToRgba(hex, alpha) {
+  const r = parseInt(hex.slice(1,3), 16);
+  const g = parseInt(hex.slice(3,5), 16);
+  const b = parseInt(hex.slice(5,7), 16);
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+
+function heatColor(val, maxVal) {
+  const ratio = Math.min(val / (maxVal || 1), 1);
+  const r = Math.round(199 + (13  - 199) * ratio);
+  const g = Math.round(228 + (79  - 228) * ratio);
+  const b = Math.round(250 + (139 - 250) * ratio);
+  return { css: `rgb(${r},${g},${b})`, brightness: (r * 299 + g * 587 + b * 114) / 1000 };
+}
+
+function today() { return new Date().toISOString().slice(0, 10); }
+
+function debounce(fn, wait) {
+  let t;
+  return function (...args) {
+    clearTimeout(t);
+    t = setTimeout(() => fn.apply(this, args), wait);
+  };
+}
+
+function setCardLoading(id, on) {
+  const el = document.getElementById(id);
+  if (el) el.classList.toggle('card-loading', on);
+}
+
+/* ============================================================
+   MATRIX SORT HELPERS — client-side, no network call
+   ============================================================ */
+// Returns array of indices sorted by totals[i] desc; ties broken alphabetically by labels[i]
+function _sortedPerm(totals, labels) {
+  return totals.map((_, i) => i).sort((a, b) => {
+    if (totals[b] !== totals[a]) return totals[b] - totals[a];
+    return labels[a].localeCompare(labels[b]);
+  });
+}
+
+// Sum of row i across all transmitter columns
+function _rowTotal(i) {
+  if (!_matrixData) return 0;
+  return _matrixData.transmitters.reduce((s, _, j) => s + (_matrixData.values[i][j] || 0), 0);
+}
+
+// Sum of column j across all receptor rows
+function _colTotal(j) {
+  if (!_matrixData) return 0;
+  return _matrixData.receptors.reduce((s, _, i) => s + (_matrixData.values[i][j] || 0), 0);
+}
+
+function renderTornado(recItems, txmItems) {
+  const container = document.getElementById('tornado-active-container');
+  if (!container) return;
+
+  if (!recItems || recItems.length === 0) {
+    container.innerHTML = '<div style="padding:var(--s4);color:var(--text-muted);font-size:var(--tx-xs);text-align:center">Sem dados disponíveis.</div>';
+    return;
+  }
+
+  const sorted = [...recItems].sort((a, b) =>
+    b.total !== a.total ? b.total - a.total : a.name.localeCompare(b.name)
+  );
+  const txmMap = Object.fromEntries((txmItems || []).map(d => [d.name, d.total]));
+  const scaleMax = Math.max(
+    ...sorted.map(d => d.total),
+    ...(txmItems || []).map(d => d.total),
+    1
+  );
+  const BAR_MAX_PX = 120;
+  const barW = v => Math.round((v / scaleMax) * BAR_MAX_PX);
+
+  container.innerHTML = sorted.map(rec => {
+    const txmVal = txmMap[rec.name] ?? null;
+    const lw = barW(rec.total);
+    const rw = txmVal !== null ? barW(txmVal) : 0;
+    const nameShort = rec.name.length > 18 ? rec.name.slice(0, 18) + '…' : rec.name;
+    const tooltip = `${rec.name}\nReceptor: ${_fmtShort(rec.total)}\nTransmissor: ${txmVal !== null ? _fmtShort(txmVal) : '—'}`;
+
+    const leftSide = `<div class="tornado-value tornado-value-left">${_fmtShort(rec.total)}</div>
+                      <div class="t-bar t-bar-left" style="width:${lw}px"></div>`;
+    const rightSide = txmVal !== null
+      ? `<div class="t-bar t-bar-right" style="width:${rw}px"></div>
+         <div class="tornado-value tornado-value-right">${_fmtShort(txmVal)}</div>`
+      : '<span class="tornado-missing">—</span>';
+
+    return `<div class="tornado-row" title="${tooltip}">
+      <div class="tornado-left-bar">${leftSide}</div>
+      <div class="tornado-name" title="${rec.name}">${nameShort}</div>
+      <div class="tornado-right-bar">${rightSide}</div>
+    </div>`;
+  }).join('');
+}
+
+function renderMatrix(rowPerm, colPerm) {
+  const { receptors, transmitters, values, max_value } = _matrixData;
+  const table = document.getElementById('matrix-table');
+
+  // Totais marginais de linha (filtrados — refletem só os receptores visíveis)
+  const rowTotals = receptors.map((_, i) =>
+    transmitters.reduce((s, _, j) => s + (values[i][j] || 0), 0)
+  );
+  // Totais de coluna globais (independentes do filtro de receptor) — vindos do backend
+  const _txmGlobal = _matrixData.transmitter_totals || {};
+  const colTotals  = transmitters.map(txm => _txmGlobal[txm] || 0);
+  const grandTotal = _matrixData.grand_total_global ?? rowTotals.reduce((s, v) => s + v, 0);
+
+  // Build thead — coluna Total fixada após row-header
+  let thead = '<tr><th class="row-header">Receptor \\ Transmissor</th>';
+  thead += '<th class="row-header" style="min-width:52px;font-weight:600">Total</th>';
+  colPerm.forEach((j, colPos) => {
+    const t = transmitters[j];
+    const short = t.length > 12 ? t.slice(0, 12) + '…' : t;
+    const isActive = _matrixSort?.axis === 'col' && _matrixSort.index === j;
+    thead += `<th title="${t}" data-col-idx="${j}" class="${isActive ? 'sort-active' : ''}">${short}</th>`;
+  });
+  thead += '</tr>';
+
+  // Build tbody — linha Total fixada no topo
+  let tbody = '';
+  const _totalCell = (v) => v === 0
+    ? `<td style="background:var(--bg-elevated);color:var(--text-muted)">—</td>`
+    : `<td style="background:var(--bg-elevated);color:var(--text-secondary);font-weight:600">${_fmtShort(v)}</td>`;
+  let totalRow = `<tr><td class="row-label" style="font-weight:600" title="Totais globais por transmissor — independentes do filtro de receptores">Total</td>${_totalCell(grandTotal)}`;
+  colPerm.forEach((j) => { totalRow += _totalCell(colTotals[j] || 0); });
+  totalRow += '</tr>';
+  tbody += totalRow;
+  rowPerm.forEach((i, rowPos) => {
+    const rec = receptors[i];
+    const isActive = _matrixSort?.axis === 'row' && _matrixSort.index === i;
+    const recColor = _allReceptors.find(r => r.label === rec)?.color || null;
+    const dot = recColor
+      ? `<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:${recColor};margin-right:5px;vertical-align:middle;flex-shrink:0"></span>`
+      : '';
+    const recShort = rec.length > 22 ? rec.slice(0, 22) + '…' : rec;
+    const rt = rowTotals[i] || 0;
+    let row = `<tr><td class="row-label" title="${rec}" data-row-idx="${i}" style="cursor:pointer${isActive ? ';font-weight:700;text-decoration:underline dotted;color:var(--text-accent)' : ''}">${dot}${recShort}</td>`;
+    row += rt === 0
+      ? `<td style="background:var(--bg-elevated);color:var(--text-muted)">—</td>`
+      : `<td style="background:var(--bg-elevated);color:var(--text-secondary);font-weight:600">${_fmtShort(rt)}</td>`;
+    colPerm.forEach((j) => {
+      const v = values[i][j] || 0;
+      if (v === 0) {
+        row += `<td style="background:var(--bg-elevated);color:var(--text-muted)"
+                    data-rec="${rec}" data-txm="${transmitters[j]}" data-val="0"
+                    onmouseenter="showTip(event)" onmouseleave="hideTip()">—</td>`;
+      } else {
+        const col = heatColor(v, max_value);
+        const fg  = col.brightness > 145 ? '#13151E' : '#EEF0F6';
+        row += `<td style="background:${col.css};color:${fg}"
+                    data-rec="${rec}" data-txm="${transmitters[j]}" data-val="${v}"
+                    onmouseenter="showTip(event)" onmouseleave="hideTip()">${_fmtShort(v)}</td>`;
+      }
+    });
+    row += '</tr>';
+    tbody += row;
+  });
+
+  table.innerHTML = `<thead>${thead}</thead><tbody>${tbody}</tbody>`;
+}
+
+function _applyMatrixSort() {
+  if (!_matrixData) return;
+  const { receptors, transmitters } = _matrixData;
+
+  let rowPerm, colPerm;
+
+  // Totais globais de transmissor (independentes do filtro de receptor) para ordenação padrão
+  const _txmG = (_matrixData && _matrixData.transmitter_totals) || {};
+  const _colGlobalTotals = transmitters.map(txm => _txmG[txm] || 0);
+
+  if (_matrixSort === null) {
+    // Default: sort by totals — colunas por total global do transmissor
+    const rowTotals = receptors.map((_, i) => _rowTotal(i));
+    rowPerm = _sortedPerm(rowTotals, receptors);
+    colPerm = _sortedPerm(_colGlobalTotals, transmitters);
+  } else if (_matrixSort.axis === 'row') {
+    // Row (receptor) clicked → sort columns by that receptor's values
+    const i = _matrixSort.index;
+    const colVals = transmitters.map((_, j) => _matrixData.values[i][j] || 0);
+    colPerm = _sortedPerm(colVals, transmitters);
+    // Row order stays as default
+    const rowTotals = receptors.map((_, ri) => _rowTotal(ri));
+    rowPerm = _sortedPerm(rowTotals, receptors);
+  } else {
+    // Col (transmitter) clicked → sort rows by that transmitter's values
+    const j = _matrixSort.index;
+    const rowVals = receptors.map((_, i) => _matrixData.values[i][j] || 0);
+    rowPerm = _sortedPerm(rowVals, receptors);
+    // Col order stays as default (totais globais para consistência visual)
+    colPerm = _sortedPerm(_colGlobalTotals, transmitters);
+  }
+
+  renderMatrix(rowPerm, colPerm);
+
+  // Show/hide reset button
+  const resetBtn = document.getElementById('btn-matrix-reset');
+  if (resetBtn) resetBtn.style.display = _matrixSort !== null ? 'inline-flex' : 'none';
+}
+
+function _setMatrixSort(sort) {
+  _matrixSort = sort;
+  _applyMatrixSort();
+}
+
+// Event delegation for th clicks on the matrix table
+document.getElementById('matrix-container').addEventListener('click', function (e) {
+  if (!_matrixData) return;
+  // Column header (transmitter) click → sort rows
+  const colTh = e.target.closest('th[data-col-idx]');
+  if (colTh) { _setMatrixSort({ axis: 'col', index: +colTh.dataset.colIdx }); return; }
+  // Row label (receptor) click → sort columns
+  const rowTd = e.target.closest('td[data-row-idx]');
+  if (rowTd) { _setMatrixSort({ axis: 'row', index: +rowTd.dataset.rowIdx }); return; }
+});
+
+document.getElementById('btn-matrix-reset').addEventListener('click', function () {
+  _setMatrixSort(null);
+});
+
+/* ============================================================
+   FILTER PARAMS & SESSION STORAGE — III + VI §6.6
+   ============================================================ */
+function _filterParams() {
+  const start = document.getElementById('date-start').value;
+  const end   = document.getElementById('date-end').value;
+  const selItems = [...document.querySelectorAll('.receptor-item.selected')];
+  const receptors = selItems.map(el => el.dataset.label).join(',');
+  const p = new URLSearchParams({ start, end });
+  if (receptors) p.set('receptors', receptors);
+  return p;
+}
+
+function _saveFilters() {
+  try {
+    const p = _filterParams();
+    const prev = JSON.parse(sessionStorage.getItem('opf:filters') || '{}');
+    sessionStorage.setItem('opf:filters', JSON.stringify({
+      ...prev,
+      start: p.get('start'),
+      end: p.get('end'),
+      receptors: p.get('receptors') || '',
+    }));
+  } catch (_) {}
+}
+
+/* ============================================================
+   INIT DATE DEFAULTS (hydrate from sessionStorage)
+   ============================================================ */
+(function initDates() {
+  const endD = new Date(); endD.setFullYear(endD.getFullYear() - 1);
+  const defaultStart = endD.toISOString().slice(0, 10);
+  const defaultEnd   = today();
+  let saved = null;
+  try { saved = JSON.parse(sessionStorage.getItem('opf:filters') || 'null'); } catch (_) {}
+  document.getElementById('date-start').value = saved?.start || defaultStart;
+  document.getElementById('date-end').value   = saved?.end   || defaultEnd;
+})();
+
+/* ============================================================
+   RECEPTOR LIST — VI §6.3
+   ============================================================ */
+function buildReceptorList(receptors) {
+  _allReceptors = receptors;
+  const ul = document.getElementById('receptor-list');
+  ul.innerHTML = '';
+  let saved = null;
+  try { saved = JSON.parse(sessionStorage.getItem('opf:filters') || 'null'); } catch (_) {}
+  const preselected = new Set((saved?.receptors || '').split(',').filter(Boolean));
+
+  receptors.forEach(rec => {
+    const li = document.createElement('li');
+    li.className = 'receptor-item'
+      + (rec.top ? '' : ' inactive')
+      + (preselected.has(rec.label) ? ' selected' : '');
+    li.dataset.label = rec.label;
+    li.dataset.uuid  = rec.uuid || '';
+    li.title = rec.label;
+    li.innerHTML = `<div class="receptor-dot" style="background:${rec.top ? rec.color : ''}"></div>
+                    <span class="receptor-name">${rec.label}</span>`;
+    li.addEventListener('click', (e) => {
+      if (!e.ctrlKey && !e.metaKey && !e.shiftKey) {
+        document.querySelectorAll('.receptor-item.selected').forEach(el => el.classList.remove('selected'));
+      }
+      li.classList.toggle('selected');
+      refresh();
+    });
+    ul.appendChild(li);
+  });
+  document.getElementById('receptor-count').textContent = receptors.length;
+}
+
+async function loadReceptors() {
+  try {
+    const r = await fetch('/api/receptors');
+    const data = await r.json();
+    buildReceptorList(data);
+  } catch (e) {
+    document.getElementById('last-updated-text').textContent = 'Erro ao carregar receptores';
+  }
+}
+
+document.getElementById('receptor-search').addEventListener('input', function () {
+  const q = this.value.toLowerCase();
+  document.querySelectorAll('.receptor-item').forEach(li => {
+    li.style.display = li.dataset.label.toLowerCase().includes(q) ? '' : 'none';
+  });
+});
+
+/* ============================================================
+   DB RANGE — loads stats + sets _dbMaxDate reference
+   ============================================================ */
+async function loadDbRange() {
+  try {
+    const r = await fetch('/api/stats');
+    const s = await r.json();
+    if (s.min_date) _dbMinDate = s.min_date;
+    if (s.max_date) _dbMaxDate = s.max_date;
+    const dstart = document.getElementById('date-start');
+    const dend   = document.getElementById('date-end');
+    if (_dbMinDate) { dstart.min = _dbMinDate; dend.min = _dbMinDate; }
+    if (_dbMaxDate) { dstart.max = _dbMaxDate; dend.max = _dbMaxDate; }
+    const lbl = s.last_updated ? `Atualizado: ${s.last_updated}` : 'Dados carregados';
+    document.getElementById('last-updated-text').textContent = lbl;
+
+    // Apply default 1a quick-range relative to _dbMaxDate
+    const activeBtn = document.querySelector('.quick-btn.active');
+    if (activeBtn && _dbMaxDate) {
+      const endDate = _dbMaxDate;
+      const endD = new Date(endDate + 'T12:00:00');
+      endD.setMonth(endD.getMonth() - 12);
+      document.getElementById('date-start').value = endD.toISOString().slice(0, 10);
+      document.getElementById('date-end').value   = endDate;
+    }
+
+    // Trigger initial load
+    refresh();
+  } catch (e) {
+    document.getElementById('last-updated-text').textContent = 'Erro ao conectar';
+    refresh(); // load anyway with defaults
+  }
+}
+
+/* ============================================================
+   QUICK-RANGE BUTTONS
+   ============================================================ */
+document.querySelectorAll('.quick-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.quick-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    const action  = btn.dataset.months;
+    const endDate = _dbMaxDate || today();
+    let startDate;
+
+    if (action === '0') {
+      startDate = _dbMinDate || '2020-01-01';
+    } else if (action === 'ytd') {
+      startDate = endDate.slice(0, 4) + '-01-01';
+    } else {
+      const months = parseFloat(action);
+      const endD = new Date(endDate + 'T12:00:00');
+      if (months < 1) {
+        endD.setDate(endD.getDate() - Math.round(months * 30));
+      } else {
+        endD.setMonth(endD.getMonth() - months);
+      }
+      startDate = endD.toISOString().slice(0, 10);
+    }
+    document.getElementById('date-start').value = startDate;
+    document.getElementById('date-end').value   = endDate;
+    refresh();
+  });
+});
+
+document.getElementById('date-start').addEventListener('change', () => {
+  document.querySelectorAll('.quick-btn').forEach(b => b.classList.remove('active'));
+  refresh();
+});
+document.getElementById('date-end').addEventListener('change', () => {
+  document.querySelectorAll('.quick-btn').forEach(b => b.classList.remove('active'));
+  refresh();
+});
+
+/* ============================================================
+   EVOLUTION TOGGLES (receptor / transmitter)
+   ============================================================ */
+document.querySelectorAll('#evo-toggles button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('#evo-toggles button').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    _evolutionBy = btn.dataset.by;
+    loadEvolution(_evolutionBy);
+  });
+});
+
+/* ============================================================
+   BTN REFRESH
+   ============================================================ */
+document.getElementById('btn-refresh').addEventListener('click', () => refresh());
+
+/* ============================================================
+   REFRESH ORCHESTRATOR — declared BEFORE any reference by value
+   ============================================================ */
+async function _refreshNow() {
+  _saveFilters();
+  await Promise.all([
+    loadEvolution(_evolutionBy),
+    loadTornado(),
+    loadMatrix(),
+    loadIntensity(),
+  ]);
+}
+
+const refresh = debounce(_refreshNow, 120);
+
+/* ============================================================
+   LOAD — Section 1: Evolução
+   ============================================================ */
+async function loadEvolution(by) {
+  setCardLoading('card-evolution', true);
+  const p = _filterParams();
+  p.set('by', by);
+
+  const evoEmpty  = document.getElementById('evo-empty');
+  const evoCanvas = document.getElementById('chart-evolution');
+  evoEmpty.style.display  = 'none';
+  evoCanvas.style.display = 'none';
+
+  let data;
+  try {
+    const r = await fetch('/api/active-consents/evolution?' + p);
+    data = await r.json();
+  } catch {
+    setCardLoading('card-evolution', false);
+    evoEmpty.style.display = 'flex';
+    return;
+  }
+  setCardLoading('card-evolution', false);
+  _evolutionData = data;
+
+  if (!data.labels || data.labels.length === 0) {
+    evoEmpty.style.display = 'flex';
+    return;
+  }
+
+  evoCanvas.style.display = 'block';
+  const ctx = evoCanvas.getContext('2d');
+  if (_evoChart) _evoChart.destroy();
+
+  const isLight = document.body.getAttribute('data-theme') === 'light';
+  const gridColor    = isLight ? '#E5E7EB' : '#252A3A';
+  const tooltipBg    = isLight ? '#FFFFFF' : '#1B1F2E';
+  const tooltipBorder = isLight ? '#D1D5DB' : '#333B54';
+  const tooltipTitle = isLight ? '#111827' : '#EEF0F6';
+
+  _evoChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: data.labels,
+      datasets: data.series.map(s => ({
+        label:                s.name,
+        data:                 s.values,
+        borderColor:          s.color,
+        backgroundColor:      _hexToRgba(s.color, 0.08),
+        borderWidth:          2,
+        pointRadius:          3,
+        pointHoverRadius:     5,
+        pointBackgroundColor: s.color,
+        pointBorderColor:     'transparent',
+        tension:              0.35,
+        fill:                 false,
+        spanGaps:             true,
+      })),
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: {
+          position: 'bottom',
+          labels: { color: Chart.defaults.color, font: { size: 11 }, boxWidth: 12, padding: 12 },
+        },
+        tooltip: {
+          backgroundColor: tooltipBg,
+          borderColor: tooltipBorder, borderWidth: 1,
+          titleColor: tooltipTitle,
+          bodyColor: Chart.defaults.color,
+          callbacks: { label: ctx => ` ${ctx.dataset.label}: ${_fmt(ctx.parsed.y)}` },
+        },
+      },
+      scales: {
+        x: {
+          ticks: { color: Chart.defaults.color, font: { size: 10 }, maxTicksLimit: 16 },
+          grid:  { color: gridColor },
+        },
+        y: {
+          ticks: { color: Chart.defaults.color, font: { size: 10 }, callback: v => _fmt(v) },
+          grid:  { color: gridColor },
+        },
+      },
+    },
+  });
+}
+
+/* ============================================================
+   LOAD — Section 2: Tornado
+   ============================================================ */
+async function loadTornado() {
+  setCardLoading('card-tornado-active', true);
+
+  const p = _filterParams();
+  p.set('limit', '10');
+
+  const [recRes, txmRes] = await Promise.allSettled([
+    fetch('/api/active-consents/ranking?' + new URLSearchParams([...p, ['by', 'receptor']])).then(r => r.json()),
+    fetch('/api/active-consents/ranking?' + new URLSearchParams([...p, ['by', 'transmitter']])).then(r => r.json()),
+  ]);
+
+  const recItems = recRes.status === 'fulfilled' ? (recRes.value.items || []) : [];
+  const txmItems = txmRes.status === 'fulfilled' ? (txmRes.value.items || []) : [];
+
+  const refDate = recRes.status === 'fulfilled' && recRes.value.reference_date
+    ? recRes.value.reference_date : null;
+  const subEl = document.getElementById('tornado-active-subtitle');
+  if (subEl) subEl.textContent = refDate ? `Semana de ${refDate} · Top 10` : 'Semana mais recente · Top 10';
+
+  renderTornado(recItems, txmItems);
+  setCardLoading('card-tornado-active', false);
+}
+
+/* ============================================================
+   LOAD — Section 3: Matriz
+   ============================================================ */
+async function loadMatrix() {
+  setCardLoading('card-matrix', true);
+  const matEmpty = document.getElementById('matrix-empty');
+  const matCont  = document.getElementById('matrix-container');
+  matEmpty.style.display = 'none';
+  matCont.style.display  = 'none';
+
+  const p = _filterParams();
+  p.delete('start'); // matrix uses latest date ≤ end
+
+  let data;
+  try {
+    const r = await fetch('/api/active-consents/matrix?' + p);
+    data = await r.json();
+  } catch {
+    setCardLoading('card-matrix', false);
+    matEmpty.style.display = 'flex';
+    return;
+  }
+  setCardLoading('card-matrix', false);
+
+  if (!data.receptors || data.receptors.length === 0) {
+    _matrixData = null;
+    matEmpty.style.display = 'flex';
+    return;
+  }
+
+  document.getElementById('matrix-refdate').textContent =
+    data.reference_date ? `Semana de ${data.reference_date}` : '';
+
+  if (data.reference_date) {
+    document.getElementById('stat-refdate').textContent = data.reference_date;
+  }
+
+  // Store raw data and reset sort state (FR-010: new filter → default order)
+  _matrixData = data;
+  _matrixSort = null;
+  _applyMatrixSort();
+
+  matCont.style.display = 'block';
+}
+
+function showTip(e) {
+  const td  = e.currentTarget;
+  const tip = document.getElementById('matrix-tooltip');
+  tip.innerHTML = `<strong>${td.dataset.rec}</strong><br>↔ ${td.dataset.txm}<br>Total: <strong>${_fmtShort(Number(td.dataset.val))}</strong>`;
+  tip.style.display = 'block';
+  document.addEventListener('mousemove', _moveTip);
+}
+function hideTip() {
+  document.getElementById('matrix-tooltip').style.display = 'none';
+  document.removeEventListener('mousemove', _moveTip);
+}
+function _moveTip(e) {
+  const tip = document.getElementById('matrix-tooltip');
+  tip.style.left = (e.clientX + 14) + 'px';
+  tip.style.top  = (e.clientY + 14) + 'px';
+}
+
+/* ============================================================
+   LOAD — Section 4: Intensidade
+   ============================================================ */
+async function loadIntensity() {
+  setCardLoading('card-intensity', true);
+  const wrap = document.getElementById('intensity-wrap');
+  wrap.innerHTML = '<div class="chart-empty">Carregando…</div>';
+
+  const p = _filterParams();
+  p.delete('start'); // uses latest date ≤ end
+
+  let data;
+  try {
+    const r = await fetch('/api/active-consents/intensity?' + p);
+    data = await r.json();
+  } catch {
+    setCardLoading('card-intensity', false);
+    wrap.innerHTML = '<div class="chart-empty">Erro ao carregar dados</div>';
+    return;
+  }
+  setCardLoading('card-intensity', false);
+
+  document.getElementById('intensity-refdate').textContent =
+    data.reference_date ? ` — ${data.reference_date}` : '';
+
+  if (!data.items || data.items.length === 0) {
+    wrap.innerHTML = '<div class="chart-empty">Nenhum dado disponível para o período</div>';
+    return;
+  }
+
+  const maxInt = Math.max(...data.items.filter(i => i.intensity != null).map(i => i.intensity), 0.01);
+  const html = data.items.map(item => {
+    const isNull  = item.intensity == null;
+    const pct     = isNull ? 0 : (item.intensity / maxInt * 100).toFixed(1);
+    const valText = isNull ? '—' : item.intensity.toFixed(1) + 'x';
+    const hint    = isNull
+      ? `Sem dados de únicos — ${_fmt(item.active_total)} ativos`
+      : `${_fmt(item.active_total)} ativos ÷ ${_fmt(item.unique_total)} únicos`;
+    return `<div class="intensity-item" title="${hint}">
+      <div class="intensity-name">${item.receptor}</div>
+      <div class="intensity-bar-wrap">
+        <div class="intensity-bar" style="width:${pct}%;background:${item.color}"></div>
+      </div>
+      <div class="intensity-value ${isNull ? 'null-val' : ''}">${valText}</div>
+    </div>`;
+  }).join('');
+
+  wrap.innerHTML = `<div class="intensity-list">${html}</div>`;
+}
+
+/* ============================================================
+   EXPORT CSV
+   ============================================================ */
+function downloadCsv(rows, filename) {
+  if (!rows || rows.length === 0) return;
+  const keys = Object.keys(rows[0]);
+  const csv = [keys.join(','), ...rows.map(r => keys.map(k => JSON.stringify(r[k] ?? '')).join(','))].join('\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+}
+
+document.getElementById('btn-export-evolution').addEventListener('click', () => {
+  if (!_evolutionData?.series) return;
+  const rows = [];
+  _evolutionData.labels.forEach((label, i) => {
+    _evolutionData.series.forEach(s => {
+      rows.push({ semana: label, receptor: s.name, total: s.values[i] ?? '' });
+    });
+  });
+  downloadCsv(rows, 'evolucao_consentimentos_ativos.csv');
+});
+
+/* ============================================================
+   INIT
+   ============================================================ */
+(function init() {
+  loadReceptors();
+  loadDbRange(); // sets _dbMaxDate then calls refresh()
+})();
+</script>
+</body>
+</html>

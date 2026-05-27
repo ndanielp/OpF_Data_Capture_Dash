@@ -24,7 +24,7 @@ if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
 import config
-from collector import run_collection
+from collector import run_collection, run_payment_initiation_collection
 
 # Inicializa o colorama para cores no terminal Windows/Linux
 init(autoreset=True)
@@ -42,6 +42,7 @@ def cmd_run(args):
             delay_min=args.delay_min,
             delay_max=args.delay_max,
             receptor_filter=args.receptor_filter,
+            phase=args.phase,
         )
         
         if "error" in result:
@@ -55,6 +56,34 @@ def cmd_run(args):
     except Exception as e:
         print(f"\n{Fore.RED}Exceção fatal:{Style.RESET_ALL} {str(e)}")
         sys.exit(1)
+
+def cmd_run_pi(args):
+    """Executa a coleta de Iniciação de Pagamentos (payment-initiation)."""
+    print(f"{Fore.CYAN}Iniciando coleta Payment-Initiation: {args.start_date} até {args.end_date}{Style.RESET_ALL}\n")
+    if args.receptor_filter:
+        print(f"{Fore.YELLOW}Filtro de PISPs: {args.receptor_filter}{Style.RESET_ALL}\n")
+    try:
+        result = run_payment_initiation_collection(
+            start_date=args.start_date,
+            end_date=args.end_date,
+            workers=args.workers,
+            delay_min=args.delay_min,
+            delay_max=args.delay_max,
+            receptor_filter=args.receptor_filter,
+        )
+
+        if "error" in result:
+            print(f"\n{Fore.RED}Erro na execução:{Style.RESET_ALL} {result['error']}")
+            sys.exit(1)
+
+        print(f"\n{Fore.GREEN}=== Resumo da Execução (payment-initiation) ==={Style.RESET_ALL}")
+        for key, value in result.items():
+            print(f"  {Fore.YELLOW}{key}:{Style.RESET_ALL} {value}")
+
+    except Exception as e:
+        print(f"\n{Fore.RED}Exceção fatal:{Style.RESET_ALL} {str(e)}")
+        sys.exit(1)
+
 
 def cmd_status(args):
     """Resume o estado atual dos dados."""
@@ -116,7 +145,12 @@ def cmd_last_run(args):
 
 def cmd_preview(args):
     """Exibe preview do CSV."""
-    name = "consents.csv" if args.dataset == "consents" else "api_requests.csv"
+    name_map = {
+        "consents":        "consents.csv",
+        "api_requests":    "api_requests.csv",
+        "active_consents": "active_consents.csv",
+    }
+    name = name_map.get(args.dataset, f"{args.dataset}.csv")
     csv_path = config.DATA_DIR / name
 
     if not csv_path.exists():
@@ -156,7 +190,36 @@ def main():
         default=None,
         help="Filtra receptores por nome (substring, case-insensitive). Ex: -r Bradesco Itau",
     )
+    parser_run.add_argument(
+        "--phase", "-p",
+        choices=["consents", "active-consents", "api-requests"],
+        default=None,
+        metavar="PHASE",
+        help="Executa apenas uma fase: consents (1a), active-consents (1b), api-requests (2). Padrão: todas.",
+    )
     parser_run.set_defaults(func=cmd_run)
+
+    # Sub-comando: run-pi (Payment Initiation)
+    parser_pi = subparsers.add_parser(
+        "run-pi",
+        help="Coleta dados de Iniciação de Pagamentos (payment-initiation).",
+    )
+    parser_pi.add_argument("--start-date", "-s", type=str, default="4w",
+                           help="Data de início (ex: '4w', '3m', 'YYYY-MM-DD').")
+    parser_pi.add_argument("--end-date", "-e", type=str, default="today",
+                           help="Data final (ex: 'today', 'YYYY-MM-DD').")
+    parser_pi.add_argument("--workers", "-w", type=int, default=1,
+                           help="Qtd de workers para processamento em paralelo.")
+    parser_pi.add_argument("--delay-min", type=float, default=3.0,
+                           help="Espera mínima aleatória entre PISPs (s).")
+    parser_pi.add_argument("--delay-max", type=float, default=8.0,
+                           help="Espera máxima aleatória entre PISPs (s).")
+    parser_pi.add_argument(
+        "--receptor", "-r",
+        dest="receptor_filter", nargs="+", metavar="NAME", default=None,
+        help="Filtra PISPs por nome (substring, case-insensitive). Ex: -r AILOS PAGSEGURO",
+    )
+    parser_pi.set_defaults(func=cmd_run_pi)
 
     # Sub-comando: status
     parser_status = subparsers.add_parser("status", help="Retorna estatísticas locais dos CSVs salvos e execuções.")
@@ -169,7 +232,7 @@ def main():
 
     # Sub-comando: preview
     parser_preview = subparsers.add_parser("preview", help="Mostra as N últimas linhas de um banco gerado (X.csv).")
-    parser_preview.add_argument("dataset", choices=["consents", "api_requests"], help="Qual base exibir.")
+    parser_preview.add_argument("dataset", choices=["consents", "api_requests", "active_consents"], help="Qual base exibir.")
     parser_preview.add_argument("--rows", "-r", type=int, default=10, help="Número de linhas a exibir do final.")
     parser_preview.set_defaults(func=cmd_preview)
 

@@ -148,3 +148,9 @@ Both collection endpoints are on `https://dashboard.openfinancebrasil.org.br`:
 - `POST /api/api-requests` — fields: `axis` (`"date"`), `phase` (`"transactional-data"`), `receivers`, `dates`; optional: `transmitters`, `apis`, `endpoints`, `status`
 
 Omitting optional fields in `/api/api-requests` acts as "no filter" — used by the probe functions.
+
+<!-- SPECKIT START -->
+For additional context about technologies to be used, project structure,
+shell commands, and other important information, read the current plan
+at `specs/006-active-consents-improvements/plan.md`.
+<!-- SPECKIT END -->

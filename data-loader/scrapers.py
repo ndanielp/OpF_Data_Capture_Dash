@@ -46,8 +46,23 @@ _RETRY_POLICY = retry(
 _CONSENTS_PAGE_URL = f"{BASE_URL}/transactional-data/unique-consents/receivers"
 _CONSENTS_API_URL  = f"{BASE_URL}/api/unique-consents"
 
+# Consentimentos ativos: endpoint POST /api/consents (confirmado via DevTools).
+# Body: {"dates": [...], "clients": [receptor_uuid], "servers": [transmitter_uuid], "role": "client"}
+# Resposta: [{"value": int, "date": "ISO datetime"}] — sem campo transmitter_uuid;
+# o breakdown por par exige 1 chamada por receptor×transmissor.
+_ACTIVE_CONSENTS_PAGE_URL = f"{BASE_URL}/transactional-data/active-consents/receivers"
+_ACTIVE_CONSENTS_API_URL  = f"{BASE_URL}/api/consents"
+
 _API_REQUESTS_PAGE_URL  = f"{BASE_URL}/transactional-data/api-requests/evolution"
 _API_REQUESTS_ENDPOINT  = f"{BASE_URL}/api/api-requests"
+
+# Página de payment-initiation: dispara /api/organisations (client + server)
+# e /api/apis + /api/endpoints com phase="payment-initiation".
+_PI_API_REQUESTS_PAGE_URL = f"{BASE_URL}/payment-initiation/api-requests/evolution"
+
+# Phases conhecidas do dashboard OpF. Usadas em probe/fetch e discovery.
+PHASE_TRANSACTIONAL = "transactional-data"
+PHASE_PAYMENT_INITIATION = "payment-initiation"
 
 APIS = [
     "credit-cards-accounts",
@@ -285,6 +300,60 @@ def open_db(path: Path) -> sqlite3.Connection:
         )
     """)
 
+    # Payment-initiation: mesma forma de api_requests, tabela separada para
+    # isolar semântica (PISP × detentor × api × endpoint × status). Sem
+    # migrações incrementais — schema é estável desde criação.
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS payment_api_requests (
+            date              TEXT NOT NULL,
+            receptor          TEXT NOT NULL,
+            receptor_uuid     TEXT NOT NULL,
+            transmitter       TEXT NOT NULL DEFAULT '',
+            transmitter_uuid  TEXT NOT NULL DEFAULT '',
+            api               TEXT NOT NULL,
+            endpoint          TEXT NOT NULL DEFAULT '',
+            endpoint_id       INTEGER NOT NULL DEFAULT 0,
+            status            INTEGER NOT NULL,
+            total             INTEGER NOT NULL DEFAULT 0,
+            fetched_at        TEXT NOT NULL,
+            PRIMARY KEY (date, receptor_uuid, transmitter_uuid, api, endpoint_id, status)
+        )
+    """)
+
+    # Consentimentos ativos por receptor × transmissor (granularidade semanal).
+    # PK composta garante upsert seguro por INSERT OR REPLACE.
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS active_consents (
+            receptor_uuid    TEXT    NOT NULL,
+            transmitter_uuid TEXT    NOT NULL,
+            receptor         TEXT    NOT NULL DEFAULT '',
+            transmitter      TEXT    NOT NULL DEFAULT '',
+            date             TEXT    NOT NULL,
+            total            INTEGER NOT NULL,
+            fetched_at       TEXT    NOT NULL,
+            PRIMARY KEY (receptor_uuid, transmitter_uuid, date)
+        )
+    """)
+
+    # Migration: add name columns se a tabela já existia sem elas.
+    for _col in [
+        "ALTER TABLE active_consents ADD COLUMN receptor TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE active_consents ADD COLUMN transmitter TEXT NOT NULL DEFAULT ''",
+    ]:
+        try:
+            con.execute(_col)
+            con.commit()
+        except sqlite3.OperationalError:
+            pass  # coluna já existe
+
+    # Migration: remove cpf/cnpj — API não fornece esse breakdown.
+    for _drop in ["cpf", "cnpj"]:
+        try:
+            con.execute(f"ALTER TABLE active_consents DROP COLUMN {_drop}")
+            con.commit()
+        except sqlite3.OperationalError:
+            pass  # coluna já removida ou nunca existiu
+
     # Pré-agregação semanal por grupo de API — alimenta Mapa Estratégico e Evolução Temporal.
     con.execute("""
         CREATE TABLE IF NOT EXISTS api_group_weekly (
@@ -323,6 +392,19 @@ def open_db(path: Path) -> sqlite3.Connection:
         -- Índices para api_group_weekly
         CREATE INDEX IF NOT EXISTS idx_agw_receptor ON api_group_weekly(receptor_uuid, date);
         CREATE INDEX IF NOT EXISTS idx_agw_date     ON api_group_weekly(date);
+
+        -- active_consents: filtragem por receptor + data (padrão do dashboard).
+        CREATE INDEX IF NOT EXISTS idx_active_consents_receptor_date
+            ON active_consents (receptor_uuid, date);
+
+        -- Índices para payment_api_requests (espelha api_requests).
+        CREATE INDEX IF NOT EXISTS idx_pi_api_by_receptor
+            ON payment_api_requests(receptor_uuid, date, api, status, total);
+        CREATE INDEX IF NOT EXISTS idx_pi_api_by_transmitter
+            ON payment_api_requests(transmitter_uuid, date, status, total);
+        CREATE INDEX IF NOT EXISTS idx_pi_api_dash_covering
+            ON payment_api_requests(date, receptor, api, endpoint_id, status, endpoint, total)
+            WHERE endpoint_id <> 0;
     """)
 
     con.commit()
@@ -376,7 +458,14 @@ def upsert_consents(con: sqlite3.Connection, records: list[dict], fetched_at: st
     return len(rows)
 
 
-def upsert_api_requests(con: sqlite3.Connection, records: list[dict]) -> int:
+def _upsert_records_into(
+    con: sqlite3.Connection, table: str, records: list[dict],
+) -> int:
+    """Upsert genérico em tabelas com schema de api_requests
+    (api_requests, payment_api_requests). Whitelist de nomes para evitar
+    injeção via parâmetro `table`."""
+    if table not in ("api_requests", "payment_api_requests"):
+        raise ValueError(f"tabela não permitida em upsert: {table}")
     rows = [
         (r["date"], r["receptor"], r["receptor_uuid"],
          r["transmitter"], r["transmitter_uuid"],
@@ -384,14 +473,22 @@ def upsert_api_requests(con: sqlite3.Connection, records: list[dict]) -> int:
          r["status"], r["total"], r["fetched_at"])
         for r in records
     ]
-    con.executemany("""
-        INSERT OR REPLACE INTO api_requests
+    con.executemany(f"""
+        INSERT OR REPLACE INTO {table}
             (date, receptor, receptor_uuid, transmitter, transmitter_uuid,
              api, endpoint, endpoint_id, status, total, fetched_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, rows)
     con.commit()
     return len(rows)
+
+
+def upsert_api_requests(con: sqlite3.Connection, records: list[dict]) -> int:
+    return _upsert_records_into(con, "api_requests", records)
+
+
+def upsert_payment_api_requests(con: sqlite3.Connection, records: list[dict]) -> int:
+    return _upsert_records_into(con, "payment_api_requests", records)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -627,10 +724,292 @@ def run_consents(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# CONSENTIMENTOS ATIVOS
+# ─────────────────────────────────────────────────────────────────────────────
+
+@_RETRY_POLICY
+def fetch_active_consents_for_org(
+    session: OpFSession,
+    receptor_uuid: str,
+    transmitter_uuid: str,
+    dates: list[str],
+) -> list[dict]:
+    """POST /api/consents para um par receptor×transmissor.
+
+    Retorna [{"value": int, "date": "ISO datetime"}] — um item por data no período.
+    O campo `servers` filtra para o transmissor específico; sem ele a API agrega
+    todos os transmissores (não fornece breakdown). Por isso iteramos um par por request.
+
+    Propaga OpFTransientError (retentado) ou OpFFatalError (imediato).
+    """
+    data = session.post(_ACTIVE_CONSENTS_API_URL, {
+        "dates":   dates,
+        "clients": [receptor_uuid],
+        "servers": [transmitter_uuid],
+        "role":    "client",
+    })
+    if isinstance(data, list):
+        return data
+    return []
+
+
+def build_active_consent_records(
+    raw: list[dict],
+    receptor_uuid: str,
+    transmitter_uuid: str,
+    fetched_at: str,
+    receptor: str = "",
+    transmitter: str = "",
+) -> list[dict]:
+    """Transforma a resposta de /api/consents em registros para active_consents.
+
+    A API retorna [{"value": int, "date": "ISO datetime"}] — sem campos de nome.
+    receptor/transmitter (nomes legíveis) vêm do contexto da chamada, onde já
+    temos os dicts {label, value} de fetch_orgs()/fetch_transmitters().
+    """
+    records = []
+    for item in raw:
+        date_raw = str(item.get("date") or "")
+        date = parse_record_date(date_raw) if date_raw else ""
+        if not date:
+            continue
+
+        total = item.get("value")
+        if total is None:
+            continue
+
+        records.append({
+            "receptor_uuid":    receptor_uuid,
+            "transmitter_uuid": transmitter_uuid,
+            "receptor":         receptor,
+            "transmitter":      transmitter,
+            "date":             date,
+            "total":            int(total),
+            "fetched_at":       fetched_at,
+        })
+    return records
+
+
+def upsert_active_consents(
+    con: sqlite3.Connection, records: list[dict], fetched_at: str,
+) -> int:
+    """INSERT OR REPLACE em active_consents. Não comita — caller é responsável.
+
+    Retorna número de linhas escritas.
+    """
+    rows = [
+        (r["receptor_uuid"], r["transmitter_uuid"],
+         r.get("receptor", ""), r.get("transmitter", ""),
+         r["date"], r["total"], fetched_at)
+        for r in records
+    ]
+    con.executemany("""
+        INSERT OR REPLACE INTO active_consents
+            (receptor_uuid, transmitter_uuid, receptor, transmitter, date, total, fetched_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, rows)
+    return len(rows)
+
+
+def _worker_run_active_consents(
+    worker_id: int, chunk: list[dict], dates: list[str], fetched_at: str, queue,
+    delay_min: float, delay_max: float, db_path: str, run_id: str,
+) -> None:
+    """Worker para coleta de consentimentos ativos por par receptor×transmissor.
+
+    Cada item em `chunk` é {"receptor": {label, value}, "transmitter": {label, value}}.
+    Faz 1 POST /api/consents por par, com `clients`=[receptor] e `servers`=[transmitter].
+    Registra cada tentativa em fetch_attempts; usa already_done() para checkpoint cross-run.
+    """
+    from telemetry import active_consents_target, already_done, log_attempt
+
+    queue.put(("log", worker_id, f"W{worker_id} active_consents: {len(chunk)} pares"))
+
+    time.sleep((worker_id - 1) * _WORKER_STAGGER)
+
+    with sync_playwright() as p:
+        queue.put(("ready", worker_id, len(chunk)))
+        with OpFSession(p) as session:
+            for i, pair in enumerate(chunk, 1):
+                receptor    = pair["receptor"]
+                transmitter = pair["transmitter"]
+                pair_label  = f"{receptor['label']} x {transmitter['label']}"
+                target = active_consents_target(receptor["value"], dates, transmitter["value"])
+
+                # Checkpoint: pula se já coletado com sucesso hoje.
+                if already_done(db_path, target):
+                    queue.put(("log", worker_id,
+                               f"active_consents skip (ja coletado): {pair_label}"))
+                    queue.put(("start", worker_id, pair_label, i))
+                    queue.put(("org_done", worker_id, pair_label, 0, 0, []))
+                    continue
+
+                t0 = time.time()
+                started_iso = datetime.now(timezone.utc).isoformat()
+                queue.put(("start", worker_id, pair_label, i))
+
+                records: list[dict] = []
+                status_label = "ok"
+                err_class = None
+                err_msg = None
+                try:
+                    raw = fetch_active_consents_for_org(
+                        session, receptor["value"], transmitter["value"], dates,
+                    )
+                    records = build_active_consent_records(
+                        raw, receptor["value"], transmitter["value"], fetched_at,
+                        receptor=receptor["label"], transmitter=transmitter["label"],
+                    )
+                    if not records:
+                        status_label = "empty"
+                except OpFError as exc:
+                    status_label = "failed"
+                    err_class = type(exc).__name__
+                    err_msg = str(exc)[:500]
+                    queue.put(("log", worker_id,
+                               f"active_consents FALHOU para '{pair_label}': "
+                               f"{err_class}: {exc}"))
+
+                duration_ms = int((time.time() - t0) * 1000)
+                log_attempt(
+                    db_path, run_id, "active_consents", target,
+                    started_iso, duration_ms, status_label,
+                    error_class=err_class, error_msg=err_msg,
+                    records_count=len(records),
+                )
+
+                queue.put(("org_done", worker_id, pair_label, len(records), 0, records))
+                queue.put(("timing", worker_id, pair_label, duration_ms / 1000.0))
+                time.sleep(random.uniform(delay_min, delay_max))
+
+    queue.put(("done", worker_id))
+
+
+def run_active_consents(
+    dates: list[str], db_path: str | Path, workers: int = _WORKER_COUNT,
+    logger=None, delay_min: float = 3.0, delay_max: float = 8.0,
+    run_id: str = "",
+    receptor_filter: list[str] | None = None,
+) -> dict[str, int]:
+    """Coleta consentimentos ativos por par receptor×transmissor via POST /api/consents.
+
+    Retorna {"ok": N, "failed": M, "skipped": K}.
+    A API retorna um valor agregado por request; o breakdown por transmissor
+    exige 1 call por par — `clients`=[receptor] + `servers`=[transmitter].
+    """
+    log = logger or logging.getLogger(__name__)
+    fetched_at = datetime.now(timezone.utc).isoformat()
+    db_path = Path(db_path)
+
+    log.info("Consentimentos ativos: carregando lista de receptores e transmissores...")
+    with sync_playwright() as p:
+        with OpFSession(p, logger=log) as session:
+            orgs         = fetch_orgs(session)
+            transmitters = fetch_transmitters(session)
+
+    if receptor_filter:
+        lower = [n.lower() for n in receptor_filter]
+        orgs = [o for o in orgs if any(n in o["label"].lower() for n in lower)]
+
+    log.info(
+        f"Consentimentos ativos: {len(orgs)} receptores x {len(transmitters)} transmissores"
+    )
+    if not orgs or not transmitters:
+        return {"ok": 0, "failed": 0, "skipped": 0}
+
+    # Produto cartesiano receptor×transmissor — cada par vira 1 HTTP call.
+    pairs = [
+        {"receptor": org, "transmitter": txm}
+        for org in orgs
+        for txm in transmitters
+    ]
+
+    log.info(
+        f"Consentimentos ativos: periodo {dates[0][:10]} -> {dates[-1][:10]} "
+        f"({len(dates)} semanas . {len(pairs)} pares . {workers} workers)"
+    )
+
+    n = min(workers, len(pairs))
+    chunks = [pairs[i::n] for i in range(n)]
+
+    con = open_db(db_path)
+    con.execute("PRAGMA journal_mode=WAL")
+    total_ok = total_failed = total_skipped = 0
+
+    with mp.Manager() as mgr:
+        queue = mgr.Queue()
+        with ProcessPoolExecutor(max_workers=n) as executor:
+            futures = {
+                executor.submit(
+                    _worker_run_active_consents, i + 1, chunk, dates, fetched_at,
+                    queue, delay_min, delay_max, str(db_path), run_id,
+                ): i + 1
+                for i, chunk in enumerate(chunks) if chunk
+            }
+            completed: set[int] = set()
+
+            while len(completed) < len(futures):
+                while not queue.empty():
+                    msg = queue.get_nowait()
+                    _handle_queue_msg(msg, log, "ConsentAtivos")
+                    if msg[0] == "org_done" and len(msg) > 5 and msg[5]:
+                        records = msg[5]
+                        upsert_active_consents(con, records, fetched_at)
+                        con.commit()
+                        total_ok += 1
+                    elif msg[0] == "org_done" and len(msg) > 5 and not msg[5]:
+                        # empty or failed — counted per log_attempt in worker
+                        pass
+
+                for future, wid in list(futures.items()):
+                    if future.done() and wid not in completed:
+                        completed.add(wid)
+                        try:
+                            future.result()
+                        except Exception as exc:
+                            log.error(f"ConsentAtivos W{wid} falhou: {exc}")
+
+                time.sleep(0.15)
+
+            while not queue.empty():
+                msg = queue.get_nowait()
+                _handle_queue_msg(msg, log, "ConsentAtivos")
+                if msg[0] == "org_done" and len(msg) > 5 and msg[5]:
+                    records = msg[5]
+                    upsert_active_consents(con, records, fetched_at)
+                    con.commit()
+
+    con.close()
+
+    # Contagens definitivas vêm de fetch_attempts (mais precisas que contagem por queue).
+    try:
+        fa_con = sqlite3.connect(str(db_path), timeout=10)
+        row = fa_con.execute("""
+            SELECT
+                SUM(CASE WHEN status IN ('ok','empty') THEN 1 ELSE 0 END),
+                SUM(CASE WHEN status = 'failed'        THEN 1 ELSE 0 END),
+                SUM(CASE WHEN status = 'skipped'       THEN 1 ELSE 0 END)
+            FROM fetch_attempts
+            WHERE run_id = ? AND phase = 'active_consents'
+        """, (run_id,)).fetchone()
+        fa_con.close()
+        total_ok, total_failed, total_skipped = [x or 0 for x in row]
+    except Exception:
+        pass  # mantém contagens parciais da queue
+
+    log.info(
+        f"Consentimentos ativos: ok={total_ok} failed={total_failed} skipped={total_skipped}"
+    )
+    return {"ok": total_ok, "failed": total_failed, "skipped": total_skipped}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # API REQUESTS
 # ─────────────────────────────────────────────────────────────────────────────
 
-def fetch_transmitters(session: OpFSession) -> list[dict]:
+def fetch_transmitters(
+    session: OpFSession, page_url: str = _API_REQUESTS_PAGE_URL,
+) -> list[dict]:
     """Captura a lista de transmissores navegando na página de api-requests.
 
     Intercepta `/api/organisations` via page.on("response"). A página chama
@@ -653,7 +1032,7 @@ def fetch_transmitters(session: OpFSession) -> list[dict]:
 
     page.on("response", _on_response)
     try:
-        page.goto(_API_REQUESTS_PAGE_URL, wait_until="networkidle", timeout=45000)
+        page.goto(page_url, wait_until="networkidle", timeout=45000)
         page.wait_for_timeout(1500)
     finally:
         page.remove_listener("response", _on_response)
@@ -666,12 +1045,109 @@ def fetch_transmitters(session: OpFSession) -> list[dict]:
     return []
 
 
+def fetch_payment_orgs(session: OpFSession) -> tuple[list[dict], list[dict]]:
+    """Captura receptores (PISPs) e transmissores (detentores) navegando
+    na página de payment-initiation/api-requests/evolution.
+
+    Diferente de transactional-data, aqui as duas chamadas a /api/organisations
+    têm role distinto no body (`client` = PISP, `server` = detentor).
+    Como as duas requests são disparadas em paralelo pelo front, a ordem das
+    respostas é não determinística — pareamos cada resposta com o role do body
+    da request associada para classificar corretamente.
+
+    Retorna (PISPs, detentores) como listas de {"label", "value"}.
+    """
+    import json as _json
+    page = session._page
+    receptors: list[dict] = []
+    transmitters: list[dict] = []
+
+    def _on_response(resp):
+        nonlocal receptors, transmitters
+        if "/api/organisations" not in resp.url:
+            return
+        try:
+            data = resp.json()
+        except Exception:
+            return
+        if not isinstance(data, list):
+            return
+        role = ""
+        try:
+            body = resp.request.post_data
+            if body:
+                role = (_json.loads(body) or {}).get("role", "")
+        except Exception:
+            pass
+        if role == "client":
+            receptors = data
+        elif role == "server":
+            transmitters = data
+
+    page.on("response", _on_response)
+    try:
+        page.goto(_PI_API_REQUESTS_PAGE_URL, wait_until="networkidle", timeout=45000)
+        page.wait_for_timeout(1500)
+    finally:
+        page.remove_listener("response", _on_response)
+
+    return receptors, transmitters
+
+
+def fetch_apis_endpoints(
+    session: OpFSession, phase: str,
+) -> tuple[list[str], dict[str, list[dict]]]:
+    """Descobre APIs e endpoints de uma phase via POST /api/apis e /api/endpoints.
+
+    A resposta de /api/endpoints traz o campo `group`, que casa com o `label` /
+    `name` de /api/apis. Mapeamos `endpoint.group → api._id` para agrupar.
+
+    Retorna (apis, endpoints_map) onde:
+      apis = ["payments", "automatic-payments", "enrollments"]
+      endpoints_map = {"payments": [{"id": 64, "label": "..."}, ...], ...}
+    """
+    apis_raw = session.post("/api/apis", {"phase": phase}) or []
+    eps_raw  = session.post("/api/endpoints", {"phase": phase}) or []
+
+    apis: list[str] = []
+    label_to_id: dict[str, str] = {}
+    for a in apis_raw:
+        api_id = a.get("_id") or a.get("value")
+        if not api_id:
+            continue
+        apis.append(api_id)
+        for k in ("label", "name"):
+            v = a.get(k)
+            if isinstance(v, str) and v.strip():
+                label_to_id[v.strip()] = api_id
+
+    endpoints_map: dict[str, list[dict]] = {a: [] for a in apis}
+    for ep in eps_raw:
+        ep_id = ep.get("_id") if isinstance(ep.get("_id"), int) else ep.get("value")
+        label = ep.get("label") or ep.get("name") or ""
+        group = (ep.get("group") or "").strip()
+        api_id = label_to_id.get(group)
+        if not api_id or ep_id is None:
+            continue
+        endpoints_map.setdefault(api_id, []).append(
+            {"id": int(ep_id), "label": str(label)}
+        )
+
+    for api_id in endpoints_map:
+        endpoints_map[api_id].sort(key=lambda e: e["id"])
+
+    return apis, endpoints_map
+
+
 @_RETRY_POLICY
 def _probe_post(session: OpFSession, body: dict) -> object:
     return session.post("/api/api-requests", body)
 
 
-def probe_receptor(session: OpFSession, receptor_uuid: str, dates: list[str]) -> bool:
+def probe_receptor(
+    session: OpFSession, receptor_uuid: str, dates: list[str],
+    phase: str = PHASE_TRANSACTIONAL,
+) -> bool:
     """POST /api/api-requests sem filtros para verificar se o receptor tem
     chamadas no período.
 
@@ -680,7 +1156,7 @@ def probe_receptor(session: OpFSession, receptor_uuid: str, dates: list[str]) ->
     """
     body = {
         "axis":      "date",
-        "phase":     "transactional-data",
+        "phase":     phase,
         "receivers": [receptor_uuid],
         "dates":     dates,
     }
@@ -692,13 +1168,14 @@ def probe_receptor(session: OpFSession, receptor_uuid: str, dates: list[str]) ->
 
 
 def probe_transmitter(
-    session: OpFSession, receptor_uuid: str, transmitter_uuid: str, dates: list[str]
+    session: OpFSession, receptor_uuid: str, transmitter_uuid: str, dates: list[str],
+    phase: str = PHASE_TRANSACTIONAL,
 ) -> bool:
     """Probe L1: receptor + transmitter, sem api/endpoint/status.
     Retorna True se tem dados, False se vazio. Conservador em erros."""
     body = {
         "axis":         "date",
-        "phase":        "transactional-data",
+        "phase":        phase,
         "receivers":    [receptor_uuid],
         "transmitters": [transmitter_uuid],
         "dates":        dates,
@@ -712,13 +1189,14 @@ def probe_transmitter(
 
 def probe_api(
     session: OpFSession, receptor_uuid: str, transmitter_uuid: str,
-    api_id: str, dates: list[str]
+    api_id: str, dates: list[str],
+    phase: str = PHASE_TRANSACTIONAL,
 ) -> bool:
     """Probe L2: receptor + transmitter + api, sem endpoint/status.
     Retorna True se tem dados, False se vazio. Conservador em erros."""
     body = {
         "axis":         "date",
-        "phase":        "transactional-data",
+        "phase":        phase,
         "receivers":    [receptor_uuid],
         "transmitters": [transmitter_uuid],
         "apis":         [api_id],
@@ -740,6 +1218,7 @@ def fetch_api_combo(
     dates: list[str],
     transmitter_uuid: str = "",
     endpoint_id: int = 0,
+    phase: str = PHASE_TRANSACTIONAL,
 ) -> list[dict]:
     """POST /api/api-requests para uma combinação
     (receptor, transmissor, api, endpoint, status) via OpFSession,
@@ -749,7 +1228,7 @@ def fetch_api_combo(
     """
     body: dict = {
         "axis":      "date",
-        "phase":     "transactional-data",
+        "phase":     phase,
         "apis":      [api_id],
         "receivers": [receptor_uuid],
         "dates":     dates,
@@ -820,6 +1299,8 @@ def _worker_run_api_requests(
     run_id: str,
     apis: list[str],
     endpoints_map: dict[str, list[dict]],
+    phase: str = PHASE_TRANSACTIONAL,
+    target_prefix: str = "",
 ) -> list[dict]:
     """
     Roda em processo separado: abre 1 OpFSession e itera combinações
@@ -844,7 +1325,7 @@ def _worker_run_api_requests(
                 t0 = time.time()
                 queue.put(("start", worker_id, receptor["label"], i))
 
-                has_data = probe_receptor(session, receptor["value"], dates)
+                has_data = probe_receptor(session, receptor["value"], dates, phase=phase)
                 if not has_data:
                     queue.put(("skipped", worker_id, receptor["label"]))
                     elapsed = time.time() - t0
@@ -863,12 +1344,14 @@ def _worker_run_api_requests(
                     if t_uuid:
                         p_started = datetime.now(timezone.utc).isoformat()
                         p_t0 = time.time()
-                        has_t = probe_transmitter(session, receptor["value"], t_uuid, dates)
+                        has_t = probe_transmitter(
+                            session, receptor["value"], t_uuid, dates, phase=phase,
+                        )
                         p_ms = int((time.time() - p_t0) * 1000)
                         if not has_t:
                             log_attempt(
                                 db_path, run_id, "api_requests",
-                                probe_transmitter_target(
+                                target_prefix + probe_transmitter_target(
                                     receptor["value"], t_uuid, date_first, date_last
                                 ),
                                 p_started, p_ms, "skipped",
@@ -882,13 +1365,14 @@ def _worker_run_api_requests(
                             p_started = datetime.now(timezone.utc).isoformat()
                             p_t0 = time.time()
                             has_a = probe_api(
-                                session, receptor["value"], t_uuid, api_id, dates
+                                session, receptor["value"], t_uuid, api_id, dates,
+                                phase=phase,
                             )
                             p_ms = int((time.time() - p_t0) * 1000)
                             if not has_a:
                                 log_attempt(
                                     db_path, run_id, "api_requests",
-                                    probe_api_target(
+                                    target_prefix + probe_api_target(
                                         api_id, receptor["value"], t_uuid,
                                         date_first, date_last
                                     ),
@@ -905,7 +1389,7 @@ def _worker_run_api_requests(
                             for status in STATUSES:
                                 ep_id  = endpoint["id"] if endpoint else 0
                                 t_uuid_str = t_uuid or ""
-                                target = api_target(
+                                target = target_prefix + api_target(
                                     api_id, ep_id, status,
                                     receptor["value"], t_uuid_str,
                                     date_first, date_last,
@@ -931,6 +1415,7 @@ def _worker_run_api_requests(
                                         dates,
                                         transmitter_uuid=t_uuid_str,
                                         endpoint_id=ep_id,
+                                        phase=phase,
                                     )
                                     if not raw:
                                         status_label = "empty"
@@ -978,6 +1463,9 @@ def run_api_requests(
     run_id: str = "",
     apis: list[str] | None = None,
     endpoints_map: dict[str, list[dict]] | None = None,
+    phase: str = PHASE_TRANSACTIONAL,
+    target_table: str = "api_requests",
+    target_prefix: str = "",
 ) -> int:
     """
     Coleta chamadas de API por receptor × transmissor × api × endpoint × status.
@@ -987,6 +1475,11 @@ def run_api_requests(
                   Se None ou [], coleta sem filtro de transmissor.
     apis/endpoints_map: se None, usa fallback hardcoded APIS/ENDPOINTS.
                        Caller pode passar valores de discovery dinâmico (F2).
+    phase: "transactional-data" (default) ou "payment-initiation".
+    target_table: nome da tabela onde gravar os registros.
+                  "api_requests" (default) ou "payment_api_requests".
+    target_prefix: prefixo aplicado aos targets de telemetria, para que
+                   checkpointing em fetch_attempts seja isolado por phase.
     """
     log = logger or logging.getLogger(__name__)
     fetched_at = datetime.now(timezone.utc).isoformat()
@@ -997,9 +1490,9 @@ def run_api_requests(
 
     total_eps = sum(len(endpoints_map.get(a, [])) + 1 for a in apis)
     log.info(
-        f"API Requests: {len(receptors)} receptores · {len(transmitters)} transmissores · "
-        f"{len(apis)} APIs · ~{total_eps} endpoints · "
-        f"{len(STATUSES)} statuses · {workers} workers"
+        f"API Requests [{phase}]: {len(receptors)} receptores · "
+        f"{len(transmitters)} transmissores · {len(apis)} APIs · "
+        f"~{total_eps} endpoints · {len(STATUSES)} statuses · {workers} workers"
     )
 
     n = min(workers, len(receptors))
@@ -1008,6 +1501,9 @@ def run_api_requests(
     con = open_db(db_path)
     con.execute("PRAGMA journal_mode=WAL")
     total_upserted = 0
+
+    def _upsert(records: list[dict]) -> int:
+        return _upsert_records_into(con, target_table, records)
 
     with mp.Manager() as mgr:
         queue = mgr.Queue()
@@ -1018,6 +1514,7 @@ def run_api_requests(
                     i + 1, chunk, dates, fetched_at, queue, delay_min, delay_max,
                     transmitters, str(db_path), run_id,
                     apis, endpoints_map,
+                    phase, target_prefix,
                 ): i + 1
                 for i, chunk in enumerate(chunks) if chunk
             }
@@ -1028,7 +1525,7 @@ def run_api_requests(
                     msg = queue.get_nowait()
                     _handle_queue_msg(msg, log, "API Requests")
                     if msg[0] == "combo" and len(msg) > 5 and msg[5]:
-                        total_upserted += upsert_api_requests(con, msg[5])
+                        total_upserted += _upsert(msg[5])
 
                 for future, wid in list(futures.items()):
                     if future.done() and wid not in completed:
@@ -1044,11 +1541,11 @@ def run_api_requests(
                 msg = queue.get_nowait()
                 _handle_queue_msg(msg, log, "API Requests")
                 if msg[0] == "combo" and len(msg) > 5 and msg[5]:
-                    total_upserted += upsert_api_requests(con, msg[5])
+                    total_upserted += _upsert(msg[5])
 
     con.close()
 
-    log.info(f"API Requests: {total_upserted} registros inseridos/atualizados no SQLite")
+    log.info(f"API Requests [{phase}]: {total_upserted} registros inseridos/atualizados no SQLite")
     return total_upserted
 
 
