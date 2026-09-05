@@ -1,9 +1,11 @@
-# deploy.ps1 - Rebuild e redeploy do Dashboard no Google Cloud Run
+# deploy.ps1 - Build e deploy do Dashboard no Google Cloud Run via Cloud Build
 # =================================================================
 # Uso: .\deploy.ps1
 # Flags opcionais:
-#   -SkipSync   Nao sincroniza dados para o GCS (so rebuild + deploy)
-#   -SyncOnly   So sobe dados para o GCS, sem rebuild nem deploy
+#   -SkipSync   Nao sincroniza dados para o GCS (so build + deploy)
+#   -SyncOnly   So sobe dados para o GCS, sem build nem deploy
+#
+# Pre-requisito: gcloud CLI instalado e autenticado (nao requer Docker)
 # =================================================================
 
 param(
@@ -48,13 +50,11 @@ if (-not (Test-Path $GCLOUD)) {
 }
 Write-OK "gcloud CLI encontrado"
 
-try {
-    docker info 2>&1 | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw }
-    Write-OK "Docker Desktop esta rodando"
-} catch {
-    Write-Fail "Docker nao esta rodando. Abra o Docker Desktop e tente novamente."
+& $GCLOUD auth print-access-token 2>&1 | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    Write-Fail "Nao autenticado no GCP. Execute: gcloud auth login"
 }
+Write-OK "Autenticado no GCP"
 
 # -- Passo 1: Sync dos dados para o GCS ------------------------------------
 if ($SkipSync -and -not $SyncOnly) {
@@ -76,32 +76,18 @@ if ($SkipSync -and -not $SyncOnly) {
     }
 }
 
-# -- Passo 2: Build da imagem Docker ----------------------------------------
-Write-Step "Fazendo build da imagem Docker..."
-Write-Info "Isso pode levar alguns minutos (usa cache quando possivel)..."
+# -- Passo 2: Build da imagem via Cloud Build --------------------------------
+Write-Step "Fazendo build da imagem via Cloud Build (sem Docker local)..."
+Write-Info "Isso pode levar alguns minutos..."
 
-docker build -t $IMAGE .
-if ($LASTEXITCODE -ne 0) { Write-Fail "Falha no docker build." }
-Write-OK "Build concluido"
+# gcloud builds submit envia o codigo-fonte para o Cloud Build,
+# constroi a imagem usando o Dockerfile e faz push para o Artifact Registry.
+& $GCLOUD builds submit --tag $IMAGE . --project $PROJECT_ID `
+    2>&1 | ForEach-Object { Write-Host $_ }
+if ($LASTEXITCODE -ne 0) { Write-Fail "Falha no Cloud Build." }
+Write-OK "Build concluido e imagem enviada para o Artifact Registry"
 
-# -- Passo 3: Autenticar Docker no Artifact Registry -----------------------
-Write-Step "Autenticando Docker no Artifact Registry..."
-
-$token = (& $GCLOUD auth print-access-token 2>&1)
-if ($LASTEXITCODE -ne 0) {
-    Write-Fail "Falha ao obter access token. Execute: gcloud auth login"
-}
-$token | docker login -u oauth2accesstoken --password-stdin "us-central1-docker.pkg.dev" 2>&1 | Out-Null
-if ($LASTEXITCODE -ne 0) { Write-Fail "Falha na autenticacao do Docker." }
-Write-OK "Docker autenticado no Artifact Registry"
-
-# -- Passo 4: Push da imagem ------------------------------------------------
-Write-Step "Enviando imagem para o Artifact Registry..."
-docker push $IMAGE
-if ($LASTEXITCODE -ne 0) { Write-Fail "Falha no docker push." }
-Write-OK "Imagem enviada"
-
-# -- Passo 5: Deploy no Cloud Run -------------------------------------------
+# -- Passo 3: Deploy no Cloud Run -------------------------------------------
 Write-Step "Fazendo deploy no Cloud Run ($REGION)..."
 
 # Nota: gcloud.cmd escreve progresso no stderr; redirecionar com 2>&1 | ForEach-Object
@@ -111,12 +97,13 @@ Write-Step "Fazendo deploy no Cloud Run ($REGION)..."
     --platform managed `
     --region $REGION `
     --port 8000 `
-    --memory 2048Mi `
+    --memory 4Gi `
     --cpu 1 `
     --set-env-vars "GCS_BUCKET=$GCS_BUCKET,GOOGLE_CLOUD_PROJECT=$PROJECT_ID" `
     --allow-unauthenticated `
     --min-instances 0 `
     --max-instances 3 `
+    --cpu-boost `
     --quiet 2>&1 | ForEach-Object { Write-Host $_ }
 
 if ($LASTEXITCODE -ne 0) { Write-Fail "Falha no deploy do Cloud Run." }
