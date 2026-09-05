@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Query
 from services.cache import get_cache
-from services.constants import API_GROUPS, BRAND_COLORS
+from services.constants import API_GROUPS, BRAND_COLORS, GROUP_LABELS, GROUP_COLORS
 import services.of_analytics as of_analytics
 from typing import Optional
 
@@ -21,6 +21,30 @@ def api_groups():
     Frontend uses this to label charts and color chips so there is no
     drift between backend and UI."""
     return {"groups": API_GROUPS}
+
+@router.get("/institution-groups")
+def institution_groups():
+    """Metadata de grupo de instituição (Incumbentes/Neo Banks/ITPs/Outros) —
+    fonte única de verdade consumida pelo frontend no boot, mesmo padrão de
+    /api-groups. Contagens refletem instituições realmente presentes na base
+    (não o total teórico do mapeamento estático)."""
+    cache = get_cache()
+    if "institution_groups" not in cache:
+        try:
+            names = of_analytics.get_all_institution_names()
+            institutions = {name: of_analytics.resolve_institution_group(name) for name in names}
+            counts: dict[str, int] = {slug: 0 for slug in GROUP_LABELS}
+            for grp in institutions.values():
+                counts[grp] = counts.get(grp, 0) + 1
+            groups = {
+                slug: {"display": label, "color": GROUP_COLORS.get(slug, "#8B93A0"), "count": counts.get(slug, 0)}
+                for slug, label in GROUP_LABELS.items()
+            }
+            cache["institution_groups"] = {"groups": groups, "institutions": institutions}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+    return cache["institution_groups"]
+
 
 @router.get("/institutions")
 def institutions():

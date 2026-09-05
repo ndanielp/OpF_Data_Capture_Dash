@@ -1109,6 +1109,15 @@
           <ul class="receptor-list" id="receptor-list"></ul>
         </div>
 
+        <!-- Grupos de Instituição -->
+        <div class="sidebar-group">
+          <div class="sidebar-group-header">
+            <span class="sidebar-group-label">Grupos</span>
+            <span class="sidebar-group-badge" id="group-count">—</span>
+          </div>
+          <ul class="receptor-list" id="group-list" style="max-height:none;"></ul>
+        </div>
+
         <!-- Status API -->
         <div class="sidebar-group">
           <div class="sidebar-group-header">
@@ -1561,9 +1570,11 @@
       const end = document.getElementById('date-end').value;
       const status = document.querySelector('.filter-option.active')?.dataset.status || 'all';
       const normalize = document.getElementById('toggle-escala').classList.contains('on') ? '1' : '0';
-      const selItems = [...document.querySelectorAll('.receptor-item.selected')];
+      const selItems = [...document.querySelectorAll('#receptor-list .receptor-item.selected')];
       const receptors = selItems.map(el => el.dataset.label).join(',');
-      return new URLSearchParams({ start, end, status, normalize, receptors });
+      const selGroups = [...document.querySelectorAll('#group-list .receptor-item.selected')];
+      const groups = selGroups.map(el => el.dataset.slug).join(',');
+      return new URLSearchParams({ start, end, status, normalize, receptors, groups });
     }
 
     function debounce(fn, wait) {
@@ -1630,7 +1641,7 @@
                     <span class="receptor-name">${rec.label}</span>`;
         li.addEventListener('click', (e) => {
           if (!e.ctrlKey && !e.metaKey && !e.shiftKey) {
-            document.querySelectorAll('.receptor-item.selected').forEach(el => el.classList.remove('selected'));
+            document.querySelectorAll('#receptor-list .receptor-item.selected').forEach(el => el.classList.remove('selected'));
           }
           li.classList.toggle('selected');
           refresh();
@@ -1650,10 +1661,37 @@
 
     document.getElementById('receptor-search').addEventListener('input', function () {
       const q = this.value.toLowerCase();
-      document.querySelectorAll('.receptor-item').forEach(li => {
+      document.querySelectorAll('#receptor-list .receptor-item').forEach(li => {
         li.style.display = li.dataset.label.toLowerCase().includes(q) ? '' : 'none';
       });
     });
+
+    /* ============================================================
+       GRUPOS DE INSTITUIÇÃO (009-filtro-grupos-instituicoes)
+       ============================================================ */
+    function buildGroupList(groupsMeta) {
+      const ul = document.getElementById('group-list');
+      ul.innerHTML = '';
+      let saved = null;
+      try { saved = JSON.parse(sessionStorage.getItem('opf:filters') || 'null'); } catch (_) { saved = null; }
+      const preselected = new Set((saved?.groups || '').split(',').filter(Boolean));
+      const entries = Object.entries(groupsMeta || {});
+      entries.forEach(([slug, meta]) => {
+        const li = document.createElement('li');
+        li.className = 'receptor-item' + (preselected.has(slug) ? ' selected' : '');
+        li.dataset.slug = slug;
+        li.title = `${meta.display} (${meta.count})`;
+        li.innerHTML = `<div class="receptor-dot" style="background:${meta.color}"></div>
+                    <span class="receptor-name">${meta.display}</span>`;
+        li.addEventListener('click', () => {
+          // Multi-seleção: cada clique alterna o grupo, sem desmarcar os demais
+          li.classList.toggle('selected');
+          refresh();
+        });
+        ul.appendChild(li);
+      });
+      document.getElementById('group-count').textContent = entries.length;
+    }
 
     /* ============================================================
        STATUS FILTER
@@ -2309,7 +2347,7 @@
         }
         empty.style.display = 'none'; canvas.style.display = '';
         const selectedRecs = new Set(
-          [...document.querySelectorAll('.receptor-item.selected')].map(el => el.dataset.label)
+          [...document.querySelectorAll('#receptor-list .receptor-item.selected')].map(el => el.dataset.label)
         );
         const pts = data.points;
         const xVals = pts.map(p => p.consents);
@@ -2573,7 +2611,7 @@
         sessionStorage.setItem('opf:filters', JSON.stringify({
           start: params.get('start'), end: params.get('end'),
           status: params.get('status'), normalize: params.get('normalize'),
-          receptors: params.get('receptors'),
+          receptors: params.get('receptors'), groups: params.get('groups'),
         }));
       } catch (_) { }
       const area = document.querySelector('.main-content');
@@ -2669,6 +2707,10 @@
           .then(r => r.json())
           .then(recs => buildReceptorList(recs))
           .catch(e => console.error('Erro ao carregar receptores', e)),
+        fetch('/api/of/institution-groups')
+          .then(r => r.json())
+          .then(d => buildGroupList(d.groups))
+          .catch(e => console.error('Erro ao carregar grupos de instituição', e)),
       ]);
       const activeBtn = document.querySelector('.quick-btn.active');
       if (activeBtn) activeBtn.click();
@@ -2677,7 +2719,7 @@
 
     // Salva uuid do receptor selecionado ao navegar para o Perfil
     document.querySelector('a[href="/profile"]').addEventListener('click', () => {
-      const selected = [...document.querySelectorAll('.receptor-item.selected')];
+      const selected = [...document.querySelectorAll('#receptor-list .receptor-item.selected')];
       if (selected.length === 1 && selected[0].dataset.uuid) {
         try {
           const prev = JSON.parse(sessionStorage.getItem('opf:filters') || '{}');

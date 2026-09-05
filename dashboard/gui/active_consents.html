@@ -543,6 +543,14 @@
           <input class="sidebar-search" id="receptor-search" type="text" placeholder="Filtrar receptores…" autocomplete="off">
           <ul class="receptor-list" id="receptor-list"></ul>
         </div>
+
+        <div class="sidebar-group">
+          <div class="sidebar-group-header">
+            <span class="sidebar-group-label">Grupos</span>
+            <span class="sidebar-group-badge" id="group-count">—</span>
+          </div>
+          <ul class="receptor-list" id="group-list" style="max-height:none;"></ul>
+        </div>
       </div>
 
       <!-- Sidebar footer -->
@@ -966,10 +974,13 @@ document.getElementById('btn-matrix-reset').addEventListener('click', function (
 function _filterParams() {
   const start = document.getElementById('date-start').value;
   const end   = document.getElementById('date-end').value;
-  const selItems = [...document.querySelectorAll('.receptor-item.selected')];
+  const selItems = [...document.querySelectorAll('#receptor-list .receptor-item.selected')];
   const receptors = selItems.map(el => el.dataset.label).join(',');
+  const selGroups = [...document.querySelectorAll('#group-list .receptor-item.selected')];
+  const groups = selGroups.map(el => el.dataset.slug).join(',');
   const p = new URLSearchParams({ start, end });
   if (receptors) p.set('receptors', receptors);
+  if (groups) p.set('groups', groups);
   return p;
 }
 
@@ -982,6 +993,7 @@ function _saveFilters() {
       start: p.get('start'),
       end: p.get('end'),
       receptors: p.get('receptors') || '',
+      groups: p.get('groups') || '',
     }));
   } catch (_) {}
 }
@@ -1022,7 +1034,7 @@ function buildReceptorList(receptors) {
                     <span class="receptor-name">${rec.label}</span>`;
     li.addEventListener('click', (e) => {
       if (!e.ctrlKey && !e.metaKey && !e.shiftKey) {
-        document.querySelectorAll('.receptor-item.selected').forEach(el => el.classList.remove('selected'));
+        document.querySelectorAll('#receptor-list .receptor-item.selected').forEach(el => el.classList.remove('selected'));
       }
       li.classList.toggle('selected');
       refresh();
@@ -1030,6 +1042,29 @@ function buildReceptorList(receptors) {
     ul.appendChild(li);
   });
   document.getElementById('receptor-count').textContent = receptors.length;
+}
+
+function buildGroupList(groupsMeta) {
+  const ul = document.getElementById('group-list');
+  ul.innerHTML = '';
+  let saved = null;
+  try { saved = JSON.parse(sessionStorage.getItem('opf:filters') || 'null'); } catch (_) {}
+  const preselected = new Set((saved?.groups || '').split(',').filter(Boolean));
+  const entries = Object.entries(groupsMeta || {});
+  entries.forEach(([slug, meta]) => {
+    const li = document.createElement('li');
+    li.className = 'receptor-item' + (preselected.has(slug) ? ' selected' : '');
+    li.dataset.slug = slug;
+    li.title = `${meta.display} (${meta.count})`;
+    li.innerHTML = `<div class="receptor-dot" style="background:${meta.color}"></div>
+                    <span class="receptor-name">${meta.display}</span>`;
+    li.addEventListener('click', () => {
+      li.classList.toggle('selected');
+      refresh();
+    });
+    ul.appendChild(li);
+  });
+  document.getElementById('group-count').textContent = entries.length;
 }
 
 async function loadReceptors() {
@@ -1042,9 +1077,19 @@ async function loadReceptors() {
   }
 }
 
+async function loadGroups() {
+  try {
+    const r = await fetch('/api/of/institution-groups');
+    const data = await r.json();
+    buildGroupList(data.groups || {});
+  } catch (e) {
+    console.error('Erro ao carregar grupos de instituição', e);
+  }
+}
+
 document.getElementById('receptor-search').addEventListener('input', function () {
   const q = this.value.toLowerCase();
-  document.querySelectorAll('.receptor-item').forEach(li => {
+  document.querySelectorAll('#receptor-list .receptor-item').forEach(li => {
     li.style.display = li.dataset.label.toLowerCase().includes(q) ? '' : 'none';
   });
 });
@@ -1411,8 +1456,11 @@ document.getElementById('btn-export-evolution').addEventListener('click', () => 
 /* ============================================================
    INIT
    ============================================================ */
-(function init() {
-  loadReceptors();
+(async function init() {
+  // As listas precisam estar montadas ANTES do primeiro refresh: refresh() chama
+  // _saveFilters(), que regrava opf:filters a partir do DOM — se as listas ainda
+  // estiverem vazias, a seleção salva de receptores/grupos é apagada.
+  await Promise.all([loadReceptors(), loadGroups()]);
   loadDbRange(); // sets _dbMaxDate then calls refresh()
 })();
 </script>

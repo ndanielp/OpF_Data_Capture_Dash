@@ -315,6 +315,25 @@ def _parse_receptors(receptors_param: str | None) -> list[str] | None:
     parts = [r.strip() for r in receptors_param.split(",") if r.strip()]
     return parts if parts else None
 
+def _parse_groups(groups_param: str | None) -> list[str] | None:
+    """Comma-separated group slugs (e.g. 'incumbentes,neo_banks'). Unknown
+    slugs are ignored rather than rejected, mirroring the tolerant handling
+    of status/normalize elsewhere in this module."""
+    if not groups_param: return None
+    from services.constants import INSTITUTION_GROUP_SLUGS
+    parts = [g.strip() for g in groups_param.split(",") if g.strip() in INSTITUTION_GROUP_SLUGS]
+    return parts if parts else None
+
+def _filter_df_by_group(df: pd.DataFrame, groups: list[str] | None, col: str = "receptor") -> pd.DataFrame:
+    """Filter `df` to rows whose `col` (receptor/transmitter name) resolves to
+    one of the selected institution groups. No-op when `groups` is falsy."""
+    if not groups or df.empty or col not in df.columns: return df
+    from services.of_analytics import resolve_institution_group
+    # Resolve por nome distinto (~dezenas), não por linha: o lookup é uma varredura
+    # linear sobre os padrões de INSTITUTION_GROUPS.
+    grp_of = {name: resolve_institution_group(name) for name in df[col].unique()}
+    return df[df[col].map(grp_of).isin(groups)]
+
 def _top10_with_bradesco(df: pd.DataFrame) -> list[str]:
     if df.empty: return []
     totals = df.groupby("receptor")["total"].sum().sort_values(ascending=False)
@@ -485,13 +504,17 @@ def get_receptors():
 
 @app.get("/api/consents", response_class=JSONResponse)
 @cached_response("consents")
-def get_consents(start: str = None, end: str = None, receptors: str = None):
+def get_consents(start: str = None, end: str = None, receptors: str = None, groups: str = None):
     today = date.today()
     dt_start = _parse_date(start, today - timedelta(days=365))
     dt_end   = _parse_date(end, today)
     sel      = _parse_receptors(receptors)
+    grp      = _parse_groups(groups)
 
     df = _get_consents(dt_start, dt_end)
+    if df.empty: return JSONResponse({"labels": [], "datasets": [], "ranking_pf": [], "ranking_pj": []})
+
+    df = _filter_df_by_group(df, grp)
     if df.empty: return JSONResponse({"labels": [], "datasets": [], "ranking_pf": [], "ranking_pj": []})
 
     recs = sel if sel else _top10_with_bradesco(df)
@@ -587,11 +610,12 @@ def get_consents(start: str = None, end: str = None, receptors: str = None):
 
 @app.get("/api/api-requests", response_class=JSONResponse)
 @cached_response("api-requests")
-def get_api_requests(start: str = None, end: str = None, receptors: str = None, status: str = "all", normalize: str = "0"):
+def get_api_requests(start: str = None, end: str = None, receptors: str = None, groups: str = None, status: str = "all", normalize: str = "0"):
     today = date.today()
     dt_start = _parse_date(start, today - timedelta(days=365))
     dt_end   = _parse_date(end, today)
     sel      = _parse_receptors(receptors)
+    grp      = _parse_groups(groups)
     norm     = normalize == "1"
 
     # Carrega apenas o intervalo de datas solicitado — via cache ou SQL com índice
@@ -607,11 +631,15 @@ def get_api_requests(start: str = None, end: str = None, receptors: str = None, 
     if status == "200": df = df[df["status"] == 200]
     elif status == "500": df = df[df["status"] == 500]
 
+    df = _filter_df_by_group(df, grp)
     if df.empty:
         return JSONResponse({"groups": [], "apis": [], "receptors": [], "values": [], "max_val": 0})
 
-    # Buscar df_cons UMA VEZ — reutilizado em top_reps, normalização heatmap e normalização endpoint
+    # Buscar df_cons UMA VEZ — reutilizado em top_reps, normalização heatmap e normalização endpoint.
+    # Precisa do mesmo recorte de grupo que df: senão o top-10 sai do universo global
+    # e a interseção com df (já filtrado) devolve vazio para grupos fora do top-10.
     df_cons = _get_consents(dt_start, dt_end) if (not sel or norm) else pd.DataFrame()
+    df_cons = _filter_df_by_group(df_cons, grp)
 
     if sel:
         top_reps = [r for r in sel if r in df["receptor"].values]
@@ -851,11 +879,12 @@ def get_api_requests_timeseries(
 
 @app.get("/api/resources", response_class=JSONResponse)
 @cached_response("resources")
-def get_resources(start: str = None, end: str = None, receptors: str = None, status: str = "all", normalize: str = "0"):
+def get_resources(start: str = None, end: str = None, receptors: str = None, groups: str = None, status: str = "all", normalize: str = "0"):
     today = date.today()
     dt_start = _parse_date(start, today - timedelta(days=365))
     dt_end   = _parse_date(end, today)
     sel      = _parse_receptors(receptors)
+    grp      = _parse_groups(groups)
     norm     = normalize == "1"
 
     df_api = _get_api(dt_start, dt_end)
@@ -865,9 +894,12 @@ def get_resources(start: str = None, end: str = None, receptors: str = None, sta
     if status == "200": df = df[df["status"] == 200]
     elif status == "500": df = df[df["status"] == 500]
 
+    df = _filter_df_by_group(df, grp)
     if df.empty: return JSONResponse({"receptors": [], "values": [], "colors": []})
 
+    # Mesmo recorte de grupo de df — ver comentário em get_api_requests.
     df_cons = _get_consents(dt_start, dt_end) if (not sel or norm) else pd.DataFrame()
+    df_cons = _filter_df_by_group(df_cons, grp)
 
     if sel:
         top_reps = [r for r in sel if r in df["receptor"].values]
@@ -928,11 +960,12 @@ def _assign_signals(items: list[dict], key: str = "momentum") -> None:
 
 @app.get("/api/acceleration", response_class=JSONResponse)
 @cached_response("acceleration")
-def get_acceleration(start: str = None, end: str = None, receptors: str = None):
+def get_acceleration(start: str = None, end: str = None, receptors: str = None, groups: str = None):
     today    = date.today()
     dt_start = _parse_date(start, today - timedelta(days=365))
     dt_end   = _parse_date(end, today)
     sel      = _parse_receptors(receptors)
+    grp      = _parse_groups(groups)
 
     # ── Consentimentos: dados semanais ────────────────────────────────────────
     df_cons = _get_consents(dt_start, dt_end)
@@ -941,6 +974,8 @@ def get_acceleration(start: str = None, end: str = None, receptors: str = None):
     labels_cons: list[str] = []
     recs:   list[str] = []
     colors: dict      = {}
+
+    df_cons = _filter_df_by_group(df_cons, grp)
 
     if not df_cons.empty:
         if sel:
@@ -1019,6 +1054,8 @@ def get_acceleration(start: str = None, end: str = None, receptors: str = None):
         con.close()
     except Exception:
         pass
+
+    df_agw = _filter_df_by_group(df_agw, grp)
 
     if not df_agw.empty:
         if sel:

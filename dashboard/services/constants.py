@@ -58,3 +58,70 @@ BRAND_COLORS: list[tuple[str, str]] = [
     ("pagseguro",       "#34B7F1"),
     ("cloudwalk",       "#9C27B0"),
 ]
+
+# Institution → market segment classification for the group filter (feature
+# 009-filtro-grupos-instituicoes). Keys are substrings matched case-insensitively
+# against receptor/transmitter names, same lookup pattern as BRAND_COLORS above.
+# Order matters: first match wins. Any institution with no match falls back to
+# the "outros" group at lookup time (see of_analytics.resolve_institution_group) —
+# it is intentionally NOT listed here.
+#
+# Full classification rationale (confirmed line-by-line with product owner on
+# 2026-09-05): see specs/009-filtro-grupos-instituicoes/institution-groups-draft.md
+INSTITUTION_GROUPS: list[tuple[str, str]] = [
+    # Incumbentes — núcleo dos grandes bancos de varejo tradicionais
+    ("bradesco",        "incumbentes"),
+    ("itaú",            "incumbentes"),
+    ("itau",            "incumbentes"),
+    ("unibanco",        "incumbentes"),  # cobre variações de encoding de "Itaú Unibanco" na base
+    ("santander",       "incumbentes"),
+    ("caixa econ",      "incumbentes"),
+    ("banco do brasil", "incumbentes"),
+    ("btg pactual",     "incumbentes"),
+
+    # Neo Banks — bancos digitais nativos + grandes carteiras/fintechs de marca consolidada
+    ("nubank",          "neo_banks"),
+    ("banco inter",     "neo_banks"),
+    ("banco c6",        "neo_banks"),
+    ("mercado pago",    "neo_banks"),
+    ("pagseguro",       "neo_banks"),
+    ("picpay",          "neo_banks"),
+    ("recargapay",      "neo_banks"),
+
+    # ITPs — Instituições de Pagamento especializadas em agregação/iniciação
+    ("belvo",                "itps"),
+    ("klavi",                "itps"),
+    ("pluggy",                "itps"),
+    ("cumbuca",               "itps"),
+    ("delend",                "itps"),
+    ("finnet",                "itps"),
+    ("lina instituição",     "itps"),
+    ("lina instituicao",     "itps"),
+    ("google pay",            "itps"),
+    ("iniciador",             "itps"),
+    ("celcoin",               "itps"),
+    ("cloudwalk",             "itps"),
+    ("okto",                  "itps"),
+    ("pagueveloz",            "itps"),
+    ("up.p",                  "itps"),
+    ("midway",                "itps"),
+    ("crystal bmc",           "itps"),
+]
+
+INSTITUTION_GROUP_SLUGS: tuple[str, ...] = ("incumbentes", "neo_banks", "itps", "outros")
+
+GROUP_LABELS: dict[str, str] = {
+    "incumbentes": "Incumbentes",
+    "neo_banks":   "Neo Banks",
+    "itps":        "ITPs",
+    "outros":      "Outros/Não classificado",
+}
+
+# Distinct from API_GROUPS colors — the two "group" concepts (API product group vs.
+# institution market segment) can appear side by side on the same page.
+GROUP_COLORS: dict[str, str] = {
+    "incumbentes": "#1E3A8A",
+    "neo_banks":   "#DB2777",
+    "itps":        "#D97706",
+    "outros":      "#8B93A0",
+}
