@@ -307,6 +307,15 @@ canvas{display:block}
         <ul class="receptor-list" id="prof-receptor-list"></ul>
       </div>
 
+      <!-- Grupos de Instituição — filtra a lista de receptores acima -->
+      <div class="sidebar-group">
+        <div class="sidebar-group-header">
+          <span class="sidebar-group-label">Grupos</span>
+          <span class="sidebar-group-badge" id="prof-group-count">—</span>
+        </div>
+        <ul class="receptor-list" id="prof-group-list" style="max-height:none;"></ul>
+      </div>
+
       <!-- Status API — desabilitado no perfil (sempre 200) -->
       <div class="sidebar-group" style="opacity:0.4;pointer-events:none" title="Perfil Receptor analisa apenas requisições bem-sucedidas (200)">
         <div class="sidebar-group-header">
@@ -588,12 +597,61 @@ let _currentInstitution = null;
 let _dbMinDate = null;
 let _dbMaxDate = null;
 
+let _institutionGroupOf = {}; // nome da instituição → slug do grupo
+
 async function loadSidebarReceptors() {
   try {
-    const resp = await fetch('/api/receptors');
-    const receptors = await resp.json();
+    const [receptors, groupsMeta] = await Promise.all([
+      fetch('/api/receptors').then(r => r.json()),
+      fetch('/api/of/institution-groups').then(r => r.json()).catch(() => ({ groups: {}, institutions: {} })),
+    ]);
+    _institutionGroupOf = groupsMeta.institutions || {};
     buildProfileSidebar(receptors);
+    buildProfileGroupList(groupsMeta.groups || {});
   } catch (err) { console.error('Erro ao carregar receptores', err); }
+}
+
+function _applyProfileSidebarFilters() {
+  const ul = document.getElementById('prof-receptor-list');
+  const q = document.getElementById('prof-receptor-search').value.toLowerCase();
+  const selectedGroups = new Set(
+    [...document.querySelectorAll('#prof-group-list .receptor-item.selected')].map(el => el.dataset.slug)
+  );
+  ul.querySelectorAll('.receptor-item').forEach(el => {
+    const matchesSearch = el.dataset.label.toLowerCase().includes(q);
+    const grp = _institutionGroupOf[el.dataset.label] || 'outros';
+    const matchesGroup = selectedGroups.size === 0 || selectedGroups.has(grp);
+    el.style.display = (matchesSearch && matchesGroup) ? '' : 'none';
+  });
+}
+
+function buildProfileGroupList(groupsMeta) {
+  const ul = document.getElementById('prof-group-list');
+  ul.innerHTML = '';
+  let saved = null;
+  try { saved = JSON.parse(sessionStorage.getItem('opf:filters') || 'null'); } catch (_) {}
+  const preselected = new Set((saved?.groups || '').split(',').filter(Boolean));
+  const entries = Object.entries(groupsMeta || {});
+  entries.forEach(([slug, meta]) => {
+    const li = document.createElement('li');
+    li.className = 'receptor-item' + (preselected.has(slug) ? ' selected' : '');
+    li.dataset.slug = slug;
+    li.title = `${meta.display} (${meta.count})`;
+    li.innerHTML = `<div class="receptor-dot" style="background:${meta.color}"></div>
+                    <span class="receptor-name">${meta.display}</span>`;
+    li.addEventListener('click', () => {
+      li.classList.toggle('selected');
+      _applyProfileSidebarFilters();
+      try {
+        const prev = JSON.parse(sessionStorage.getItem('opf:filters') || '{}');
+        const groups = [...document.querySelectorAll('#prof-group-list .receptor-item.selected')].map(el => el.dataset.slug).join(',');
+        sessionStorage.setItem('opf:filters', JSON.stringify({...prev, groups}));
+      } catch (_) {}
+    });
+    ul.appendChild(li);
+  });
+  document.getElementById('prof-group-count').textContent = entries.length;
+  _applyProfileSidebarFilters();
 }
 
 function buildProfileSidebar(receptors) {
@@ -636,12 +694,7 @@ function buildProfileSidebar(receptors) {
     if (li) { li.classList.add('selected'); _currentInstitution = instId; loadProfile(instId); }
   }
 
-  search.addEventListener('input', () => {
-    const q = search.value.toLowerCase();
-    ul.querySelectorAll('.receptor-item').forEach(el => {
-      el.style.display = el.dataset.label.toLowerCase().includes(q) ? '' : 'none';
-    });
-  });
+  search.addEventListener('input', () => _applyProfileSidebarFilters());
 }
 
 document.querySelectorAll('#prof-status-options .filter-option').forEach(opt => {

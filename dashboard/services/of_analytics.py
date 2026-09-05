@@ -7,7 +7,7 @@ import statistics
 from collections import defaultdict
 from cachetools import TTLCache, cached
 import config
-from services.constants import API_GROUPS, BRAND_COLORS
+from services.constants import API_GROUPS, BRAND_COLORS, INSTITUTION_GROUPS
 
 LABEL_MAP = {
     "ITAÚ UNIBANCO": "Itaú Unibanco", "CAIXA ECONOMICA FEDERAL": "Caixa Econômica Federal",
@@ -24,6 +24,46 @@ def _brand_color(receptor_name: str) -> str | None:
         if key in name:
             return color
     return None
+
+def resolve_institution_group(name: str) -> str:
+    """Substring lookup against INSTITUTION_GROUPS (same pattern as _brand_color).
+    Falls back to 'outros' when no pattern matches — every institution gets a
+    group, per feature 009-filtro-grupos-instituicoes FR-002."""
+    lname = (name or "").lower()
+    for key, grp in INSTITUTION_GROUPS:
+        if key in lname:
+            return grp
+    return "outros"
+
+
+_INSTITUTION_NAME_QUERIES = [
+    ("unique_consents",  "receptor"),
+    ("api_requests",     "receptor"),
+    ("api_requests",     "transmitter"),
+    ("active_consents",  "receptor"),
+    ("active_consents",  "transmitter"),
+]
+
+
+def get_all_institution_names() -> list[str]:
+    """Distinct receptor + transmitter names across every table that carries
+    an institution name, for building the institution-groups metadata
+    endpoint (counts per group). Missing tables (e.g. active_consents on an
+    older DB) are skipped rather than failing the whole lookup."""
+    con = sqlite3.connect(str(config.DB_PATH))
+    try:
+        cur = con.cursor()
+        names: set[str] = set()
+        for table, col in _INSTITUTION_NAME_QUERIES:
+            try:
+                cur.execute(f"SELECT DISTINCT {col} FROM {table} WHERE {col} IS NOT NULL")
+                names |= {row[0] for row in cur.fetchall()}
+            except sqlite3.OperationalError:
+                continue  # table doesn't exist on this DB — skip
+        return sorted(n for n in names if n)
+    finally:
+        con.close()
+
 
 def avatar_color_fallback(institution_id: str) -> str:
     h = int(hashlib.md5(institution_id.encode()).hexdigest()[:4], 16)

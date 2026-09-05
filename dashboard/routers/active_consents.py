@@ -16,7 +16,8 @@ from fastapi import APIRouter, Query
 from fastapi.responses import JSONResponse
 
 import config
-from services.constants import BRAND_COLORS
+from services.constants import BRAND_COLORS, INSTITUTION_GROUP_SLUGS
+from services.of_analytics import resolve_institution_group
 
 router = APIRouter()
 
@@ -84,6 +85,14 @@ def _parse_receptors(receptors_param: str | None) -> list[str] | None:
     return parts if parts else None
 
 
+def _parse_groups(groups_param: str | None) -> list[str] | None:
+    """Comma-separated group slugs. Unknown slugs are ignored, not rejected."""
+    if not groups_param:
+        return None
+    parts = [g.strip() for g in groups_param.split(",") if g.strip() in INSTITUTION_GROUP_SLUGS]
+    return parts if parts else None
+
+
 def _latest_date_in_table(con: sqlite3.Connection, before: str) -> str | None:
     """Retorna a data mais recente em active_consents <= before."""
     row = con.execute(
@@ -108,12 +117,14 @@ def evolution(
     end:   Optional[str] = Query(None),
     by:    str            = Query("receptor", pattern="^(receptor|transmitter)$"),
     receptors: Optional[str] = Query(None),
+    groups: Optional[str] = Query(None),
 ) -> JSONResponse:
     """Série temporal de consentimentos ativos agrupada por receptor ou transmissor."""
     today    = date.today()
     dt_start = _parse_date(start, today - timedelta(weeks=52))
     dt_end   = _parse_date(end, today)
     sel      = _parse_receptors(receptors)
+    grp      = _parse_groups(groups)
 
     dim_col = "receptor" if by == "receptor" else "transmitter"
 
@@ -147,6 +158,9 @@ def evolution(
     except Exception:
         return JSONResponse({"labels": [], "series": [], "by": by})
 
+    if grp:
+        rows = [r for r in rows if resolve_institution_group(r[0]) in grp]
+
     if not rows:
         return JSONResponse({"labels": [], "series": [], "by": by})
 
@@ -177,11 +191,13 @@ def evolution(
 def matrix(
     end:       Optional[str] = Query(None),
     receptors: Optional[str] = Query(None),
+    groups:    Optional[str] = Query(None),
 ) -> JSONResponse:
     """Matriz receptor × transmissor para a semana mais recente no período."""
     today  = date.today()
     dt_end = _parse_date(end, today)
     sel    = _parse_receptors(receptors)
+    grp    = _parse_groups(groups)
 
     empty = {"receptors": [], "transmitters": [], "values": [], "reference_date": None, "max_value": 0}
 
@@ -221,6 +237,12 @@ def matrix(
             con.close()
     except Exception:
         return JSONResponse(empty)
+
+    if grp:
+        # Grupo filtra AMBOS os eixos independentemente: uma célula só sobrevive
+        # se receptor E transmissor pertencem a algum dos grupos selecionados.
+        rows = [r for r in rows if resolve_institution_group(r[0]) in grp and resolve_institution_group(r[1]) in grp]
+        global_txm_rows = [r for r in global_txm_rows if resolve_institution_group(r[0]) in grp]
 
     if not rows:
         return JSONResponse(empty)
@@ -264,10 +286,12 @@ def ranking(
     end:   Optional[str] = Query(None),
     by:    str            = Query("receptor", pattern="^(receptor|transmitter)$"),
     limit: int            = Query(10, ge=1, le=50),
+    groups: Optional[str] = Query(None),
 ) -> JSONResponse:
     """Top-N receptores ou transmissores por volume de ativos + Δ% semanal."""
     today  = date.today()
     dt_end = _parse_date(end, today)
+    grp    = _parse_groups(groups)
     dim_col = "receptor" if by == "receptor" else "transmitter"
 
     empty = {"items": [], "reference_date": None, "prev_date": None, "by": by}
@@ -280,13 +304,24 @@ def ranking(
                 return JSONResponse(empty)
             prev = _prev_date_in_table(con, latest)
 
-            # Semana mais recente — top limit*2 para garantir cobertura do Δ%
-            curr_rows = con.execute(
-                f"SELECT {dim_col}, SUM(total) AS total "
-                f"FROM active_consents WHERE date = ? "
-                f"GROUP BY {dim_col} ORDER BY total DESC LIMIT ?",
-                (latest, limit * 2),
-            ).fetchall()
+            # Semana mais recente — top limit*2 para garantir cobertura do Δ%.
+            # Com filtro de grupo não dá para truncar no SQL: o recorte é resolvido
+            # em Python, então truncar antes devolveria menos itens que o limit.
+            # A agregação semanal tem ~dezenas de linhas, custo desprezível.
+            if grp:
+                curr_rows = con.execute(
+                    f"SELECT {dim_col}, SUM(total) AS total "
+                    f"FROM active_consents WHERE date = ? "
+                    f"GROUP BY {dim_col} ORDER BY total DESC",
+                    (latest,),
+                ).fetchall()
+            else:
+                curr_rows = con.execute(
+                    f"SELECT {dim_col}, SUM(total) AS total "
+                    f"FROM active_consents WHERE date = ? "
+                    f"GROUP BY {dim_col} ORDER BY total DESC LIMIT ?",
+                    (latest, limit * 2),
+                ).fetchall()
 
             prev_map: dict[str, int] = {}
             if prev:
@@ -301,6 +336,10 @@ def ranking(
             con.close()
     except Exception:
         return JSONResponse(empty)
+
+    if grp:
+        curr_rows = [r for r in curr_rows if resolve_institution_group(r[0]) in grp]
+        prev_map = {k: v for k, v in prev_map.items() if resolve_institution_group(k) in grp}
 
     if not curr_rows:
         return JSONResponse(empty)
@@ -336,11 +375,13 @@ def ranking(
 def intensity(
     end:       Optional[str] = Query(None),
     receptors: Optional[str] = Query(None),
+    groups:    Optional[str] = Query(None),
 ) -> JSONResponse:
     """Intensidade de uso por receptor: ativos totais ÷ clientes únicos."""
     today  = date.today()
     dt_end = _parse_date(end, today)
     sel    = _parse_receptors(receptors)
+    grp    = _parse_groups(groups)
 
     empty = {"items": [], "reference_date": None}
 
@@ -377,6 +418,9 @@ def intensity(
             con.close()
     except Exception:
         return JSONResponse(empty)
+
+    if grp:
+        rows = [r for r in rows if resolve_institution_group(r[0]) in grp]
 
     if not rows:
         return JSONResponse(empty)
