@@ -46,11 +46,11 @@ cd dashboard
 pip install -r requirements.txt
 uvicorn server:app --reload --port 8000
 
-# Docker
+# Docker (local only — nao necessario para deploy)
 docker compose up
 
-# Deploy to Cloud Run
-.\deploy.ps1           # sync data + build + push + deploy
+# Deploy to Cloud Run (nao requer Docker local — usa Cloud Build)
+.\deploy.ps1           # sync data + build (Cloud Build) + deploy
 .\deploy.ps1 -SyncOnly
 .\deploy.ps1 -SkipSync
 ```
@@ -152,5 +152,5 @@ Omitting optional fields in `/api/api-requests` acts as "no filter" — used by 
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan
-at `specs/006-active-consents-improvements/plan.md`.
+at `specs/008-revise-gcp-deploy/plan.md`.
 <!-- SPECKIT END -->

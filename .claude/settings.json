@@ -65,7 +65,13 @@
       "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\LENOVO\\\\OneDrive\\\\Documentos\\\\Projetos\\\\OpF_Data_Capture_Dash\\\\dashboard\\\\\" -Recurse -File | Select-Object FullName | head -50)",
       "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\LENOVO\\\\OneDrive\\\\Documentos\\\\Projetos\\\\OpF_Data_Capture_Dash\\\\data-loader\\\\\" -Recurse -Force | Select-Object FullName, PSIsContainer | Sort-Object FullName)",
       "Bash(sqlite3 \"/c/Users/LENOVO/OneDrive/Documentos/Projetos/OpF_Data_Capture_Dash/data-loader/data/consents.db\")",
-      "Bash(python -c \"import server; print\\('OK'\\)\")"
+      "Bash(python -c \"import server; print\\('OK'\\)\")",
+      "Bash(git commit -m '[Spec Kit] Add specification: ordenação interativa da matriz receptor × transmissor *)",
+      "Bash(pwsh -NoProfile \".specify/scripts/powershell/setup-plan.ps1\" -Json)",
+      "Bash(pwsh -NoProfile \".specify/scripts/powershell/setup-tasks.ps1\" -Json)",
+      "Bash(.specify/extensions/git/scripts/bash/create-new-feature.sh --json --short-name \"active-consents-improvements\" \"active consents dashboard improvements\")",
+      "Bash(.specify/extensions/git/scripts/bash/auto-commit.sh after_specify)",
+      "Bash(pwsh .specify/scripts/powershell/setup-tasks.ps1 -Json)"
     ]
   }
 }

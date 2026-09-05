@@ -22,8 +22,9 @@ COPY . .
 # Cria os diretórios necessários
 RUN mkdir -p data logs credentials
 
-# Script de entrypoint: garante LF (sem CRLF), torna executável e copia para raiz
+# Entrypoint: shell mínimo + lógica em Python (evita problemas de CRLF/heredoc no sh)
 COPY entrypoint.sh /entrypoint.sh
+COPY entrypoint.py /app/entrypoint.py
 RUN sed -i 's/\r$//' /entrypoint.sh && chmod +x /entrypoint.sh
 
 ENTRYPOINT ["/entrypoint.sh"]
