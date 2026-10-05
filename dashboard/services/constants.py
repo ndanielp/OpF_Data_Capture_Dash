@@ -125,3 +125,54 @@ GROUP_COLORS: dict[str, str] = {
     "itps":        "#D97706",
     "outros":      "#8B93A0",
 }
+
+# Dashboard 2.0 (feature 011) — paleta aprovada para o tema claro. Os quatro tons
+# diferem também em luminosidade, para continuarem distinguíveis em print e para
+# quem não distingue cores. O legado continua com GROUP_COLORS.
+GROUP_COLORS_V2: dict[str, str] = {
+    "neo_banks":   "#5B2BC4",
+    "itps":        "#1F8FD6",
+    "incumbentes": "#E8913A",
+    "outros":      "#A3ABBA",
+}
+
+# Ordem de exibição no 2.0 (barras empilhadas, chips, legendas).
+GROUP_LABELS_V2: dict[str, str] = {
+    "neo_banks":   "Neobancos",
+    "itps":        "ITPs",
+    "incumbentes": "Incumbentes",
+    "outros":      "Outros",
+}
+
+# Nomes curtos do 2.0 (rankings e exportação). Substring, sem caixa; primeira
+# correspondência vence. Sem correspondência → nome da base em Title Case.
+SHORT_NAMES: list[tuple[str, str]] = [
+    ("itaú unibanco",      "Itaú"),
+    ("itau unibanco",      "Itaú"),
+    ("caixa econ",         "Caixa"),
+    ("banco btg",          "BTG Pactual"),
+    ("banco do brasil",    "Banco do Brasil"),
+    ("banco do nordeste",  "Banco do Nordeste"),
+    ("banco inter",        "Banco Inter"),
+    ("banco safra",        "Banco Safra"),
+    ("banco xp",           "Banco XP"),
+    ("santander",          "Santander"),
+    ("bradesco",           "Bradesco"),
+    ("nubank",             "Nubank"),
+    ("mercado pago",       "Mercado Pago"),
+    ("picpay",             "PicPay"),
+    ("recargapay",         "RecargaPay"),
+    ("pagseguro",          "PagSeguro"),
+    ("cloudwalk",          "CloudWalk"),
+    ("belvo",              "Belvo"),
+    ("klavi",              "Klavi"),
+    ("cumbuca",            "Cumbuca"),
+    ("pluggy",             "Pluggy"),
+    ("neon pag",           "Neon"),
+    ("shopee",             "Shopee"),
+    ("sicredi",            "Sicredi"),
+    ("sicoob",             "Sicoob"),
+    ("banrisul",           "Banrisul"),
+    ("agibank",            "Agibank"),
+    ("iniciador",          "Iniciador"),
+]

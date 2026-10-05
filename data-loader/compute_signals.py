@@ -8,7 +8,8 @@ Rode depois da coleta e antes do sync:
     python sync_to_gcs.py        (ou .\\deploy.ps1 -SyncOnly no dashboard/)
 
 Reconstrói behavior_signals inteira para todo o histórico, a partir do que existe
-na base — não depende de a coleta ter terminado. Idempotente.
+na base — não depende de a coleta ter terminado. Idempotente. Também reconstrói as
+pré-agregações api_group_weekly e api_status_weekly (Dashboard 2.0).
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ import json
 import logging
 import sqlite3
 import sys
+import time
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
@@ -85,6 +87,9 @@ def _write(con: sqlite3.Connection, found: list[signals.Signal], meta: dict) -> 
 def compute(con: sqlite3.Connection) -> dict:
     """Pipeline completo sobre uma conexão aberta. Devolve um resumo para log/teste."""
     scrapers.refresh_api_group_weekly(con)
+    t0 = time.perf_counter()
+    scrapers.refresh_api_status_weekly(con)
+    status_secs = time.perf_counter() - t0
     found, meta = _detect_all(con)
     _write(con, found, meta)
     by_type = Counter(s.signal_type for s in found)
@@ -94,6 +99,7 @@ def compute(con: sqlite3.Connection) -> dict:
         "total": len(found),
         "by_type": dict(by_type),
         "latest_week_count": sum(1 for s in found if s.week == latest),
+        "api_status_secs": status_secs,
     }
 
 
@@ -112,6 +118,7 @@ def main() -> int:
         con.close()
 
     log.info("api_group_weekly atualizado até %s", summary["api_through"])
+    log.info("api_status_weekly reconstruída em %.1fs", summary["api_status_secs"])
     log.info("Trava de cobertura de API: %d semanas bloqueadas %s",
              len(summary["api_skipped_weeks"]), summary["api_skipped_weeks"] or "")
     t = summary["by_type"]

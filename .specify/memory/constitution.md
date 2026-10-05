@@ -1,7 +1,33 @@
 <!--
 SYNC IMPACT REPORT
 ==================
-Version change: 1.0.0 → 1.1.0
+Version change: 1.1.0 → 1.2.0
+Bump type: MINOR — new section added (Principle VI §6.8 "Shell v2") and Stack
+table expanded. The existing shell contract (§6.1–6.7) is unchanged and now
+applies explicitly to the legacy pages.
+
+Modified principles:
+  Principle III: color rule extended to institution-group palettes
+    (GROUP_COLORS for legacy, GROUP_COLORS_V2 for Dashboard 2.0); filter
+    persistence rule now per shell (legacy `opf:filters`, v2 `opf:v2:*`);
+    rationale no longer names the three legacy tabs only.
+  Principle VI: §6.1–6.7 scoped to legacy pages (`/`, `/profile`,
+    `/active-consents`); legacy titlebar may carry a "Dashboard 2.0" link;
+    new §6.8 Shell v2 for `/v2*` pages (feature 011-dashboard-v2).
+
+Added sections:
+  - Principle VI §6.8 Shell v2
+  - Stack Constraints row: image export (frontend) = html-to-image
+
+Templates reviewed:
+  ✅ plan-template.md — VI gate now asks which shell (legacy or v2) applies.
+  ✅ spec-template.md / tasks-template.md — no structural change.
+
+Follow-up TODOs:
+  - Implement Shell v2 (specs/011-dashboard-v2).
+
+Previous report (1.0.0 → 1.1.0)
+-------------------------------
 Bump type: MINOR — new principle added (VI: UI Shell Contract).
 
 Modified principles:
@@ -84,8 +110,10 @@ All dashboard views MUST share a single visual and behavioral contract. The
 structural shell is defined in Principle VI below; the data/behavior rules are:
 
 - **Color palette**: All chart colors MUST be sourced from
-  `dashboard/services/constants.py::API_GROUPS`. Hardcoded hex values in HTML
-  or JavaScript are PROHIBITED.
+  `dashboard/services/constants.py` — `API_GROUPS` for API groups,
+  `GROUP_COLORS` (legacy pages) or `GROUP_COLORS_V2` (Dashboard 2.0) for
+  institution groups. Hardcoded hex values for data series in HTML or
+  JavaScript are PROHIBITED; theme tokens live in CSS variables.
 - **Filter behavior**: Date range (`start`/`end`) and receptor filter
   (`receptors`) MUST behave identically across all dashboard pages. A filter
   applied in one view MUST produce the same subset of data when the equivalent
@@ -98,13 +126,14 @@ structural shell is defined in Principle VI below; the data/behavior rules are:
   error message (not a raw HTTP status code) on failure.
 - **Responsive baseline**: All pages MUST remain usable at 1280 × 800 viewport
   without horizontal scroll.
-- **Filter persistence**: `sessionStorage['opf:filters']` (`{start, end,
-  receptors, status, normalize, institution}`) MUST be read on page load and
-  written on every filter change. New pages MUST only write the fields they own
-  and MUST preserve (spread) existing fields from other pages.
+- **Filter persistence**: each shell has its own key. Legacy pages use
+  `sessionStorage['opf:filters']` (`{start, end, receptors, status, normalize,
+  institution}`); Dashboard 2.0 pages use `sessionStorage['opf:v2:filters']`
+  (see §6.8). The key MUST be read on page load and written on every filter
+  change. Pages MUST only write the fields they own and MUST preserve (spread)
+  existing fields from other pages of the same shell.
 
-**Rationale**: Users switch between Ecossistema, Perfil Receptor, and Ativos
-frequently. Inconsistent filters, colors, or shell structure break their mental
+**Rationale**: Users switch between the pages of each version frequently. Inconsistent filters, colors, or shell structure break their mental
 model and erode trust in the data.
 
 ### IV. Performance Requirements
@@ -167,7 +196,9 @@ dashboard can be redeployed without touching collection logic.
 
 ### VI. UI Shell Contract
 
-Every dashboard page MUST implement the canonical shell structure defined here.
+Every dashboard page MUST implement one of the two shells defined here.
+§6.1–6.7 is the **legacy shell**, mandatory for `/`, `/profile` and
+`/active-consents`. §6.8 is the **Shell v2**, mandatory for every `/v2*` page.
 Deviations require an explicit amendment.
 
 #### 6.1 DOM Skeleton
@@ -186,7 +217,9 @@ stats exist for the page).
 #### 6.2 Titlebar
 
 MUST contain, in order: logo badge `"OF"` → app name `"Open Finance Brasil"` →
-`›` separator → **nav tab group** → spacer → theme toggle button.
+`›` separator → **nav tab group** → spacer → theme toggle button. A link
+"Dashboard 2.0" pointing to `/v2` MAY sit between the tab group and the
+spacer.
 
 **Nav tab group** container: `background:rgba(0,0,0,0.1); padding:3px;
 border-radius:var(--r-md); border:1px solid var(--border-subtle)`.
@@ -286,7 +319,37 @@ DOM is painted) to avoid flash of wrong theme.
 `scales.*.grid.color`, and `plugins.tooltip.*` for all active chart instances,
 then call `chart.update()` on each.
 
-**Rationale**: The three dashboard pages (Ecossistema, Perfil Receptores, Ativos)
+#### 6.8 Shell v2 (Dashboard 2.0 — `/v2*`)
+
+Canonical reference: `specs/011-dashboard-v2/contracts/v2-ui-shell.md`.
+
+- **Pages and tab order** (all four MUST appear on every v2 page):
+  1. `Quem lidera?` → `/v2`
+  2. `Como evolui?` → `/v2/evolucao`
+  3. `O que mudou?` → `/v2/mudancas`
+  4. `Como opera uma instituição?` → `/v2/instituicao`
+- **Skeleton**: `<header class="v2-header">` (brand · tabs with
+  `aria-current` · "Dados até … · atualizado em …" · theme toggle · link
+  "Painel atual (legado)") → `<main class="v2-main">` (max-width 1280px) →
+  `.v2-filterbar` first → page title → `.v2-card` blocks. No sidebar.
+- **Filter bar**: shows only the controls that apply to the open tab; any
+  change reloads immediately (no "Aplicar", no "Recarregar dados").
+- **Shared state**: `sessionStorage['opf:v2:filters']`; ranking preferences in
+  `localStorage['opf:v2:ranking']`; theme in `localStorage['opf:v2:theme']`
+  (default `light`, applied before first paint). Every storage access MUST
+  tolerate unavailable storage.
+- **Shared code**: header, filter state, formatting and export MUST live in
+  `dashboard/gui/v2/shell.js` and `dashboard/gui/v2/v2.css`; pages contain
+  only their own blocks.
+- **Cards**: every `.v2-card` has title, subtitle (metric + week), footer with
+  rule and source, and "Copiar como imagem" + "Baixar CSV" actions. Active
+  filters appear in the card title.
+- **Export**: CSV (`;`, decimal comma, UTF-8 BOM) and PNG 1600×900 with
+  title, metric, data date, active filter and source.
+- **Loading/errors**: visible loading state per card and human-readable error
+  messages, as in Principle III.
+
+**Rationale**: The three legacy pages (Ecossistema, Perfil Receptores, Ativos)
 share a single user mental model. Diverging in shell structure — even partially —
 creates a perception of instability and makes onboarding new users harder. The
 shell contract is the minimum unit of visual consistency that must be maintained
@@ -309,6 +372,7 @@ require a constitution amendment:
 | API framework | FastAPI + Uvicorn (dashboard) |
 | Frontend charting | Chart.js (no D3, no Plotly, no React) |
 | Frontend build | Vanilla JS + HTML — no bundler, no TypeScript transpilation |
+| Image export (frontend) | `html-to-image` (CDN), Dashboard 2.0 only |
 | Retry policy | `tenacity` library for HTTP retries in data-loader |
 
 ## Development Workflow
@@ -355,4 +419,4 @@ optional even for "small" changes.
 **Runtime guidance**: See `CLAUDE.md` at the repository root for agent-specific
 development guidance (commands, architecture diagrams, SQL schema reference).
 
-**Version**: 1.1.0 | **Ratified**: 2026-05-18 | **Last Amended**: 2026-05-26
+**Version**: 1.2.0 | **Ratified**: 2026-05-18 | **Last Amended**: 2026-10-05

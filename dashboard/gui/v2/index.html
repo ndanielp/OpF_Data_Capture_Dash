@@ -1,0 +1,428 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Quem lidera? · Open Finance 2.0</title>
+<script>try{document.documentElement.dataset.theme=localStorage.getItem('opf:v2:theme')||'light'}catch(e){document.documentElement.dataset.theme='light'}</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/v2/v2.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="/static/v2/shell.js"></script>
+</head>
+<body>
+<header id="v2-header" class="v2-header"></header>
+<main class="v2-main">
+  <section class="v2-filterbar" id="filterbar" aria-label="Filtros"></section>
+  <div class="v2-title" id="page-title"></div>
+  <div id="summary"></div>
+  <div id="rankings"></div>
+  <div id="changes"></div>
+</main>
+
+<script>
+(function () {
+  'use strict';
+  const PERIODS = { '12m': ['Últimos 12 meses', 364, '12 meses'], '6m': ['Últimos 6 meses', 182, '6 meses'],
+                    '3m': ['Últimos 3 meses', 91, '3 meses'], 'all': ['Desde o início', null, 'Desde o início'] };
+  const METRICS = { unique: 'Consentimentos únicos', active: 'Consentimentos ativos', api: 'Chamadas de API' };
+  const SORTS = { total: 'Total', pace: 'Ritmo por dia', growth: 'Crescimento', per_consent: 'Por consentimento' };
+  const SOURCE = 'Fonte: dashboard Open Finance Brasil';
+  const LIMIT = 15;
+
+  const f0 = V2.getFilters();
+  const st = {
+    metric: METRICS[f0.metric] ? f0.metric : 'unique',
+    period: PERIODS[f0.period] ? f0.period : '12m',
+    groups: Array.isArray(f0.groups) ? f0.groups : [],     // [] = todos
+    status: ['200', '500', 'all'].includes(f0.api_status) ? f0.api_status : '200',
+    scale: f0.api_scale === 'per_consent' ? 'per_consent' : 'total',
+  };
+  let last = null;   // última resposta, para CSV
+
+  function save() {
+    V2.setFilters({ metric: st.metric, period: st.period, groups: st.groups, api_status: st.status, api_scale: st.scale });
+  }
+  function allGroups() { return V2.meta.groups.map(g => g.slug); }
+  function activeGroups() { return st.groups.length ? st.groups : allGroups(); }
+  function periodStart() {
+    const days = PERIODS[st.period][1];
+    if (!V2.meta.data_through) return null;
+    if (days == null) return '2000-01-01';
+    const d = new Date(V2.meta.data_through + 'T00:00:00Z');
+    d.setUTCDate(d.getUTCDate() - days);
+    return d.toISOString().slice(0, 10);
+  }
+  function instName(uuid) {
+    const i = V2.meta.institutions.find(x => x.uuid === uuid);
+    return i ? i.short : uuid;
+  }
+
+  // ── Barra de filtros ─────────────────────────────────────────────────────
+  function seg(name, options, current) {
+    return '<div class="v2-seg" data-seg="' + name + '">' + Object.entries(options).map(([k, l]) =>
+      '<button type="button" data-v="' + k + '" aria-pressed="' + (k === current) + '">' + l + '</button>').join('') + '</div>';
+  }
+  function renderFilterbar() {
+    const prefs = V2.getPrefs();
+    const isApi = st.metric === 'api';
+    const sorts = Object.assign({}, SORTS);
+    if (!isApi) delete sorts.per_consent;
+    const sortCur = (!isApi && prefs.sort === 'per_consent') ? 'total' : prefs.sort;
+    const groups = V2.meta.groups.map(g =>
+      '<button type="button" class="v2-chip" data-group="' + g.slug + '" aria-pressed="' + activeGroups().includes(g.slug) + '">' +
+      '<span class="v2-swatch" style="background:' + g.color + '"></span>' + g.label + '</button>').join('');
+    const pinned = prefs.pinned.map(u =>
+      '<span class="v2-chip-tag pinned">' + V2.icon('pin') + '<span class="v2-chip-name">' + V2.esc(instName(u)) + '</span>' +
+      '<button type="button" data-unpin="' + u + '" aria-label="Deixar de fixar ' + V2.esc(instName(u)) + '">×</button></span>').join('');
+    const excluded = prefs.excluded.map(u =>
+      '<span class="v2-chip-tag excluded"><span class="v2-chip-name">' + V2.esc(instName(u)) + '</span>' +
+      '<button type="button" data-unexclude="' + u + '" aria-label="Voltar a mostrar ' + V2.esc(instName(u)) + '">×</button></span>').join('');
+
+    document.getElementById('filterbar').innerHTML =
+      '<div class="v2-fb-row"><div class="v2-fb-group">' +
+        '<fieldset class="v2-field"><legend>Métrica</legend>' + seg('metric', METRICS, st.metric) + '</fieldset>' +
+        (isApi
+          ? '<fieldset class="v2-field v2-accent"><legend>Escala</legend>' + seg('scale', { total: 'Total', per_consent: 'Por consentimento/mês' }, st.scale) + '</fieldset>' +
+            '<label class="v2-field v2-accent"><span class="v2-label">Status</span><select class="v2-select" id="f-status" style="min-width:150px">' +
+              [['200', 'Sucesso (200)'], ['500', 'Erros (500)'], ['all', 'Todas']].map(([v, l]) => '<option value="' + v + '"' + (v === st.status ? ' selected' : '') + '>' + l + '</option>').join('') +
+            '</select></label>'
+          : '') +
+        '<label class="v2-field"><span class="v2-label">Período do crescimento</span><select class="v2-select" id="f-period">' +
+          Object.entries(PERIODS).map(([k, v]) => '<option value="' + k + '"' + (k === st.period ? ' selected' : '') + '>' + v[0] + '</option>').join('') +
+        '</select></label>' +
+        '<fieldset class="v2-field"><legend>Grupos</legend><div class="v2-chips">' + groups + '</div></fieldset>' +
+      '</div><button type="button" class="v2-btn" id="f-export">Exportar dados (CSV)</button></div>' +
+      '<div class="v2-fb-row"><div class="v2-fb-group">' +
+        '<fieldset class="v2-field"><legend>Sempre mostrar no ranking</legend><div class="v2-chips">' + pinned +
+          '<button type="button" class="v2-chip-add" id="f-pin-add">+ Incluir instituição</button></div></fieldset>' +
+        '<fieldset class="v2-field"><legend>Excluir do ranking</legend><div class="v2-chips">' + excluded +
+          '<button type="button" class="v2-chip-add" id="f-excl-add">+ Excluir instituição</button></div></fieldset>' +
+        '<fieldset class="v2-field"><legend>Ordenar por</legend>' + seg('sort', sorts, sortCur) + '</fieldset>' +
+        '<span class="v2-note">Escolhas salvas neste navegador · valem para todas as métricas</span>' +
+      '</div></div>';
+  }
+
+  document.getElementById('filterbar').addEventListener('click', ev => {
+    const segBtn = ev.target.closest('[data-seg] button');
+    if (segBtn) {
+      const name = segBtn.parentElement.dataset.seg, v = segBtn.dataset.v;
+      if (name === 'sort') { const p = V2.getPrefs(); p.sort = v; V2.setPrefs(p); }
+      else st[name] = v;
+      return refresh();
+    }
+    const chip = ev.target.closest('[data-group]');
+    if (chip) {
+      const g = chip.dataset.group;
+      let cur = activeGroups().slice();
+      cur = cur.includes(g) ? cur.filter(x => x !== g) : cur.concat(g);
+      st.groups = (cur.length === 0 || cur.length === allGroups().length) ? [] : cur;
+      return refresh();
+    }
+    const unpin = ev.target.closest('[data-unpin]');
+    if (unpin) { V2.unpin(unpin.dataset.unpin); return refresh(); }
+    const unex = ev.target.closest('[data-unexclude]');
+    if (unex) { V2.unexclude(unex.dataset.unexclude); return refresh(); }
+    if (ev.target.id === 'f-pin-add') {
+      const p = V2.getPrefs();
+      return V2.openInstitutionPicker(ev.target, u => { V2.pin(u); refresh(); }, p.pinned);
+    }
+    if (ev.target.id === 'f-excl-add') {
+      const p = V2.getPrefs();
+      return V2.openInstitutionPicker(ev.target, u => { V2.exclude(u); refresh(); }, p.excluded);
+    }
+    if (ev.target.id === 'f-export') return exportAll();
+  });
+  document.getElementById('filterbar').addEventListener('change', ev => {
+    if (ev.target.id === 'f-period') { st.period = ev.target.value; refresh(); }
+    if (ev.target.id === 'f-status') { st.status = ev.target.value; refresh(); }
+  });
+
+  // ── Dados ────────────────────────────────────────────────────────────────
+  function rankingUrl(metric) {
+    const p = V2.getPrefs();
+    const q = new URLSearchParams({ metric: metric, limit: LIMIT });
+    const start = periodStart();
+    if (start) q.set('start', start);
+    if (st.groups.length) q.set('groups', st.groups.join(','));
+    if (p.pinned.length) q.set('pinned', p.pinned.join(','));
+    if (p.excluded.length) q.set('excluded', p.excluded.join(','));
+    const sort = (metric !== 'api' && p.sort === 'per_consent') ? 'total' : (p.sort || 'total');
+    q.set('sort', sort);
+    if (metric === 'api') { q.set('status', st.status); q.set('scale', st.scale); }
+    return '/api/v2/ranking?' + q.toString();
+  }
+
+  async function refresh() {
+    save();
+    renderFilterbar();
+    V2.closePopover();
+    const summary = document.getElementById('summary');
+    const ranks = document.getElementById('rankings');
+    summary.querySelectorAll('.v2-card').forEach(c => V2.setLoading(c, true));
+    ranks.querySelectorAll('.v2-card').forEach(c => V2.setLoading(c, true));
+    try {
+      if (st.metric === 'unique') {
+        const [pf, pj] = await Promise.all([V2.fetchJSON(rankingUrl('unique_pf')), V2.fetchJSON(rankingUrl('unique_pj'))]);
+        last = [['Pessoa física', pf], ['Pessoa jurídica', pj]];
+      } else {
+        last = [[METRICS[st.metric], await V2.fetchJSON(rankingUrl(st.metric))]];
+      }
+      render();
+    } catch (e) {
+      summary.innerHTML = '';
+      ranks.innerHTML = V2.errorBox(e.message);
+    }
+  }
+
+  // ── Resumo ───────────────────────────────────────────────────────────────
+  function textOn(hex) {
+    const m = /^#?([0-9a-f]{6})$/i.exec(hex || '');
+    if (!m) return '#14171F';
+    const n = parseInt(m[1], 16), r = n >> 16, g = (n >> 8) & 255, b = n & 255;
+    return (0.299 * r + 0.587 * g + 0.114 * b) > 150 ? '#14171F' : '#FFFFFF';
+  }
+  function stack(byGroup, label) {
+    const parts = byGroup.filter(g => g.share).map(g => {
+      const c = V2.groupColor(g.group);
+      return '<div style="width:' + (g.share * 100).toFixed(2) + '%;background:' + c + ';color:' + textOn(c) + '">' +
+        (g.share >= 0.12 ? V2.fmtShare(g.share) : '') + '</div>';
+    }).join('');
+    const aria = byGroup.map(g => V2.groupLabel(g.group) + ' ' + V2.fmtShare(g.share)).join(', ');
+    const legend = byGroup.map(g => '<span><span class="v2-dot" style="background:' + V2.groupColor(g.group) + '"></span>' +
+      V2.groupLabel(g.group) + ' ' + V2.fmtShare(g.share) + ' · ' + V2.fmtCompact(g.value) + '</span>').join('');
+    return '<div class="v2-stack" role="img" aria-label="Participação ' + label + ': ' + aria + '">' + parts + '</div>' +
+      '<div class="v2-legend">' + legend + '</div>';
+  }
+  function paceLine(p, isApi) {
+    if (!p) return '';
+    const v = isApi ? V2.fmtCompact(p.per_day) : V2.fmtSigned(p.per_day);
+    const prev = p.prev_per_day == null ? '' : (isApi ? V2.fmtCompact(p.prev_per_day) : V2.fmtSigned(p.prev_per_day));
+    return '<span><b>' + v + '/dia</b> ' + V2.trendArrow(p.trend) +
+      (prev ? ' <span class="v2-muted v2-small">4 sem. antes: ' + prev + '/dia</span>' : '') + '</span>';
+  }
+  function ecoCard(title, d) {
+    const e = d.ecosystem;
+    return '<div class="v2-card">' +
+      '<div class="v2-kpi-row" style="justify-content:space-between"><span style="font-weight:600">' + title + '</span>' +
+        '<span class="v2-muted" style="font-size:13px">' + e.receptors + ' receptores</span></div>' +
+      '<div class="v2-kpi-row"><span class="v2-kpi-big">' + V2.fmtCompact(e.total) + '</span>' + paceLine(e.pace, false) + '</div>' +
+      stack(e.by_group, title) + '</div>';
+  }
+  function apiCards(d) {
+    const e = d.ecosystem;
+    const errMode = d.status !== '200';
+    const p = e.pace || {};
+    const card = (label, value, sub) => '<div class="v2-card"><span class="v2-kpi-label">' + label + '</span>' +
+      '<span class="v2-kpi-value">' + value + '</span><span class="v2-muted" style="font-size:13px">' + sub + '</span></div>';
+    return '<div class="v2-grid v2-grid-4">' +
+      card(errMode ? (d.status === '500' ? 'Erros na semana' : 'Chamadas na semana (todas)') : 'Chamadas na semana',
+           V2.fmtCompact(e.total), e.receptors + ' receptores · ' + V2.fmtGrowth(e.growth) + ' em ' + PERIODS[st.period][2]) +
+      card('Ritmo por dia · 4 semanas', V2.fmtCompact(p.per_day) + ' ' + V2.trendArrow(p.trend, errMode),
+           p.change_pct == null ? '' : V2.fmtPct(p.change_pct, 1) + ' sobre as 4 semanas anteriores') +
+      (errMode
+        ? card('Taxa de erro', V2.fmtShare(e.error_rate), 'erros ÷ (sucesso + erros) no ecossistema')
+        : card('Por consentimento', V2.fmtInt(e.per_consent_month) + '/mês', 'média do ecossistema (mesma conta da Escala atual)')) +
+      card('Concentração', V2.fmtShare(e.top3_share), (d.status === '500' ? 'dos erros' : 'das chamadas') + ' vêm das 3 maiores') +
+      '</div>';
+  }
+  function renderSummary() {
+    const el = document.getElementById('summary');
+    if (st.metric === 'unique') {
+      el.innerHTML = '<div class="v2-grid v2-grid-2">' + ecoCard('Pessoa física', last[0][1]) + ecoCard('Pessoa jurídica', last[1][1]) + '</div>';
+    } else if (st.metric === 'active') {
+      const d = last[0][1], e = d.ecosystem;
+      el.innerHTML = '<div class="v2-card" style="display:grid;grid-template-columns:260px minmax(0,1fr);gap:24px;align-items:center">' +
+        '<div style="display:flex;flex-direction:column;gap:6px"><span style="font-weight:600">Total do ecossistema · ' + e.receptors + ' receptores</span>' +
+        '<span class="v2-kpi-big">' + V2.fmtCompact(e.total) + '</span>' + paceLine(e.pace, false) + '</div>' +
+        '<div style="display:flex;flex-direction:column;gap:10px">' + stack(e.by_group, 'ativos') + '</div></div>';
+    } else {
+      el.innerHTML = apiCards(last[0][1]);
+    }
+  }
+
+  // ── Ranking ──────────────────────────────────────────────────────────────
+  const LAYOUT = {
+    narrow: '22px minmax(0,1fr) 46px 64px 108px 84px 32px',
+    wide: '28px 170px 100px minmax(0,1fr) 56px 84px 150px 104px 32px',
+    api: '28px 150px 92px minmax(0,1fr) 56px 76px 140px 92px 92px 32px',
+  };
+  function paceCell(p, mode, neutral) {
+    if (!p) return '<span class="v2-r v2-muted">—</span>';
+    if (mode === 'api') {
+      const bad = p.trend === 'down' && !neutral;   // com erros, cair é bom: sem cor
+      return '<span class="v2-r v2-pace"><b' + (bad ? ' class="v2-neg"' : '') + '>' + V2.fmtCompact(p.per_day) + '</b> ' +
+        V2.trendArrow(p.trend, neutral) + ' <span class="v2-small ' + (bad ? 'v2-neg' : 'v2-muted') + '">' +
+        (p.change_pct == null ? '' : V2.fmtPct(p.change_pct)) + '</span></span>';
+    }
+    const neg = p.per_day < 0 ? ' class="v2-neg"' : '';
+    const pct = p.pct_per_day == null ? '' : (p.pct_per_day < 0 ? '−' : '') +
+      new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Math.abs(p.pct_per_day) * 100) + '%/dia';
+    return '<span class="v2-r v2-pace"><b' + neg + '>' + V2.fmtSigned(p.per_day) + '</b> ' + V2.trendArrow(p.trend) +
+      (mode === 'narrow' ? '<small>' + pct + '</small>' : ' <span class="v2-small v2-muted">' + pct + '</span>') + '</span>';
+  }
+  function nameLink(r) {
+    return '<a href="/v2/instituicao?uuid=' + encodeURIComponent(r.uuid) + '">' +
+      (r.pinned ? '<span aria-label="Sempre visível" title="Sempre visível">' + V2.icon('pin') + '</span>' : '') + V2.esc(r.name) + '</a>';
+  }
+  function rankingCard(key, title, d, mode) {
+    const isApi = mode === 'api';
+    const scaleConsent = isApi && d.scale === 'per_consent';
+    const barOf = r => scaleConsent ? (r.per_consent_month || 0) : r.value;
+    const max = Math.max.apply(null, d.rows.map(barOf).concat([1]));
+    const growthHead = PERIODS[st.period][2];
+    const thirdHead = isApi ? (d.status === '200' ? 'Por consent./mês' : 'Taxa de erro') : null;
+    let head;
+    if (mode === 'narrow') head = ['#', 'Instituição', 'Part.', 'Total', 'Ritmo/dia · 4 sem.', growthHead, ''];
+    else if (mode === 'wide') head = ['#', 'Instituição', 'Grupo', '', 'Part.', 'Total', 'Ritmo/dia · 4 sem.', growthHead, ''];
+    else head = ['#', 'Instituição', 'Grupo', '', 'Part.', 'Semana', 'Por dia · 4 sem.', thirdHead, growthHead, ''];
+    const right = mode === 'narrow' ? [2, 3, 4, 5] : mode === 'wide' ? [4, 5, 6, 7] : [4, 5, 6, 7, 8];
+    const headHtml = '<div class="v2-rank-head" style="grid-template-columns:' + LAYOUT[mode] + '">' +
+      head.map((h, i) => '<span' + (right.includes(i) ? ' class="v2-r"' : '') + '>' + h + '</span>').join('') + '</div>';
+
+    let cutDone = false;
+    const rows = d.rows.map(r => {
+      const color = V2.groupColor(r.group);
+      const bar = '<div class="v2-track"><div style="width:' + (100 * barOf(r) / max).toFixed(1) + '%;background:' + color + '"></div></div>';
+      const cls = ['v2-rank-row', mode === 'narrow' ? '' : 'wide', r.pinned ? 'pinned' : '', (r.below_cut && !cutDone) ? 'cut' : ''].join(' ');
+      if (r.below_cut) cutDone = true;
+      const menu = '<button type="button" class="v2-row-menu" data-menu="' + r.uuid + '" aria-label="Opções para ' + V2.esc(r.name) + '" aria-haspopup="menu">⋯</button>';
+      const growth = '<span class="v2-r v2-muted">' + V2.fmtGrowth(r.growth) + '</span>';
+      let cells;
+      if (mode === 'narrow') {
+        cells = '<span class="v2-muted">' + r.rank + '</span><div class="v2-rank-name">' + nameLink(r) + bar + '</div>' +
+          '<span class="v2-r" style="font-weight:600">' + V2.fmtShare(r.share) + '</span>' +
+          '<span class="v2-r">' + V2.fmtCompact(r.value) + '</span>' + paceCell(r.pace, mode) + growth + menu;
+      } else {
+        const third = isApi
+          ? '<span class="v2-r"' + ((r.per_consent_month || 0) > 2000 && d.status === '200' ? ' style="font-weight:700"' : '') + '>' +
+              (d.status === '200' ? V2.fmtInt(r.per_consent_month) : V2.fmtShare(r.error_rate)) + '</span>'
+          : '';
+        cells = '<span class="v2-muted">' + r.rank + '</span><div class="v2-rank-name">' + nameLink(r) + '</div>' +
+          '<span class="v2-muted" style="font-size:13px">' + V2.groupLabel(r.group) + '</span>' + bar +
+          '<span class="v2-r" style="font-weight:600">' + V2.fmtShare(r.share) + '</span>' +
+          '<span class="v2-r">' + V2.fmtCompact(r.value) + '</span>' + paceCell(r.pace, mode, isApi && d.status !== '200') + third + growth + menu;
+      }
+      return '<li class="' + cls + '" style="grid-template-columns:' + LAYOUT[mode] + '">' + cells + '</li>';
+    }).join('');
+
+    const excl = d.excluded.length   // o servidor só lista exclusões que mudam o corte
+      ? (d.excluded.length === 1
+          ? V2.esc(d.excluded[0].name) + ' (' + d.excluded[0].rank + 'º) excluída: a seguinte entra para completar ' + LIMIT
+          : 'Excluídas: ' + d.excluded.map(x => V2.esc(x.name) + ' (' + x.rank + 'º)').join(', ') + ' — as seguintes completam ' + LIMIT) +
+        ' · posições seguem as do ecossistema'
+      : '';
+    const rule = isApi
+      ? 'Por dia = média diária das últimas 4 semanas; % e seta comparam com as 4 anteriores (↑↓ acima de 10%) · Por consentimento/mês = chamadas × 30 ÷ (consentimentos únicos × 7)'
+      : 'Ritmo: novos consentimentos por dia nas últimas 4 semanas; ↑ ou ↓ quando difere mais de 10% das 4 semanas anteriores · cor = grupo';
+    const sub = METRICS[st.metric] + (isApi ? ' · ' + ({ '200': 'sucesso (200)', '500': 'erros (500)', all: 'todas' })[d.status] +
+      ' · escala: ' + (scaleConsent ? 'por consentimento/mês' : 'total') : '') + ' · semana de ' + V2.fmtDate(d.week);
+    return '<article class="v2-card" data-card="' + key + '">' +
+      '<div class="v2-card-head"><div><h2>' + title + (d.filters_label ? ' · ' + V2.esc(d.filters_label) : '') + '</h2>' +
+        '<span class="v2-sub">' + sub + '</span></div>' +
+        '<div class="v2-card-actions"><button type="button" class="v2-icon-btn" data-csv="' + key + '" aria-label="Baixar CSV deste ranking">' + V2.icon('download') + '</button></div></div>' +
+      '<div class="v2-rank-scroll">' + headHtml + '<ol class="v2-rank-list">' + rows + '</ol></div>' +
+      '<div class="v2-card-foot">' + (excl ? '<span>' + excl + '</span>' : '') + '<span>' + rule + ' · ' + SOURCE + '</span></div>' +
+      '</article>';
+  }
+  function renderRankings() {
+    const el = document.getElementById('rankings');
+    if (last.every(([, d]) => !d.rows.length)) {
+      const missing = last.some(([, d]) => (d.unavailable || []).includes('errors'));
+      el.innerHTML = '<div class="v2-card"><div class="v2-placeholder">' + (missing
+        ? 'Os dados de erro ainda não foram gerados nesta base. Rode <code>python compute_signals.py</code> no data-loader e publique a base.'
+        : 'Sem dados para estes filtros.') + '</div></div>';
+      return;
+    }
+    if (st.metric === 'unique') {
+      el.innerHTML = '<div class="v2-grid v2-grid-rank">' +
+        rankingCard('pf', 'Top ' + LIMIT + ' · Pessoa física', last[0][1], 'narrow') +
+        rankingCard('pj', 'Top ' + LIMIT + ' · Pessoa jurídica', last[1][1], 'narrow') + '</div>';
+    } else {
+      el.innerHTML = rankingCard('main', 'Top ' + LIMIT + ' · ' + METRICS[st.metric], last[0][1], st.metric === 'api' ? 'api' : 'wide');
+    }
+  }
+  function render() {
+    const d = last[0][1];
+    document.getElementById('page-title').innerHTML =
+      '<h1>' + (st.metric === 'api' ? 'Quem mais usa os dados: chamadas de API' : 'Quem lidera em ' + METRICS[st.metric].toLowerCase()) + '</h1>' +
+      '<p>Semana de ' + V2.fmtDate(d.week) + ' · participação no total do ecossistema · crescimento: ' + PERIODS[st.period][0].toLowerCase() + '</p>';
+    renderSummary();
+    renderRankings();
+  }
+
+  // Menu por linha e CSV por card
+  document.getElementById('rankings').addEventListener('click', ev => {
+    const m = ev.target.closest('[data-menu]');
+    if (m) {
+      const uuid = m.dataset.menu, prefs = V2.getPrefs(), pinned = prefs.pinned.includes(uuid);
+      return V2.openMenu(m, 'Opções para ' + instName(uuid), [
+        { label: pinned ? 'Deixar de fixar' : 'Sempre mostrar', onClick: () => { pinned ? V2.unpin(uuid) : V2.pin(uuid); refresh(); } },
+        { label: 'Excluir do ranking', onClick: () => { V2.exclude(uuid); refresh(); } },
+        { label: 'Ver na evolução', onClick: () => {
+            const f = V2.getFilters(), inst = (f.institutions || []).filter(u => u !== uuid);
+            V2.setFilters({ institutions: [uuid].concat(inst).slice(0, 8) });
+            location.href = '/v2/evolucao';
+          } },
+        { label: 'Abrir perfil →', link: true, onClick: () => { location.href = '/v2/instituicao?uuid=' + encodeURIComponent(uuid); } },
+      ]);
+    }
+    const c = ev.target.closest('[data-csv]');
+    if (c) {
+      const pair = st.metric === 'unique' ? last[c.dataset.csv === 'pf' ? 0 : 1] : last[0];
+      exportCsv([pair]);
+    }
+  });
+
+  // ── CSV ──────────────────────────────────────────────────────────────────
+  function exportCsv(pairs) {
+    const isApi = st.metric === 'api';
+    const rows = [];
+    pairs.forEach(([label, d]) => d.rows.forEach(r => rows.push(Object.assign({ _ranking: label, _week: d.week }, r))));
+    const cols = [
+      { label: 'Ranking', value: r => r._ranking },
+      { label: 'Semana', value: r => r._week },
+      { label: 'Posição', value: r => r.rank },
+      { label: 'Instituição', value: r => r.name },
+      { label: 'Grupo', value: r => V2.groupLabel(r.group) },
+      { label: 'Sempre mostrar', value: r => r.pinned ? 'sim' : '' },
+      { label: 'Participação (%)', value: r => r.share == null ? null : Math.round(r.share * 10000) / 100 },
+      { label: isApi ? 'Chamadas na semana' : 'Total', value: r => r.value },
+      { label: isApi ? 'Chamadas por dia (4 sem.)' : 'Ritmo por dia (4 sem.)', value: r => r.pace ? Math.round(r.pace.per_day) : null },
+      { label: 'Ritmo 4 sem. antes', value: r => r.pace && r.pace.prev_per_day != null ? Math.round(r.pace.prev_per_day) : null },
+      { label: 'Crescimento ' + PERIODS[st.period][2], value: r => V2.fmtGrowth(r.growth) },
+    ];
+    if (isApi) {
+      cols.push({ label: 'Por consentimento/mês', value: r => r.per_consent_month == null ? null : Math.round(r.per_consent_month) });
+      cols.push({ label: 'Taxa de erro (%)', value: r => r.error_rate == null ? null : Math.round(r.error_rate * 10000) / 100 });
+    }
+    V2.exportCSV('opf-quem-lidera-' + st.metric + '-' + (pairs[0][1].week || '') + '.csv', cols, rows);
+  }
+  function exportAll() { if (last) exportCsv(last); }
+
+  // ── O que mudou (resumo do último ciclo) ─────────────────────────────────
+  async function renderChanges() {
+    const el = document.getElementById('changes');
+    try {
+      const s = await V2.fetchJSON('/api/signals');
+      const month = (s.consents_through || '').slice(0, 7);
+      const count = s.weeks.filter(w => w.week.startsWith(month)).reduce((a, w) => a + w.count, 0);
+      el.innerHTML = '<section class="v2-card"><div class="v2-card-head"><div><h2>O que mudou desde a última atualização</h2>' +
+        '<span class="v2-sub">' + (month ? V2.fmtMonth(month) + ' · ' + count + (count === 1 ? ' alerta' : ' alertas') : 'Alertas ainda não calculados') + '</span></div></div>' +
+        '<span class="v2-muted">A lista completa, com oscilações e o que está em observação, chega na aba "O que mudou?" do 2.0. ' +
+        'Por enquanto, os alertas semana a semana estão no <a href="/">painel atual</a>.</span></section>';
+    } catch (e) {
+      el.innerHTML = '';
+    }
+  }
+
+  // ── Boot ─────────────────────────────────────────────────────────────────
+  V2.initShell('lidera')
+    .then(() => { refresh(); renderChanges(); })
+    .catch(e => { document.getElementById('rankings').innerHTML = V2.errorBox(e.message); });
+})();
+</script>
+</body>
+</html>
