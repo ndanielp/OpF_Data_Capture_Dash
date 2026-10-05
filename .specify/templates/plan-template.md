@@ -54,6 +54,8 @@ Verify against `.specify/memory/constitution.md` v1.0.0:
   pre-aggregated table. Probe pruning levels preserved for new collection paths.
 - [ ] **V. Paradigm**: No cross-component imports. SQL parameterized (no
   f-string interpolation). Schema changes are additive only.
+- [ ] **VI. UI Shell**: Pages touched follow their shell — legacy §6.1–6.7
+  (`/`, `/profile`, `/active-consents`) or Shell v2 §6.8 (`/v2*`).
 
 ## Project Structure
 

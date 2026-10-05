@@ -385,6 +385,21 @@ def open_db(path: Path) -> sqlite3.Connection:
             PRIMARY KEY (week, signal_type, metric, api_group, receptor_uuid)
         )
     """)
+    # Chamadas por status e transmissor (feature 011, Dashboard 2.0) — erros e taxa de
+    # erro sem agregar api_requests no caminho quente. Reconstruída por
+    # refresh_api_status_weekly, como api_group_weekly.
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS api_status_weekly (
+            date              TEXT    NOT NULL,
+            receptor_uuid     TEXT    NOT NULL,
+            receptor          TEXT    NOT NULL DEFAULT '',
+            transmitter_uuid  TEXT    NOT NULL DEFAULT '',
+            transmitter       TEXT    NOT NULL DEFAULT '',
+            status            INTEGER NOT NULL,
+            total             INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (date, receptor_uuid, transmitter_uuid, status)
+        )
+    """)
     con.execute("""
         CREATE TABLE IF NOT EXISTS behavior_signals_run (
             id                 INTEGER PRIMARY KEY CHECK (id = 1),
@@ -421,6 +436,10 @@ def open_db(path: Path) -> sqlite3.Connection:
         -- Índices para api_group_weekly
         CREATE INDEX IF NOT EXISTS idx_agw_receptor ON api_group_weekly(receptor_uuid, date);
         CREATE INDEX IF NOT EXISTS idx_agw_date     ON api_group_weekly(date);
+
+        -- api_status_weekly: Dashboard 2.0 lê por semana e por receptor.
+        CREATE INDEX IF NOT EXISTS idx_asw_date     ON api_status_weekly(date);
+        CREATE INDEX IF NOT EXISTS idx_asw_receptor ON api_status_weekly(receptor_uuid, date);
 
         -- behavior_signals: o dashboard lê sempre por semana.
         CREATE INDEX IF NOT EXISTS idx_behavior_signals_week ON behavior_signals(week);
@@ -472,6 +491,26 @@ def refresh_api_group_weekly(con: sqlite3.Connection) -> None:
           AND r.status = 200
         GROUP BY r.date, r.receptor_uuid, grp
         HAVING grp IS NOT NULL;
+    """)
+
+
+def refresh_api_status_weekly(con: sqlite3.Connection) -> None:
+    """Recalcula api_status_weekly inteira: chamadas por semana × receptor × transmissor
+    × status, sem a API de consentimentos.
+
+    Alimenta erros e taxa de erro do Dashboard 2.0. Chamada junto com
+    refresh_api_group_weekly (fim da coleta e compute_signals.py). executescript()
+    auto-comita.
+    """
+    con.executescript("""
+        DELETE FROM api_status_weekly;
+        INSERT INTO api_status_weekly
+            (date, receptor_uuid, receptor, transmitter_uuid, transmitter, status, total)
+        SELECT date, receptor_uuid, MAX(receptor), transmitter_uuid, MAX(transmitter),
+               status, SUM(total)
+        FROM api_requests
+        WHERE api <> 'consents'
+        GROUP BY date, receptor_uuid, transmitter_uuid, status;
     """)
 
 
