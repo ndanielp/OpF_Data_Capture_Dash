@@ -363,8 +363,10 @@
         { label: pinned ? 'Deixar de fixar' : 'Sempre mostrar', onClick: () => { pinned ? V2.unpin(uuid) : V2.pin(uuid); refresh(); } },
         { label: 'Excluir do ranking', onClick: () => { V2.exclude(uuid); refresh(); } },
         { label: 'Ver na evolução', onClick: () => {
-            const f = V2.getFilters(), inst = (f.institutions || []).filter(u => u !== uuid);
-            V2.setFilters({ institutions: [uuid].concat(inst).slice(0, 8) });
+            // A aba 2 acrescenta a instituição às linhas que já mostra (as 5 maiores, se nada foi escolhido).
+            const card = m.closest('.v2-card'), img = card && card.querySelector('[data-img]');
+            const metric = st.metric === 'unique' ? (img && img.dataset.img === 'pj' ? 'unique_pj' : 'unique_pf') : st.metric;
+            V2.setFilters({ evo_add: uuid, evo_metric: metric });
             location.href = '/v2/evolucao';
           } },
         { label: 'Abrir perfil →', link: true, onClick: () => { location.href = '/v2/instituicao?uuid=' + encodeURIComponent(uuid); } },

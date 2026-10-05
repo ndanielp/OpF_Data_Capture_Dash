@@ -447,6 +447,15 @@ def _warm_profile_cache() -> None:
         pass
 
 
+def _warm_v2_cache():
+    """Dashboard 2.0: carrega as séries pesadas antes do primeiro acesso."""
+    try:
+        from services import v2_metrics
+        v2_metrics.warm()
+    except Exception:
+        pass
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Garante que api_group_weekly exista e tenha dados (DBs antigos sem a tabela populada).
@@ -456,6 +465,7 @@ async def lifespan(app: FastAPI):
     # Pré-aquece cache em background — servidor aceita conexões imediatamente.
     threading.Thread(target=lambda: _refresh_cache(force=True), daemon=True).start()
     threading.Thread(target=_warm_profile_cache, daemon=True).start()
+    threading.Thread(target=_warm_v2_cache, daemon=True).start()
     yield
 
 from routers import openfinance

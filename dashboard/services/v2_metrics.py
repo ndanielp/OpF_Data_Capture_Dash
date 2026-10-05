@@ -29,7 +29,9 @@ DEFAULT_PERIOD_DAYS = 364    # período padrão do crescimento: 52 semanas
 METRICS: tuple[str, ...] = ("unique_pf", "unique_pj", "active", "api")
 _UNIQUE_COLUMN = {"unique_pf": "cpf", "unique_pj": "cnpj"}
 
-_frames: TTLCache = TTLCache(maxsize=32, ttl=600)
+# A chave inclui o mtime da base: dado novo invalida sozinho. O TTL longo evita que a
+# leitura agregada das tabelas grandes (até ~1 s) volte a cada 10 minutos (Princípio IV).
+_frames: TTLCache = TTLCache(maxsize=64, ttl=24 * 3600)
 
 
 class TableMissing(Exception):
@@ -127,6 +129,18 @@ def load_metric(metric: str, status: str = "200") -> pd.DataFrame:
                 "SELECT date, receptor_uuid AS uuid, SUM(req_week) AS value FROM api_group_weekly "
                 "GROUP BY date, receptor_uuid"))
     raise ValueError(f"métrica desconhecida: {metric}")
+
+
+def warm() -> None:
+    """Pré-carrega as séries compartilhadas pelas abas (chamado em background no startup)."""
+    for metric in ("unique_pf", "unique_pj", "unique_total", "active"):
+        load_metric(metric)
+    for job in (lambda: [load_metric("api", s) for s in ("200", "500", "all")], load_api_groups,
+                load_active_by_transmitter, transmitters, institutions, load_signals, load_watch):
+        try:
+            job()
+        except TableMissing:
+            pass
 
 
 def computed_at() -> str | None:
@@ -485,6 +499,85 @@ def load_status_by_transmitter(uuid: str) -> pd.DataFrame:
                 (uuid,)).copy()
     df["date"] = pd.to_datetime(df["date"])
     return df
+
+
+# ── Evolução (aba "Como evolui?") ────────────────────────────────────────────
+
+QUARTER_STABLE = 0.03   # ritmo trimestral "estável" quando a diferença é de até 3 pontos
+SNAPSHOT_FILL_WEEKS = 3  # foto de uma semana: lacuna de até 3 semanas usa a observação anterior
+
+
+def transmitters() -> pd.DataFrame:
+    """Transmissores com o nome mais recente, nome curto e grupo (mesmas colunas de institutions)."""
+    df = _query("SELECT transmitter_uuid AS uuid, transmitter AS name, MAX(date) AS last_date "
+                "FROM active_consents WHERE transmitter_uuid <> '' GROUP BY transmitter_uuid")
+    if df.empty:
+        return pd.DataFrame(columns=["uuid", "name", "short", "group"])
+    df = df.copy()
+    df["short"] = df["name"].map(short_name)
+    df["group"] = df["name"].map(resolve_institution_group)
+    return df[["uuid", "name", "short", "group"]]
+
+
+def load_active_by_transmitter() -> pd.DataFrame:
+    """Consentimentos ativos por transmissor (soma dos receptores), formato largo."""
+    return _wide(_query("SELECT date, transmitter_uuid AS uuid, SUM(total) AS value FROM active_consents "
+                        "WHERE transmitter_uuid <> '' GROUP BY date, transmitter_uuid"))
+
+
+def flow_30d(wide: pd.DataFrame) -> pd.DataFrame:
+    """Fluxo semanal → equivalente a 30 dias pelas últimas 4 semanas (mesma regra da aba 4),
+    mantendo a semana sem coleta como lacuna."""
+    return (wide.rolling(4, min_periods=1).mean() * 30 / 7).where(wide.notna())
+
+
+def by_point(wide: pd.DataFrame, start: pd.Timestamp, end: pd.Timestamp, granularity: str) -> pd.DataFrame:
+    """Matriz ponto × entidade (research.md, Decisão 8). Mensal = último valor de cada
+    entidade dentro do mês; semanal = valor da semana. Sem dado → NaN, nunca zero."""
+    w = wide[(wide.index >= start) & (wide.index <= end)]
+    if granularity == "week":
+        out = w.copy()
+        out.index = out.index.strftime("%Y-%m-%d")
+        return out
+    return w.groupby(w.index.strftime("%Y-%m")).last()
+
+
+def snapshot(wide: pd.DataFrame, at: pd.Timestamp) -> pd.Series:
+    """Valores de cada entidade numa semana; lacuna curta usa a observação anterior,
+    para a falta de coleta de uma instituição não mexer na participação das outras."""
+    w = wide[wide.index <= at]
+    if w.empty:
+        return pd.Series(dtype=float)
+    return w.ffill(limit=SNAPSHOT_FILL_WEEKS).iloc[-1]
+
+
+def share_changes(wide: pd.DataFrame, start: pd.Timestamp, end: pd.Timestamp) -> pd.DataFrame:
+    """Participação no início e no fim do período e variação em pontos percentuais.
+    Quem estreou depois do início parte de zero e leva o mês de estreia."""
+    start = max(start, wide.index.min())
+    first = wide.index[wide.index >= start].min()
+    a, b = snapshot(wide, first).fillna(0), snapshot(wide, end).fillna(0)
+    ta, tb = float(a.sum()), float(b.sum())
+    df = pd.DataFrame({"share_start": a / ta if ta else np.nan, "share_end": b / tb if tb else np.nan})
+    df["pp"] = df["share_end"] - df["share_start"]
+    debut = {u: _debut(wide[u]) for u in wide.columns}
+    df["debut_month"] = [debut[u].strftime("%Y-%m") if debut[u] is not None and debut[u] > start else None
+                         for u in df.index]
+    return df
+
+
+def quarterly_pace(monthly: pd.Series, end_month: str) -> dict | None:
+    """Crescimento dos últimos 3 meses contra os 3 anteriores, sobre o valor de fim de mês.
+    Sem base em algum dos três pontos → None (quem estreou há menos de 6 meses)."""
+    end = pd.Period(end_month, freq="M")
+    pts = [str(end - 6), str(end - 3), str(end)]
+    v0, v3, v6 = (monthly.get(p) for p in pts)
+    if any(v is None or pd.isna(v) for v in (v0, v3, v6)) or v0 <= 0 or v3 <= 0:
+        return None
+    prev, last = float(v3 / v0 - 1), float(v6 / v3 - 1)
+    diff = last - prev
+    status = "stable" if abs(diff) <= QUARTER_STABLE + 1e-12 else ("accelerating" if diff > 0 else "decelerating")
+    return {"prev_quarter": prev, "last_quarter": last, "status": status, "months": pts}
 
 
 def ecosystem_by_group(values: pd.Series, group_of: dict[str, str]) -> list[dict]:

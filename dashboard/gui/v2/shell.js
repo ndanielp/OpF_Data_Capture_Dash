@@ -205,8 +205,10 @@
     pop.addEventListener('keydown', ev => { if (ev.key === 'Escape') { V2.closePopover(); anchor.focus(); } });
   }
 
-  /** Busca em meta.institutions; onPick(uuid). `skip` = uuids a esconder. */
-  V2.openInstitutionPicker = function (anchor, onPick, skip) {
+  /** Busca em meta.institutions; onPick(uuid). `skip` = uuids a esconder.
+   *  opts.list troca o catálogo (ex.: transmissores); opts.first = uuids sugeridos no topo. */
+  V2.openInstitutionPicker = function (anchor, onPick, skip, opts) {
+    opts = opts || {};
     V2.closePopover();
     const pop = document.createElement('div');
     pop.className = 'v2-popover';
@@ -218,7 +220,10 @@
     const norm = s => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
     function draw() {
       const q = norm(input.value.trim());
-      const list = (V2.meta.institutions || [])
+      const first = opts.first || [];
+      const rank = i => { const k = first.indexOf(i.uuid); return k < 0 ? first.length : k; };
+      const list = (opts.list || V2.meta.institutions || []).slice()
+        .sort((a, b) => q ? 0 : rank(a) - rank(b))
         .filter(i => !(skip || []).includes(i.uuid))
         .filter(i => !q || norm(i.short).includes(q) || norm(i.name).includes(q))
         .slice(0, 8);
