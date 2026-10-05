@@ -46,7 +46,7 @@ Decisões técnicas tomadas para cumprir a spec, com a medição que embasou cad
 
 ## Decisão 8 — Visão mensal e semanas sem coleta
 
-- **Decision**: Mensal = valor da última semana com dado de cada instituição dentro do mês (o mês fica vazio se não houver nenhuma). Semanal = valor da semana ou `null`; o gráfico usa `spanGaps: false` e nunca preenche com zero. Participação mensal usa o total do ecossistema da mesma semana de cada instituição.
+- **Decision**: Mensal = valor da última semana com dado de cada instituição dentro do mês (o mês fica vazio se não houver nenhuma). Semanal = valor da semana ou `null`; o gráfico usa `spanGaps: false` e nunca preenche com zero. Participação mensal = valor ÷ soma dos valores de fim de mês de todas as instituições (cada uma na sua última semana com dado; ajuste na implementação da US5 — assim as participações do mês somam 100% e a lacuna de uma instituição não infla as outras). Ganho/perda em pp do período usa a foto da semana inicial e da final, com lacuna de até 3 semanas preenchida pela observação anterior.
 - **Rationale**: FR-035 e SC-007. Corrige na origem o "falso colapso do Belvo em 07/08" do legado, que preenche semanas ausentes com 0.
 - **Alternatives considered**: última semana do calendário do mês — rejeitado: uma instituição sem coleta naquela semana sumiria do mês inteiro.
 

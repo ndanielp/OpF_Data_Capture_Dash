@@ -33,9 +33,10 @@ python main.py status       # CSV stats + recent runs
 python main.py last-run     # tail of latest log
 python main.py preview consents --rows 20
 
-# After collection, before sync: rebuild behavior alerts (feature 010).
-# Also refreshes api_group_weekly, which the collector only refreshes when a run
-# finishes — an interrupted run leaves it stale until this is run.
+# After collection, before sync: rebuild behavior alerts (feature 010) and the
+# "em observação" conditions (behavior_watch, feature 011). Also refreshes
+# api_group_weekly and api_status_weekly, which the collector only refreshes when a
+# run finishes — an interrupted run leaves them stale until this is run.
 python compute_signals.py
 
 # Sync to GCS after collection
@@ -83,12 +84,24 @@ docker compose up
 
 ### SQLite Schema (`data/consents.db`)
 
-Five tables:
+All DDL lives in `scrapers.open_db()` (the dashboard never creates data tables — Constitution, Principle V).
+
+Collected data:
 - `unique_consents` — weekly consent counts per receptor (`receptor_uuid`, `date`, `total`, `cpf`, `cnpj`)
+- `active_consents` — weekly active consents per receptor × transmitter
 - `api_requests` — API call metrics per receptor × transmitter × api × endpoint × status × date
-- `fetch_attempts` — telemetry: 1 row per HTTP call (phase, target, status, duration_ms, records_count)
+- `payment_api_requests` — payment-initiation calls (PISP × holder × api × endpoint × status)
+- `endpoint_history` — daily snapshot of API/endpoint metadata (detects ID drift)
+
+Telemetry:
+- `fetch_attempts` — 1 row per HTTP call (phase, target, status, duration_ms, records_count)
 - `run_summary` — 1 row per run_id with aggregated counters (ok/failed/skipped)
-- `api_group_weekly` — pre-aggregation by group (Conta, Cartao, Credito, Investimento, Cambio, Identidade, Resource) joined with consents_total. Populated by `scrapers.refresh_api_group_weekly`; consumed by the dashboard (strategic map, temporal intensity, efficiency, acceleration).
+
+Derived (rebuilt by the collector at the end of a run and by `compute_signals.py`):
+- `api_group_weekly` — pre-aggregation by group (Conta, Cartao, Credito, Investimento, Cambio, Identidade, Resource) joined with consents_total. Populated by `scrapers.refresh_api_group_weekly`; consumed by the legacy dashboard and by the 2.0 API mix.
+- `api_status_weekly` — week × receptor × transmitter × status (200/500), excluding the `consents` API. Populated by `scrapers.refresh_api_status_weekly`; feeds the 2.0 API ranking (status filter) and error rates.
+- `behavior_signals` / `behavior_signals_run` — behavior-change alerts and run metadata (feature 010; 30k floor always on unique consents).
+- `behavior_watch` — API alert conditions seen in the latest week, awaiting the confirmation week ("em observação", feature 011).
 
 ### Session & HTTP
 
@@ -134,6 +147,23 @@ GROUP BY 1, 2;
 `dashboard/server.py` exposes FastAPI endpoints that read SQLite directly (no ORM). Key filters accepted via query params: `start`, `end` (YYYY-MM-DD), `receptors` (comma-separated substring match). Frontend is two HTML files: `gui/dashboard.html` (Ecossistema) and `gui/receptor_profile.html` (Perfil Receptor), both using Chart.js.
 
 **Group metadata is centralized** in `dashboard/services/constants.py::API_GROUPS`, keyed by DB slug (`Conta`, `Cartao`, `Credito`, `Investimento`, `Cambio`, `Identidade`, `Resource`) — same values stored in `api_group_weekly.grp`. Each entry has `{display, color, apis}`. The router `dashboard/routers/openfinance.py` exposes this as `/api/of/api-groups` and `/api/of/brand-colors`; the frontend (`receptor_profile.html`) fetches both at boot to populate `SM_GROUPS`/`SM_LABELS`/`SM_COLORS`/`_TS_STACK_GROUPS`/`GROUP_META`.
+
+### Dashboard 2.0 (feature 011)
+
+New panel organized by analytical question, served alongside the legacy one (which stays at `/`, untouched apart from a "Dashboard 2.0 →" link). Spec: `specs/011-dashboard-v2/`; shell rules: Constitution §6.8.
+
+| Page | Tab | API |
+|---|---|---|
+| `/v2` | Quem lidera? (ranking Top 15, pin/exclude, pace, growth) | `GET /api/v2/ranking` |
+| `/v2/evolucao` | Como evolui? (lines, group share, pp gains/losses, quarterly pace) | `GET /api/v2/evolution` |
+| `/v2/mudancas` | O que mudou? (alerts by month, oscillation, "em observação") | `GET /api/v2/changes` |
+| `/v2/instituicao` | Como opera uma instituição? (KPIs, API mix, transmitters, error rate, alerts) | `GET /api/v2/institution/{uuid}` |
+
+- `GET /api/v2/meta` — data dates, group colors/labels and the institution catalog (used by every tab).
+- Code: `routers/v2.py` (endpoints, contract in `specs/011-dashboard-v2/contracts/v2-api.md`), `services/v2_metrics.py` (pure pandas rules over wide weekly frames; `TTLCache` keyed by DB mtime, warmed at startup by `server._warm_v2_cache`).
+- Frontend: `gui/v2/` — `shell.js` (`window.V2`: header/tabs, filters shared via `sessionStorage['opf:v2:filters']`, ranking prefs in `localStorage['opf:v2:ranking']`, formatting, 16:9 image and CSV export), `v2.css` (light theme default), one HTML per tab. Group colors: `services/constants.py::GROUP_COLORS_V2`.
+- Shared rules: API flows are normalized as the last 4 weeks → 30 days; "por consentimento/mês" = that ÷ mean unique consents (PF + PJ), ecosystem counting only receptors with calls in each week; monthly points = last week with data of each institution in the month (a missing week is a gap, never zero).
+- Tests: `dashboard/tests/test_v2_*.py` over the synthetic DB in `tests/v2_fixtures.py`.
 
 ## Key Configuration
 

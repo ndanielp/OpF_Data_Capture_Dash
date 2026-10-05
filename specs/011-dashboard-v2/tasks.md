@@ -299,7 +299,7 @@ Cada fase de história é um PR próprio contra `main` (plan.md, "Entrega por fa
 
 ### Tests for User Story 5
 
-- [ ] T050 [P] [US5] Testes HTTP em `dashboard/tests/test_v2_evolution.py`:
+- [X] T050 [P] [US5] Testes HTTP em `dashboard/tests/test_v2_evolution.py`:
   - formato de `GET /api/v2/evolution`;
   - semana faltante vira `null` na visão semanal (nunca 0);
   - mensal usa a última semana com dado da instituição no mês;
@@ -311,14 +311,14 @@ Cada fase de história é um PR próprio contra `main` (plan.md, "Entrega por fa
 
 ### Implementation for User Story 5
 
-- [ ] T051 [US5] Implementar em `dashboard/services/v2_metrics.py`:
+- [X] T051 [US5] Implementar em `dashboard/services/v2_metrics.py`:
   - `monthly(df)` e `weekly(df)`, com `null` em lacunas (research.md, Decisão 8);
   - `share_series`;
   - `share_changes(start, end)`;
   - `group_share_monthly`;
   - `quarterly_pace(df, end)` (últimos 3 meses vs 3 anteriores) e o do ecossistema.
-- [ ] T052 [US5] Implementar `GET /evolution` em `dashboard/routers/v2.py`, conforme `contracts/v2-api.md` (parâmetros `metric`, `granularity`, `institutions`, `by`, `start`, `end`, `groups`).
-- [ ] T053 [US5] Substituir o bloco "Em construção" de `dashboard/gui/v2/evolucao.html` pela aba completa:
+- [X] T052 [US5] Implementar `GET /evolution` em `dashboard/routers/v2.py`, conforme `contracts/v2-api.md` (parâmetros `metric`, `granularity`, `institutions`, `by`, `start`, `end`, `groups`).
+- [X] T053 [US5] Substituir o bloco "Em construção" de `dashboard/gui/v2/evolucao.html` pela aba completa:
   - barra com Métrica, Evolução por (só Ativos), Período, Granularidade, Grupos e linha "Instituições no gráfico" (chips removíveis, "+ Adicionar (até 8)", sugerindo primeiro as fixadas da aba 1);
   - 3 cards de resposta;
   - gráfico Chart.js com cor do grupo, traço diferente no mesmo grupo (`borderDash`), `spanGaps: false`, rótulo de valor e crescimento no fim da linha e alternância Valores/Participação %;
@@ -326,19 +326,19 @@ Cada fase de história é um PR próprio contra `main` (plan.md, "Entrega por fa
   - "Quem ganhou e quem perdeu espaço" (barras divergentes);
   - "Ritmo" trimestral com selos Acelerando/Desacelerando.
   Layout de referência: quadro `FinalEvolucao`. Ligar exportação e cliques de nome.
-- [ ] T054 [US5] Validação manual: roteiro "Evolução" do `quickstart.md`, incluindo "Ver na evolução" vindo do menu da aba 1.
+- [X] T054 [US5] Validação manual: roteiro "Evolução" do `quickstart.md`, incluindo "Ver na evolução" vindo do menu da aba 1.
 
 ---
 
 ## Phase 8: Polish & Cross-Cutting Concerns
 
-- [ ] T055 [P] Atualizar `CLAUDE.md`:
+- [X] T055 [P] Atualizar `CLAUDE.md`:
   - seção "Dashboard 2.0" com rotas `/v2*`, endpoints `/api/v2/*` e arquivos de `gui/v2/`;
   - tabelas novas (`api_status_weekly`, `behavior_watch`) no esquema;
   - nota de que `compute_signals.py` agora também reconstrói `api_status_weekly`;
   - SQLite Schema passa a listar as tabelas atuais.
-- [ ] T056 [P] Medir `/api/v2/*` na base real (10 chamadas por endpoint, sem cache) e registrar p95 em `specs/011-dashboard-v2/quickstart.md`. Meta: < 500 ms (Princípio IV) e aba completa em < 3 s (SC-006). Se algum passar, otimizar a carga em `v2_metrics.py` antes do PR.
-- [ ] T057 Rodar todos os testes (`data-loader` e `dashboard`) e o roteiro completo do `quickstart.md`. Conferir SC-003 (amostra de números contra a base) e SC-005 (legado igual).
+- [X] T056 [P] Medir `/api/v2/*` na base real (10 chamadas por endpoint, sem cache) e registrar p95 em `specs/011-dashboard-v2/quickstart.md`. Meta: < 500 ms (Princípio IV) e aba completa em < 3 s (SC-006). Se algum passar, otimizar a carga em `v2_metrics.py` antes do PR.
+- [X] T057 Rodar todos os testes (`data-loader` e `dashboard`) e o roteiro completo do `quickstart.md`. Conferir SC-003 (amostra de números contra a base) e SC-005 (legado igual).
 - [ ] T058 Deploy com `.\deploy.ps1` depois de cada PR mergeado. Conferir `/v2` e `/` no Cloud Run. **Só com confirmação do usuário.**
 
 ---

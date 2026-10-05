@@ -627,3 +627,163 @@ def institution(
         "alerts": alerts,
         "unavailable": unavailable,
     })
+
+
+# ── /evolution ────────────────────────────────────────────────────────────────
+# Aba "Como evolui?": tendência do período (research.md, Decisão 8). Fluxos de API
+# em 30 dias pelas últimas 4 semanas, como na aba 4; contagens como estão.
+
+_GRANULARITIES = ("month", "week")
+_BY = ("receptor", "transmitter")
+_MAX_LINES = 8
+_DEFAULT_LINES = 5
+_CHANGES_EACH_SIDE = 5
+_PACE_TOP = 10
+
+
+def _empty_evolution(metric: str, granularity: str, by: str, unavailable: list[str]) -> dict:
+    return {"metric": metric, "granularity": granularity, "by": by, "week": None, "period": None,
+            "points": [], "headline": None, "series": [], "group_share": [], "group_share_change": [],
+            "share_changes": [], "quarterly_pace": [], "ecosystem_quarterly_pace": None,
+            "filters_label": "", "unavailable": unavailable}
+
+
+@router.get("/evolution")
+def evolution(
+    metric:       str = Query("unique_pf"),
+    granularity:  str = Query("month"),
+    institutions: Optional[str] = Query(None),
+    by:           str = Query("receptor"),
+    start:        Optional[str] = Query(None),
+    end:          Optional[str] = Query(None),
+    groups:       Optional[str] = Query(None),
+) -> dict:
+    metric = _choice(metric, M.METRICS, "metric")
+    granularity = _choice(granularity, _GRANULARITIES, "granularity")
+    by = _choice(by, _BY, "by")
+    if by == "transmitter" and metric != "active":
+        raise HTTPException(422, detail="'by=transmitter' só vale para metric=active.")
+    ids = list(dict.fromkeys(_list(institutions)))
+    if len(ids) > _MAX_LINES:
+        raise HTTPException(422, detail=f"Escolha até {_MAX_LINES} instituições.")
+    start_ts, end_ts = _date(start, "start"), _date(end, "end")
+
+    try:
+        raw = M.load_active_by_transmitter() if by == "transmitter" else M.load_metric(metric)
+    except M.TableMissing:
+        return _clean(_empty_evolution(metric, granularity, by, ["data"]))
+    if raw.empty:
+        return _clean(_empty_evolution(metric, granularity, by, []))
+    week = _last_le(raw.index, end_ts) if end_ts is not None else raw.index.max()
+    if week is None:
+        return _clean(_empty_evolution(metric, granularity, by, []))
+    start_ts = start_ts if start_ts is not None else week - pd.Timedelta(days=M.DEFAULT_PERIOD_DAYS)
+    if start_ts >= week:
+        raise HTTPException(422, detail="'start' precisa ser anterior à semana final.")
+
+    ents = (M.transmitters() if by == "transmitter" else M.institutions()).set_index("uuid")
+    group_of, short_of = ents["group"].to_dict(), ents["short"].to_dict()
+    grp = _groups(groups)
+    in_groups = lambda u: grp is None or group_of.get(u, "outros") in grp   # noqa: E731
+
+    is_flow = metric == "api"
+    vals = M.flow_30d(raw) if is_flow else raw
+    growth_fn = M.growth_flow if is_flow else M.growth_stock
+    growth_of = lambda u: growth_fn(raw[u], start_ts, week)                 # noqa: E731
+
+    # ── Respostas do topo e ganhos/perdas de participação (sempre sobre o total) ──
+    eco_raw = raw.sum(axis=1, min_count=1)
+    eco_growth = growth_fn(eco_raw, start_ts, week)
+    if is_flow:
+        head, tail = M.flow_means(eco_raw, start_ts, week)
+        eco_from = head * 30 / 7 if head is not None else None
+        eco_to = tail * 30 / 7 if tail is not None else None
+    else:
+        first = eco_raw[eco_raw.index >= M._period_start(eco_raw, start_ts)].dropna()
+        eco_from = float(first.iloc[0]) if len(first) else None
+        eco_to = float(eco_raw[week]) if pd.notna(eco_raw.get(week)) else None
+
+    sc = M.share_changes(vals, start_ts, week)
+    sc = sc[sc["pp"].notna() & np.array([in_groups(u) for u in sc.index], dtype=bool)]
+    end_snap = M.snapshot(vals, week)
+
+    def change_row(u: str) -> dict:
+        r = sc.loc[u]
+        return {"uuid": u, "name": short_of.get(u, u), "group": group_of.get(u, "outros"),
+                "pp": float(r["pp"]) * 100, "share": float(r["share_end"]), "share_start": float(r["share_start"]),
+                "debut_month": r["debut_month"], "growth": growth_of(u)}
+
+    ordered = sc.sort_values("pp", ascending=False)
+    gainers = [u for u in ordered.index if ordered.at[u, "pp"] > 0][:_CHANGES_EACH_SIDE]
+    losers = [u for u in reversed(ordered.index) if ordered.at[u, "pp"] < 0][:_CHANGES_EACH_SIDE]
+    share_changes = [change_row(u) for u in gainers] + [change_row(u) for u in reversed(losers)]
+    headline = {
+        "ecosystem_growth": dict(eco_growth, **{"from": eco_from, "to": eco_to}),
+        "top_gainer": change_row(gainers[0]) if gainers else None,
+        "top_loser": change_row(losers[0]) if losers else None,
+    }
+
+    # ── Linhas do gráfico: as escolhidas ou as 5 maiores no fim do período ──
+    matrix = M.by_point(vals, start_ts, week, granularity)
+    total = matrix.sum(axis=1, min_count=1)
+    ids = [u for u in ids if u in matrix.columns]
+    if not ids:
+        ranked = end_snap.dropna().sort_values(ascending=False)
+        ids = [u for u in ranked.index if in_groups(u)][:_DEFAULT_LINES]
+    series = []
+    for u in ids:
+        col = matrix[u]
+        last = col.dropna()
+        series.append({
+            "uuid": u, "name": short_of.get(u, u), "group": group_of.get(u, "outros"),
+            "values": col.tolist(), "shares": (col / total).tolist(),
+            "last": float(last.iloc[-1]) if len(last) else None,
+            "growth": growth_of(u),
+        })
+
+    # ── Participação por grupo, mês a mês ────────────────────────────────────
+    monthly = matrix if granularity == "month" else M.by_point(vals, start_ts, week, "month")
+    m_total = monthly.sum(axis=1, min_count=1)
+    by_grp = {g: monthly[[u for u in monthly.columns if group_of.get(u, "outros") == g]].sum(axis=1)
+              for g in GROUP_LABELS_V2}
+    group_share = [{"point": p, **{g: (float(by_grp[g][p]) / float(m_total[p]) if m_total[p] else None)
+                                   for g in GROUP_LABELS_V2}} for p in monthly.index]
+    group_share_change = []
+    if group_share:
+        a_row, b_row = group_share[0], group_share[-1]
+        for g in GROUP_LABELS_V2:
+            a, b = a_row[g], b_row[g]
+            group_share_change.append({"group": g, "share": b,
+                                       "pp": (b - a) * 100 if a is not None and b is not None else None})
+
+    # ── Ritmo trimestral: 10 maiores no fim (nos grupos escolhidos) e ecossistema ──
+    end_month = week.strftime("%Y-%m")
+    full_monthly = M.by_point(vals, vals.index.min(), week, "month")
+    top = [u for u in end_snap.dropna().sort_values(ascending=False).index if in_groups(u)][:_PACE_TOP]
+    pace_rows = []
+    for u in top:
+        qp = M.quarterly_pace(full_monthly[u], end_month)
+        if qp:
+            pace_rows.append({"uuid": u, "name": short_of.get(u, u), "group": group_of.get(u, "outros"), **qp})
+    pace_rows.sort(key=lambda r: -(r["last_quarter"] - r["prev_quarter"]))
+    eco_vals = M.flow_30d(eco_raw.to_frame("eco")) if is_flow else eco_raw.to_frame("eco")
+    eco_pace = M.quarterly_pace(M.by_point(eco_vals, eco_vals.index.min(), week, "month")["eco"], end_month)
+
+    return _clean({
+        "metric": metric, "granularity": granularity, "by": by,
+        "week": week.strftime("%Y-%m-%d"),
+        "period": {"start": start_ts.strftime("%Y-%m-%d"), "end": week.strftime("%Y-%m-%d")},
+        "points": matrix.index.tolist(),
+        "headline": headline,
+        "series": series,
+        "group_share": group_share,
+        "group_share_change": group_share_change,
+        "share_changes": share_changes,
+        "quarterly_pace": pace_rows,
+        "ecosystem_quarterly_pace": eco_pace,
+        "filters_label": M.filters_label(grp, []),
+        # Busca de transmissores no "+ Adicionar" (o /meta só lista receptores).
+        "catalog": (ents.reset_index()[["uuid", "name", "short", "group"]].sort_values("short").to_dict(orient="records")
+                    if by == "transmitter" else None),
+        "unavailable": [],
+    })

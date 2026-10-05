@@ -21,6 +21,7 @@
   .mc-months { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 10px; font-size: 12px; color: var(--text-2); text-align: center; }
   .mc-layout { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 16px; align-items: start; }
   @media (max-width: 1100px) { .mc-layout { grid-template-columns: 1fr; } }
+  @media (max-width: 720px) { .mc-bars, .mc-months { gap: 4px; } }
   .mc-event { padding: 16px 0; border-top: 1px solid var(--divider); display: flex; flex-direction: column; gap: 10px; }
   .mc-event:first-child { border-top: 0; }
   .mc-event-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
@@ -29,6 +30,7 @@
   .mc-event-title a.name:hover { color: var(--link); text-decoration: underline; }
   .mc-streak { padding: 3px 8px; border-radius: 999px; border: 1px solid var(--control-border); font-size: 12px; font-weight: 600; }
   .mc-items { display: grid; grid-template-columns: 70px 170px minmax(0, 1fr) 72px; column-gap: 16px; row-gap: 6px; font-size: 13px; }
+  @media (max-width: 720px) { .mc-items { grid-template-columns: 44px minmax(0, 1fr) minmax(0, 1fr) 52px; column-gap: 8px; font-size: 12px; } }
   .mc-items .h { color: var(--text-2); font-size: 12px; font-weight: 600; }
   .mc-neg { color: var(--down); font-weight: 700; }
   .mc-pos { color: var(--up); font-weight: 700; }

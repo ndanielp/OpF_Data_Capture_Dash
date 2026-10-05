@@ -75,27 +75,53 @@ Regras: `rank` é a posição no ecossistema; `share` é sobre o total do ecossi
 |---|---|---|
 | `metric` | `unique_pf`, `unique_pj`, `active`, `api` | `unique_pf` |
 | `granularity` | `month`, `week` | `month` |
-| `institutions` | UUIDs (até 8) | as 5 maiores no fim do período |
+| `institutions` | UUIDs (até 8; com `by=transmitter`, UUIDs de transmissores) | as 5 maiores no fim do período (nos grupos escolhidos) |
 | `by` (só `active`) | `receptor`, `transmitter` | `receptor` |
+| `start`, `end` | AAAA-MM-DD | 52 semanas até a semana mais recente |
+| `groups` | slugs de grupo | todos |
 
 ```json
 {
+  "metric": "unique_pf", "granularity": "month", "by": "receptor",
+  "week": "2026-08-28", "period": {"start": "2025-08-29", "end": "2026-08-28"},
   "points": ["2025-08", "2025-09", "..."],
   "headline": {
-    "ecosystem_growth": {"kind": "pct", "value": 1.15, "from": 67700000, "to": 145864692},
-    "top_gainer": {"name": "Shopee", "pp": 5.5, "debut_month": "2025-11"},
-    "top_loser": {"name": "Nubank", "pp": -6.8, "growth": {"kind": "pct", "value": 0.49}}
+    "ecosystem_growth": {"kind": "pct", "value": 1.156, "debut_month": null, "from": 67656532, "to": 145864692},
+    "top_gainer": {"uuid": "…", "name": "Shopee", "group": "outros", "pp": 5.5, "share": 0.055, "share_start": 0.0,
+                   "debut_month": "2025-11", "growth": {"kind": "debut", "value": null, "debut_month": "2025-11"}},
+    "top_loser": {"uuid": "…", "name": "Nubank", "group": "neo_banks", "pp": -6.8, "share": 0.151, "share_start": 0.219,
+                  "debut_month": null, "growth": {"kind": "pct", "value": 0.49, "debut_month": null}}
   },
-  "series": [{"uuid": "…", "name": "Nubank", "group": "neo_banks",
-              "values": [14826174, null, "..."], "shares": [0.219, null, "..."]}],
+  "series": [{"uuid": "…", "name": "Nubank", "group": "neo_banks", "values": [14826174, null, "..."],
+              "shares": [0.219, null, "..."], "last": 22044862, "growth": {"kind": "pct", "value": 0.49}}],
   "group_share": [{"point": "2025-08", "neo_banks": 0.465, "itps": 0.248, "incumbentes": 0.265, "outros": 0.022}],
-  "share_changes": [{"name": "Shopee", "group": "outros", "pp": 5.5, "debut_month": "2025-11"}],
-  "quarterly_pace": [{"name": "Belvo", "prev_quarter": 0.12, "last_quarter": 0.22, "status": "accelerating"}],
-  "ecosystem_quarterly_pace": {"prev_quarter": 0.195, "last_quarter": 0.178}
+  "group_share_change": [{"group": "neo_banks", "share": 0.431, "pp": -3.4}],
+  "share_changes": [{"uuid": "…", "name": "Shopee", "group": "outros", "pp": 5.5, "share": 0.055, "share_start": 0.0,
+                     "debut_month": "2025-11", "growth": {"kind": "debut"}}],
+  "quarterly_pace": [{"uuid": "…", "name": "Belvo", "group": "itps", "prev_quarter": 0.12, "last_quarter": 0.22,
+                      "status": "accelerating", "months": ["2026-02", "2026-05", "2026-08"]}],
+  "ecosystem_quarterly_pace": {"prev_quarter": 0.195, "last_quarter": 0.177, "status": "stable", "months": ["…"]},
+  "filters_label": "",
+  "catalog": null,
+  "unavailable": []
 }
 ```
 
-Regras: `null` = sem dado (nunca 0); mensal = última semana com dado da instituição no mês; `status` "stable" quando |diferença| ≤ 3 pontos.
+Regras:
+
+- `null` = sem dado (nunca 0). Mensal = último valor de cada entidade no mês; semanal = a semana.
+- `shares` = valor ÷ soma de todas as entidades no mesmo ponto. Com `granularity=week`, `group_share` continua mensal.
+- `metric=api`: valores em 30 dias pelas últimas 4 semanas (mesma regra da aba 4); crescimento pelas médias de 4 semanas (aba 1).
+- `headline.ecosystem_growth` e `growth` usam as mesmas regras da aba 1. `pp` vem em pontos percentuais.
+- Participação no início e no fim: foto da semana; lacuna de até 3 semanas usa a observação anterior. Quem estreou depois do início parte de 0 e leva `debut_month`.
+- `share_changes`: até 5 ganhos (maior primeiro) e até 5 perdas (a maior por último), só nos grupos escolhidos.
+- `quarterly_pace`: 10 maiores no fim (nos grupos escolhidos). Fim de mês de m−6, m−3 e m. `status` "stable" quando |diferença| ≤ 3 pontos. Sem base em algum ponto → fica de fora.
+- `catalog`: lista de transmissores (para "+ Adicionar") só com `by=transmitter`.
+- Erros 422:
+  - mais de 8 instituições;
+  - `by=transmitter` sem `metric=active`;
+  - `granularity` inválida;
+  - `start` ≥ semana final.
 
 ---
 

@@ -24,6 +24,12 @@
   .in-spark li { display: grid; grid-template-columns: 130px 130px minmax(0, 1fr) 72px; gap: 12px; align-items: center; padding: 9px 0; border-top: 1px solid var(--divider); font-size: 14px; }
   .in-err-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 32px; }
   @media (max-width: 1000px) { .in-err-grid { grid-template-columns: 1fr; } }
+  @media (max-width: 720px) {   /* listas com colunas fixas: cabem na tela do celular sem rolagem lateral */
+    .in-bars li { grid-template-columns: 96px minmax(0, 1fr) 48px 60px 56px !important; gap: 6px; font-size: 12px; }
+    .in-spark li { grid-template-columns: 84px 72px minmax(0, 1fr) 56px; gap: 6px; font-size: 12px; }
+    .in-spark svg { width: 72px; }
+    .in-pair li { grid-template-columns: 84px minmax(0, 1fr) 110px; gap: 6px; font-size: 12px; }
+  }
   .in-cols { display: grid; gap: 10px; align-items: end; height: 150px; border-bottom: 1px solid var(--control-border); }
   .in-col { display: flex; gap: 3px; align-items: flex-end; justify-content: center; height: 100%; }
   .in-col div { width: 12px; border-radius: 3px 3px 0 0; }
