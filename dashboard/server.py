@@ -460,11 +460,13 @@ async def lifespan(app: FastAPI):
 
 from routers import openfinance
 from routers import active_consents as active_consents_router
+from routers import signals as signals_router
 import services.of_analytics as of_analytics
 
 app = FastAPI(title="OPF Batch Dashboard", lifespan=lifespan)
 app.include_router(openfinance.router, prefix="/api/of")
 app.include_router(active_consents_router.router, prefix="/api/active-consents")
+app.include_router(signals_router.router, prefix="/api/signals")
 
 GUI_DIR = Path(__file__).parent / "gui"
 

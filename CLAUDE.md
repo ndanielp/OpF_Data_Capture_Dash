@@ -33,6 +33,11 @@ python main.py status       # CSV stats + recent runs
 python main.py last-run     # tail of latest log
 python main.py preview consents --rows 20
 
+# After collection, before sync: rebuild behavior alerts (feature 010).
+# Also refreshes api_group_weekly, which the collector only refreshes when a run
+# finishes — an interrupted run leaves it stale until this is run.
+python compute_signals.py
+
 # Sync to GCS after collection
 python sync_to_gcs.py
 ```
@@ -152,5 +157,5 @@ Omitting optional fields in `/api/api-requests` acts as "no filter" — used by 
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan
-at `specs/009-filtro-grupos-instituicoes/plan.md`.
+at `specs/010-deteccao-mudancas-comportamento/plan.md`.
 <!-- SPECKIT END -->

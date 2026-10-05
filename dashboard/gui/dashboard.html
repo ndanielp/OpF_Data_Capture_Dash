@@ -694,6 +694,70 @@
       color: var(--text-primary);
     }
 
+    /* O que mudou (feature 010) — só tokens do tema, nenhum hex novo */
+    .signals-week-label {
+      font-size: var(--tx-xs);
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-right: var(--s1);
+    }
+    .signals-week {
+      background: var(--bg-elevated);
+      border: 1px solid var(--border-default);
+      color: var(--text-primary);
+      font-family: inherit;
+      font-size: var(--tx-sm);
+      padding: 3px var(--s2);
+      border-radius: var(--r-sm);
+    }
+    .signals-notice {
+      font-size: var(--tx-xs);
+      color: var(--warning);
+      margin-bottom: var(--s3);
+    }
+    .signals-body {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: var(--s4);
+    }
+    .signals-body.is-empty { display: block; }
+    @media (max-width: 1100px) { .signals-body { grid-template-columns: 1fr; } }
+    .signals-section-title {
+      display: flex;
+      justify-content: space-between;
+      font-size: var(--tx-xs);
+      font-weight: 700;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: var(--s2);
+    }
+    .signals-section-title .count { color: var(--text-muted); font-weight: 400; }
+    .signals-list { list-style: none; display: flex; flex-direction: column; gap: var(--s2); }
+    .signals-item {
+      padding: var(--s2) var(--s3);
+      border-radius: var(--r-md);
+      background: var(--bg-elevated);
+      border-left: 3px solid var(--text-muted);
+    }
+    .signals-item.new  { border-left-color: var(--text-accent); }
+    .signals-item.up   { border-left-color: var(--success); }
+    .signals-item.down { border-left-color: var(--error); }
+    .signals-name {
+      display: flex;
+      justify-content: space-between;
+      gap: var(--s2);
+      font-size: var(--tx-sm);
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+    .signals-grp { font-size: var(--tx-xs); font-weight: 400; color: var(--text-muted); white-space: nowrap; }
+    .signals-detail { font-size: var(--tx-xs); color: var(--text-secondary); margin-top: 2px; }
+    .signals-detail .pct.up   { color: var(--success); }
+    .signals-detail .pct.down { color: var(--error); }
+    .signals-none { font-size: var(--tx-xs); color: var(--text-muted); }
+
     .chart-empty {
       display: flex;
       align-items: center;
@@ -1218,6 +1282,22 @@
         </div>
       </div>
 
+      <!-- O que mudou — alertas de mudança de comportamento (feature 010) -->
+      <div id="card-signals" class="chart-card">
+        <div class="chart-head" style="margin-bottom: var(--s3);">
+          <div>
+            <div class="chart-title">O que mudou</div>
+            <div class="chart-subtitle" id="signals-subtitle">Mudanças relevantes da semana</div>
+          </div>
+          <div class="chart-actions">
+            <label for="signals-week" class="signals-week-label">Semana</label>
+            <select id="signals-week" class="signals-week"></select>
+          </div>
+        </div>
+        <div id="signals-notice" class="signals-notice" hidden></div>
+        <div id="signals-body" class="signals-body"></div>
+      </div>
+
       <div class="top-row">
         <!-- Ranking PF -->
         <div id="card-ranking-pf" class="chart-card ranking-card" style="display: flex; flex-direction: column;">
@@ -1664,6 +1744,138 @@
       document.querySelectorAll('#receptor-list .receptor-item').forEach(li => {
         li.style.display = li.dataset.label.toLowerCase().includes(q) ? '' : 'none';
       });
+    });
+
+    /* ============================================================
+       O QUE MUDOU (010-deteccao-mudancas-comportamento)
+       ============================================================ */
+    let _signalsWeek = null;        // null = semana mais recente (padrão do endpoint)
+    let _instGroupMeta = {};        // slug → {display, color} — /api/of/institution-groups
+    let _apiGroupMeta = {};         // slug → {display, …}     — /api/of/api-groups
+
+    const _SIGNAL_SECTIONS = [
+      { key: 'new_entrant', title: 'Novos entrantes', cls: 'new' },
+      { key: 'increase',    title: 'Altas',           cls: 'up' },
+      { key: 'decrease',    title: 'Quedas',          cls: 'down' },
+    ];
+    const _METRIC_LABEL = {
+      unique_consents: 'Consentimentos únicos',
+      active_consents: 'Consentimentos ativos',
+    };
+
+    function _esc(s) {
+      return String(s ?? '').replace(/[&<>"']/g, c =>
+        ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    }
+    function _fmtDate(iso) {
+      if (!iso) return '—';
+      const [y, m, d] = iso.slice(0, 10).split('-');
+      return `${d}/${m}/${y}`;
+    }
+    function _fmtNum(v) { return v == null ? '—' : Math.round(v).toLocaleString('pt-BR'); }
+    function _fmtPct(p) {
+      if (p == null) return '';
+      const cls = p > 0 ? 'up' : 'down';
+      const txt = `${p > 0 ? '+' : ''}${Math.round(p * 100)}%`;
+      return `<span class="pct ${cls}">${txt}</span>`;
+    }
+
+    function _signalDetail(item, sectionKey) {
+      const label = item.metric === 'api_group'
+        ? `API ${_esc(_apiGroupMeta[item.api_group]?.display || item.api_group)}`
+        : _METRIC_LABEL[item.metric] || _esc(item.metric);
+      if (sectionKey === 'new_entrant') {
+        // Base pequena gera percentuais sem sentido (+13.099% no Banco Inter):
+        // mostrar o valor de 4 semanas atrás comunica melhor o salto.
+        return item.value_prev == null
+          ? `Estreia com ${_fmtNum(item.value_curr)} consentimentos únicos`
+          : `${_fmtNum(item.value_curr)} consentimentos únicos (eram ${_fmtNum(item.value_prev)} há 4 semanas)`;
+      }
+      // Em API os valores são médias de 4 semanas e a variação já desconta o movimento
+      // do ecossistema no grupo — por isso ela não é a razão simples entre os dois números.
+      const suffix = item.metric === 'api_group' ? ' <span class="signals-grp">vs. ecossistema · médias de 4 sem.</span>' : '';
+      return `${label}: ${_fmtNum(item.value_prev)} → ${_fmtNum(item.value_curr)} ${_fmtPct(item.change_pct)}${suffix}`;
+    }
+
+    function renderSignals(data) {
+      // Seletor de semana: semanas com alertas + a semana exibida, mesmo sem alertas.
+      const sel = document.getElementById('signals-week');
+      const weeks = [...data.weeks];
+      if (data.week && !weeks.some(w => w.week === data.week)) {
+        weeks.push({ week: data.week, count: 0 });
+        weeks.sort((a, b) => b.week.localeCompare(a.week));
+      }
+      sel.innerHTML = weeks.map(w =>
+        `<option value="${_esc(w.week)}"${w.week === data.week ? ' selected' : ''}>` +
+        `${_fmtDate(w.week)} (${w.count})</option>`).join('');
+      sel.disabled = weeks.length === 0;
+
+      const subtitle = document.getElementById('signals-subtitle');
+      subtitle.textContent = data.computed_at
+        ? `Semana de ${_fmtDate(data.week)} · alertas calculados em ${_fmtDate(data.computed_at)}`
+        : 'Alertas ainda não calculados — rode compute_signals.py no data-loader';
+
+      const notice = document.getElementById('signals-notice');
+      const notes = [];
+      if (data.api_incomplete) {
+        notes.push('Alertas de uso de API indisponíveis nesta semana: coleta de API incompleta.');
+      } else if (data.api_through && data.week && data.api_through < data.week) {
+        notes.push(`Uso de API disponível só até ${_fmtDate(data.api_through)}.`);
+      }
+      notice.textContent = notes.join(' ');
+      notice.hidden = notes.length === 0;
+
+      const body = document.getElementById('signals-body');
+      const total = _SIGNAL_SECTIONS.reduce((n, s) => n + data.sections[s.key].length, 0);
+      if (!data.computed_at || total === 0) {
+        body.classList.add('is-empty');
+        body.innerHTML = `<div class="chart-empty" style="height:auto; padding: var(--s3) 0;">` +
+          (data.computed_at ? 'Nenhuma mudança relevante nesta semana.' : 'Sem alertas para exibir.') +
+          `</div>`;
+        return;
+      }
+      body.classList.remove('is-empty');
+      body.innerHTML = _SIGNAL_SECTIONS.map(s => {
+        const entries = data.sections[s.key];
+        const items = entries.length
+          ? `<ul class="signals-list">${entries.map(e => `
+              <li class="signals-item ${s.cls}">
+                <div class="signals-name">
+                  <span>${_esc(e.receptor)}</span>
+                  <span class="signals-grp">${_esc(_instGroupMeta[e.institution_group]?.display || e.institution_group)}</span>
+                </div>
+                ${e.items.map(i => `<div class="signals-detail">${_signalDetail(i, s.key)}</div>`).join('')}
+              </li>`).join('')}</ul>`
+          : `<div class="signals-none">Nenhum</div>`;
+        return `<div class="signals-section">
+                  <div class="signals-section-title"><span>${s.title}</span><span class="count">${entries.length}</span></div>
+                  ${items}
+                </div>`;
+      }).join('');
+    }
+
+    async function updateSignalsCard(params, signal) {
+      setCardLoading('card-signals', true);
+      try {
+        const q = new URLSearchParams();
+        const groups = params.get('groups');
+        if (groups) q.set('groups', groups);
+        if (_signalsWeek) q.set('week', _signalsWeek);
+        const resp = await fetch('/api/signals?' + q, { signal });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        renderSignals(await resp.json());
+      } catch (e) {
+        if (e?.name === 'AbortError') throw e;
+        document.getElementById('signals-body').innerHTML =
+          '<div class="chart-empty">Não foi possível carregar os alertas. Tente recarregar os dados.</div>';
+      } finally {
+        setCardLoading('card-signals', false);
+      }
+    }
+
+    document.getElementById('signals-week').addEventListener('change', function () {
+      _signalsWeek = this.value || null;
+      updateSignalsCard(buildParams()).catch(() => {});
     });
 
     /* ============================================================
@@ -2624,6 +2836,7 @@
           updateChartApiTime(params, mySignal),
           updateAccelChart(params, mySignal),
           updateEfficiencyChart(params, mySignal),
+          updateSignalsCard(params, mySignal),
         ]);
       } catch (e) {
         if (e?.name !== 'AbortError') console.error(e);
@@ -2709,8 +2922,12 @@
           .catch(e => console.error('Erro ao carregar receptores', e)),
         fetch('/api/of/institution-groups')
           .then(r => r.json())
-          .then(d => buildGroupList(d.groups))
+          .then(d => { _instGroupMeta = d.groups || {}; buildGroupList(d.groups); })
           .catch(e => console.error('Erro ao carregar grupos de instituição', e)),
+        fetch('/api/of/api-groups')
+          .then(r => r.json())
+          .then(d => { _apiGroupMeta = d.groups || {}; })
+          .catch(e => console.error('Erro ao carregar grupos de API', e)),
       ]);
       const activeBtn = document.querySelector('.quick-btn.active');
       if (activeBtn) activeBtn.click();
