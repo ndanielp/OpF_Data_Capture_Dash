@@ -367,6 +367,35 @@ def open_db(path: Path) -> sqlite3.Connection:
         )
     """)
 
+    # Alertas de mudança de comportamento (feature 010) — reconstruídos inteiros por
+    # compute_signals.py. api_group usa '' em vez de NULL: NULL na PK não colide
+    # consigo mesmo no SQLite e permitiria linhas duplicadas.
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS behavior_signals (
+            week           TEXT    NOT NULL,
+            signal_type    TEXT    NOT NULL,
+            metric         TEXT    NOT NULL,
+            api_group      TEXT    NOT NULL DEFAULT '',
+            receptor_uuid  TEXT    NOT NULL,
+            receptor       TEXT    NOT NULL DEFAULT '',
+            value_prev     REAL,
+            value_curr     REAL    NOT NULL,
+            change_pct     REAL,
+            volume         INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (week, signal_type, metric, api_group, receptor_uuid)
+        )
+    """)
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS behavior_signals_run (
+            id                 INTEGER PRIMARY KEY CHECK (id = 1),
+            computed_at        TEXT    NOT NULL,
+            consents_through   TEXT,
+            api_through        TEXT,
+            api_skipped_weeks  TEXT    NOT NULL DEFAULT '[]',
+            signals_total      INTEGER NOT NULL DEFAULT 0
+        )
+    """)
+
     # Índices de leitura para o dashboard — criados uma vez, idempotentes.
     con.executescript("""
         CREATE INDEX IF NOT EXISTS idx_consents_date
@@ -392,6 +421,9 @@ def open_db(path: Path) -> sqlite3.Connection:
         -- Índices para api_group_weekly
         CREATE INDEX IF NOT EXISTS idx_agw_receptor ON api_group_weekly(receptor_uuid, date);
         CREATE INDEX IF NOT EXISTS idx_agw_date     ON api_group_weekly(date);
+
+        -- behavior_signals: o dashboard lê sempre por semana.
+        CREATE INDEX IF NOT EXISTS idx_behavior_signals_week ON behavior_signals(week);
 
         -- active_consents: filtragem por receptor + data (padrão do dashboard).
         CREATE INDEX IF NOT EXISTS idx_active_consents_receptor_date
