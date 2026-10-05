@@ -11,6 +11,7 @@ import math
 from datetime import datetime
 from typing import Any, Optional
 
+import numpy as np
 import pandas as pd
 from fastapi import APIRouter, HTTPException, Query
 
@@ -19,6 +20,7 @@ import re
 import unicodedata
 
 from services.constants import API_GROUPS, GROUP_COLORS_V2, GROUP_LABELS_V2, INSTITUTION_GROUP_SLUGS
+from services.of_analytics import resolve_institution_group as resolve_group
 
 router = APIRouter()
 
@@ -141,12 +143,10 @@ def ranking(
     values = values[values > 0]
     total = float(values.sum())
 
-    unique_at = pd.Series(dtype=float)
+    uniq = pd.DataFrame()
     ok_at = err_at = pd.Series(dtype=float)
     if is_api:
         uniq = M.load_metric("unique_total")
-        if week in uniq.index:
-            unique_at = uniq.loc[week].dropna()
         if status != "200":
             ok_w, err_w = M.load_metric("api", "200"), M.load_metric("api", "500")
             ok_at = ok_w.loc[week].dropna() if week in ok_w.index else ok_at
@@ -155,9 +155,16 @@ def ranking(
     pace_fn = M.pace_flow if is_api else M.pace_stock
     growth_fn = M.growth_flow if is_api else M.growth_stock
 
-    def per_consent(calls: float, uuid: str) -> float | None:
-        u = unique_at.get(uuid)
-        return calls * 30 / (u * 7) if is_api and u and u > 0 else None
+    def per_consent(calls: pd.Series, unique: pd.Series) -> float | None:
+        """Mesma regra da aba 4 (revisão de 2026-10-05): últimas 4 semanas normalizadas
+        para 30 dias ÷ média de consentimentos únicos (PF + PJ) das mesmas semanas."""
+        if not is_api or unique.empty:
+            return None
+        v = M.per_consent_30d(calls, unique).get(week)
+        return None if v is None or pd.isna(v) else float(v)
+
+    def unique_of(uuid: str) -> pd.Series:
+        return uniq[uuid] if uuid in uniq.columns else pd.Series(dtype=float)
 
     def error_rate(uuid: str) -> float | None:
         if not is_api or status == "200":
@@ -175,7 +182,7 @@ def ranking(
             "share": float(v) / total if total and scale == "total" else None,
             "pace": pace_fn(wide[uuid], week),
             "growth": growth_fn(wide[uuid], start_ts, week),
-            "per_consent_month": per_consent(float(v), uuid),
+            "per_consent_month": per_consent(wide[uuid], unique_of(uuid)),
             "error_rate": error_rate(uuid),
         })
 
@@ -185,9 +192,7 @@ def ranking(
 
     eco = wide.sum(axis=1, min_count=1)
     top3 = values.sort_values(ascending=False).head(3).sum() / total if is_api and total else None
-    with_unique = [u for u in values.index if unique_at.get(u, 0) > 0]
-    eco_per_consent = (float(values[with_unique].sum()) * 30 / (float(unique_at[with_unique].sum()) * 7)
-                       if is_api and with_unique else None)
+    eco_per_consent = per_consent(*M.paired_sums(wide, uniq, None)) if is_api else None
     eco_error = None
     if is_api and status != "200":
         ok_sum, err_sum = float(ok_at.sum()), float(err_at.sum())
@@ -360,4 +365,265 @@ def changes(
         "rules": _RULES,
         "computed_at": computed,
         "unavailable": [],
+    })
+
+
+# ── /institution/{uuid} ───────────────────────────────────────────────────────
+# Regras revisadas com o responsável do produto em 2026-10-05 (spec, Clarifications):
+# fluxos de API normalizados para 30 dias pelas últimas 4 semanas; evolução com
+# seletor de métrica; mix e grupos na mesma unidade; transmissores com "Outros" e
+# crescimento; taxa de erro sobre 4 semanas e todos os meses; alertas como na aba 3.
+
+_TOP_TRANSMITTERS = 8
+_EVOLUTION_METRICS = ("unique_total", "unique_pf", "unique_pj", "active", "api", "api_per_consent")
+
+
+def _last_le(index: pd.Index, at: pd.Timestamp) -> pd.Timestamp | None:
+    ok = index[index <= at]
+    return ok.max() if len(ok) else None
+
+
+def _monthly(s: pd.Series, start: pd.Timestamp, end: pd.Timestamp) -> tuple[list[str], list[float], list]:
+    mm = M.monthly_last(s, start, end)
+    return mm["month"].tolist(), mm["value"].tolist(), mm["week"].tolist()
+
+
+@router.get("/institution/{uuid}")
+def institution(
+    uuid:    str,
+    compare: str = Query("ecosystem"),
+    start:   Optional[str] = Query(None),
+    end:     Optional[str] = Query(None),
+) -> dict:
+    inst = M.institutions().set_index("uuid")
+    if uuid not in inst.index:
+        raise HTTPException(404, detail="Instituição não encontrada nesta base.")
+    if compare not in ("ecosystem", "group") and (compare not in inst.index or compare == uuid):
+        raise HTTPException(422, detail="'compare' deve ser ecosystem, group ou o identificador de outra instituição.")
+    group_of, short_of = inst["group"].to_dict(), inst["short"].to_dict()
+    me_group = group_of.get(uuid, "outros")
+    start_ts, end_ts = _date(start, "start"), _date(end, "end")
+
+    wides = {m: M.load_metric(m) for m in ("unique_pf", "unique_pj", "active", "api", "unique_total")}
+    week = _last_le(wides["unique_total"].index, end_ts) if end_ts is not None else wides["unique_total"].index.max()
+    if week is None:
+        raise HTTPException(404, detail="Sem dados para o período escolhido.")
+    start_ts = start_ts if start_ts is not None else week - pd.Timedelta(days=M.DEFAULT_PERIOD_DAYS)
+    if start_ts >= week:
+        raise HTTPException(422, detail="'start' precisa ser anterior à semana final.")
+
+    members = M.ref_members(compare, uuid, group_of, inst.index)
+    is_other = compare not in ("ecosystem", "group")
+    ref_label = {"ecosystem": "Ecossistema", "group": GROUP_LABELS_V2.get(me_group, me_group) + " (grupo)"}.get(
+        compare, short_of.get(compare, compare))
+    mine = lambda wide: wide[uuid] if uuid in wide.columns else pd.Series(np.nan, index=wide.index)  # noqa: E731
+    ref = lambda wide: M.series_of(wide, members)                                                   # noqa: E731
+    calls, uniq = wides["api"], wides["unique_total"]
+    # Por consentimento: a referência só conta, em cada semana, quem teve chamadas (mesma base da aba 1).
+    ref_c, ref_u = M.paired_sums(calls, uniq, members)
+
+    # ── Indicadores ──────────────────────────────────────────────────────────
+    def kpi(metric: str) -> dict | None:
+        wide = wides[metric]
+        flow = metric == "api"
+        w = _last_le(wide.index, week) if not wide.empty else None
+        if w is None or uuid not in wide.columns or pd.isna(wide.at[w, uuid]):
+            return None
+        vals = wide.loc[w].dropna()
+        vals = vals[vals > 0]
+        v = float(wide.at[w, uuid])
+        grow = M.growth_flow if flow else M.growth_stock
+        pace = M.pace_flow if flow else M.pace_stock
+        out = {"value": v, "share": v / float(vals.sum()) if vals.sum() else None,
+               "rank": int((vals > v).sum()) + 1, "week": w.strftime("%Y-%m-%d"),
+               "growth": grow(wide[uuid], start_ts, w), "ref_growth": grow(ref(wide), start_ts, w),
+               "pace": pace(wide[uuid], w)}
+        if flow:
+            pc, rpc = M.per_consent_30d(mine(calls), mine(uniq)), M.per_consent_30d(ref_c, ref_u)
+            out["per_consent_month"] = pc.get(w)
+            out["ref_per_consent_month"] = rpc.get(w)
+        return out
+
+    kpis = {m: kpi(m) for m in ("unique_pf", "unique_pj", "active", "api")}
+    total_kpi = kpi("unique_total")
+
+    # ── Evolução: seletor de métrica (padrão PF + PJ) ────────────────────────
+    eco_calls30 = M.per_30_days(calls.sum(axis=1, min_count=1))
+    evolution: dict[str, dict] = {}
+    for key in _EVOLUTION_METRICS:
+        if key == "api_per_consent":
+            s_me, s_ref, eco = M.per_consent_30d(mine(calls), mine(uniq)), M.per_consent_30d(ref_c, ref_u), None
+        elif key == "api":
+            s_me, s_ref, eco = M.per_30_days(mine(calls)), M.per_30_days(ref(calls)), eco_calls30
+        else:
+            wide = wides[key]
+            s_me, s_ref, eco = mine(wide), ref(wide), wide.sum(axis=1, min_count=1)
+        pts, vals, wks = _monthly(s_me, start_ts, week)
+        rpts, rvals, rwks = _monthly(s_ref, start_ts, week)
+        share = (lambda ws, vs: [v / eco.get(w) if eco is not None and eco.get(w) else None for w, v in zip(ws, vs)])
+        evolution[key] = {
+            "points": pts, "values": vals, "shares": share(wks, vals),
+            # Linha de referência: razões estão na mesma escala; contagens, só contra outra instituição.
+            "ref": ({"label": ref_label, "points": rpts, "values": rvals, "shares": share(rwks, rvals)}
+                    if key == "api_per_consent" or is_other else None),
+        }
+
+    # ── Mix de API e chamadas por grupo (sem Resource), últimas 4 semanas → 30 dias ──
+    groups_long = M.load_api_groups()
+    groups_long = groups_long[groups_long["grp"] != "Resource"]
+    api_mix, api_by_group = [], []
+    if not groups_long.empty:
+        pv = groups_long.pivot_table(index="date", columns=["uuid", "grp"], values="value", aggfunc="sum").sort_index()
+        uniq_idx = uniq.reindex(pv.index)
+        u_me, u_ref = mine(uniq_idx), ref_u.reindex(pv.index)
+
+        def grp_series(slug: str, who: list[str] | None) -> pd.Series:
+            cols = [c for c in pv.columns if c[1] == slug and (who is None or c[0] in who)]
+            return pv[cols].sum(axis=1, min_count=1) if cols else pd.Series(np.nan, index=pv.index)
+
+        wk = _last_le(pv.index, week)
+        num = lambda s: 0.0 if pd.isna(s.get(wk)) else float(s.get(wk))   # noqa: E731 — NaN não pode virar total
+        slugs = [s for s in API_GROUPS if s != "Resource"]
+        me30 = {s: M.per_30_days(grp_series(s, [uuid])) for s in slugs}
+        ref30 = {s: M.per_30_days(grp_series(s, members)) for s in slugs}
+        tot_me = sum(num(me30[s]) for s in slugs)
+        tot_ref = sum(num(ref30[s]) for s in slugs)
+        u_me_avg = u_me.rolling(4, min_periods=1).mean()
+        u_ref_avg = u_ref.rolling(4, min_periods=1).mean()
+        for slug in slugs:
+            meta_g = API_GROUPS[slug]
+            c_me, c_ref = num(me30[slug]), num(ref30[slug])
+            share = c_me / tot_me if tot_me else None
+            ref_share = c_ref / tot_ref if tot_ref else None
+            if max(share or 0, ref_share or 0) >= 0.0005:   # some com 0,0% dos dois lados (ex.: Câmbio)
+                um, ur = num(u_me_avg), num(u_ref_avg)
+                api_mix.append({
+                    "api_group": slug, "label": meta_g["display"], "color": meta_g["color"],
+                    "share": share, "ref_share": ref_share,
+                    "calls_30d": c_me, "ref_calls_30d": c_ref,
+                    "per_consent": c_me / um if um else None,
+                    "ref_per_consent": c_ref / ur if ur else None,
+                })
+            # Tendência no período na mesma unidade do mix.
+            tot_series = sum(me30[s].fillna(0) for s in slugs)
+            series = {
+                "total": me30[slug],
+                "per_consent": (me30[slug] / u_me_avg).where(u_me_avg > 0),
+                "share": (me30[slug] / tot_series).where(tot_series > 0),
+            }
+            if M.monthly_last(series["total"], start_ts, week)["value"].sum() <= 0:
+                continue
+            units = {}
+            for unit, s in series.items():
+                pts, vals, _ = _monthly(s, start_ts, week)
+                if not vals:
+                    continue
+                frm, to = vals[0], vals[-1]
+                growth = ({"kind": "pp", "value": to - frm, "debut_month": None} if unit == "share"
+                          else M.format_growth(to / frm if frm and frm > 0 else None, M._debut(s), max(start_ts, s.index.min())))
+                units[unit] = {"points": pts, "monthly": vals, "from": frm, "to": to, "growth": growth}
+            api_by_group.append({"api_group": slug, "label": meta_g["display"], "color": meta_g["color"], "units": units})
+
+    # ── Transmissores: top 8 + Outros, com crescimento no período ────────────
+    tx = M.load_transmitters(uuid)
+    transmitters: list[dict] = []
+    if not tx.empty:
+        wt = _last_le(pd.Index(tx["date"].unique()), week)
+        at = tx[tx["date"] == wt].sort_values("value", ascending=False)
+        tot = float(at["value"].sum())
+        series_tx = tx.pivot_table(index="date", columns="transmitter_uuid", values="value", aggfunc="sum").sort_index()
+        for r in at.head(_TOP_TRANSMITTERS).to_dict(orient="records"):
+            transmitters.append({"name": M.short_name(r["transmitter"]), "group": resolve_group(r["transmitter"]),
+                                 "value": r["value"], "share": r["value"] / tot if tot else None,
+                                 "growth": M.growth_stock(series_tx[r["transmitter_uuid"]], start_ts, wt)})
+        rest = at.iloc[_TOP_TRANSMITTERS:]
+        if len(rest):
+            v = float(rest["value"].sum())
+            transmitters.append({"name": f"Outros ({len(rest)} transmissores)", "group": None, "other": True,
+                                 "value": v, "share": v / tot if tot else None, "growth": None})
+
+    # ── Taxa de erro: últimas 4 semanas e todos os meses ─────────────────────
+    unavailable: list[str] = []
+    error_rate = None
+    try:
+        st_long = M.load_status_by_transmitter(uuid)
+        ok_w, err_w = M.load_metric("api", "200"), M.load_metric("api", "500")
+
+        def window(df_or_s, until: pd.Timestamp):
+            idx = df_or_s.index if isinstance(df_or_s, pd.Series) else pd.Index(df_or_s["date"])
+            return (idx > until - pd.Timedelta(days=M.PACE_WINDOW_DAYS)) & (idx <= until)
+
+        def rate(err: float, ok: float) -> float | None:
+            return err / (err + ok) if err + ok > 0 else None
+
+        me_ok = st_long[st_long["status"] == 200].groupby("date")["value"].sum()
+        me_err = st_long[st_long["status"] == 500].groupby("date")["value"].sum()
+        rf_ok, rf_err = ref(ok_w), ref(err_w)
+        ws = _last_le(pd.Index(st_long["date"].unique()), week) if not st_long.empty else None
+        cur = ref_cur = None
+        by_tx: list[dict] = []
+        if ws is not None:
+            cur = rate(float(me_err[window(me_err, ws)].sum()), float(me_ok[window(me_ok, ws)].sum()))
+            ref_cur = rate(float(rf_err[window(rf_err, ws)].sum()), float(rf_ok[window(rf_ok, ws)].sum()))
+            last4 = st_long[window(st_long, ws)].pivot_table(index=["transmitter_uuid", "transmitter"], columns="status",
+                                                              values="value", aggfunc="sum").fillna(0)
+            last4["vol"] = last4.sum(axis=1)
+            for (_tu, name), r in last4.sort_values("vol", ascending=False).head(_TOP_TRANSMITTERS).iterrows():
+                by_tx.append({"name": M.short_name(name), "value": rate(float(r.get(500, 0)), float(r.get(200, 0))),
+                              "volume": float(r["vol"])})
+            by_tx.sort(key=lambda x: -(x["value"] or 0))
+
+        def by_month(err: pd.Series, ok: pd.Series) -> dict[str, float | None]:
+            e = err[(err.index >= start_ts) & (err.index <= week)].groupby(err.index[(err.index >= start_ts) & (err.index <= week)].strftime("%Y-%m")).sum()
+            o = ok[(ok.index >= start_ts) & (ok.index <= week)].groupby(ok.index[(ok.index >= start_ts) & (ok.index <= week)].strftime("%Y-%m")).sum()
+            return {m: rate(float(e.get(m, 0)), float(o.get(m, 0))) for m in sorted(set(e.index) | set(o.index))}
+
+        mm_me, mm_ref = by_month(me_err, me_ok), by_month(rf_err.fillna(0), rf_ok.fillna(0))
+        error_rate = {
+            "current": cur, "ref_current": ref_cur,
+            "week": ws.strftime("%Y-%m-%d") if ws is not None else None,
+            "series": [{"point": m, "value": v, "ref": mm_ref.get(m)} for m, v in mm_me.items()],
+            "by_transmitter": by_tx,
+        }
+    except M.TableMissing:
+        unavailable.append("errors")
+
+    # ── Alertas: como na aba 3 (eventos por mês, oscilação, em observação) ──
+    alerts = {"events": [], "watching": [], "last_alert": None}
+    try:
+        sig = M.load_signals()
+        mine_sig = sig[sig["receptor_uuid"] == uuid]
+        cutoff = (week - pd.Timedelta(days=M.DEFAULT_PERIOD_DAYS)).strftime("%Y-%m-%d")
+        recent = mine_sig[mine_sig["week"] >= cutoff]
+        for m in sorted(recent["month"].unique(), reverse=True):
+            for e in M.group_events(recent[recent["month"] == m], sig, m, _item):
+                alerts["events"].append(dict(e, month=m))
+        if recent.empty and not mine_sig.empty:
+            lw = mine_sig["week"].max()
+            same = mine_sig[mine_sig["week"] == lw]
+            alerts["last_alert"] = {"week": lw, "items": [_item(r) for r in same.to_dict(orient="records")]}
+        watch = M.load_watch()
+        alerts["watching"] = [{"api_group": w["api_group"], "api_group_label": _api_label(w["api_group"]),
+                               "direction": w["direction"], "value_prev": w["value_prev"], "value_curr": w["value_curr"],
+                               "change_pct": w["change_pct"], "week": w["week"], "confirm_week": w["confirm_week"]}
+                              for w in watch[watch["receptor_uuid"] == uuid].to_dict(orient="records")]
+    except M.TableMissing:
+        unavailable.append("signals")
+
+    return _clean({
+        "institution": {"uuid": uuid, "name": short_of.get(uuid, uuid), "group": me_group,
+                        "ranks": {m: (k or {}).get("rank") for m, k in kpis.items()}},
+        "week": week.strftime("%Y-%m-%d"),
+        "period": {"start": start_ts.strftime("%Y-%m-%d"), "end": week.strftime("%Y-%m-%d")},
+        "compare": {"kind": "institution" if is_other else compare,
+                    "uuid": compare if is_other else None, "label": ref_label},
+        "kpis": kpis,
+        "unique_total_share": (total_kpi or {}).get("share"),
+        "evolution": evolution,
+        "api_mix": api_mix,
+        "api_by_group": api_by_group,
+        "transmitters": transmitters,
+        "error_rate": error_rate,
+        "alerts": alerts,
+        "unavailable": unavailable,
     })

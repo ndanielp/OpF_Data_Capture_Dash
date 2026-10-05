@@ -122,7 +122,7 @@
   V2.fmtGrowth = function (g) {
     if (!g) return '—';
     if (g.kind === 'pct') return V2.fmtPct(g.value);
-    if (g.kind === 'multiplier') return '×' + nf(g.value < 20 ? 1 : 0).format(g.value);
+    if (g.kind === 'multiplier') return g.value > 100 ? '×100+' : '×' + nf(g.value < 20 ? 1 : 0).format(g.value);
     if (g.kind === 'debut') return 'estreou ' + V2.fmtMonth(g.debut_month);
     return 'sem base';
   };

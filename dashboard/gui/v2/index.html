@@ -224,7 +224,7 @@
            p.change_pct == null ? '' : V2.fmtPct(p.change_pct, 1) + ' sobre as 4 semanas anteriores') +
       (errMode
         ? card('Taxa de erro', V2.fmtShare(e.error_rate), 'erros ÷ (sucesso + erros) no ecossistema')
-        : card('Por consentimento', V2.fmtInt(e.per_consent_month) + '/mês', 'média do ecossistema (mesma conta da Escala atual)')) +
+        : card('Por consentimento', V2.fmtInt(e.per_consent_month) + '/mês', 'ecossistema · últimas 4 semanas normalizadas para 30 dias')) +
       card('Concentração', V2.fmtShare(e.top3_share), (d.status === '500' ? 'dos erros' : 'das chamadas') + ' vêm das 3 maiores') +
       '</div>';
   }
@@ -315,7 +315,7 @@
         ' · posições seguem as do ecossistema'
       : '';
     const rule = isApi
-      ? 'Por dia = média diária das últimas 4 semanas; % e seta comparam com as 4 anteriores (↑↓ acima de 10%) · Por consentimento/mês = chamadas × 30 ÷ (consentimentos únicos × 7)'
+      ? 'Por dia = média diária das últimas 4 semanas; % e seta comparam com as 4 anteriores (↑↓ acima de 10%) · Por consentimento/mês = chamadas das últimas 4 semanas normalizadas para 30 dias ÷ média de consentimentos únicos (PF + PJ) das mesmas semanas'
       : 'Ritmo: novos consentimentos por dia nas últimas 4 semanas; ↑ ou ↓ quando difere mais de 10% das 4 semanas anteriores · cor = grupo';
     const sub = METRICS[st.metric] + (isApi ? ' · ' + ({ '200': 'sucesso (200)', '500': 'erros (500)', all: 'todas' })[d.status] +
       ' · escala: ' + (scaleConsent ? 'por consentimento/mês' : 'total') : '') + ' · semana de ' + V2.fmtDate(d.week);

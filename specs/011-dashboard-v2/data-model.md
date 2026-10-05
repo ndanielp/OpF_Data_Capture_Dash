@@ -74,7 +74,7 @@ Condições de alerta de API "em observação" (Decisão 3). Reconstruída na me
 | `share` | `value ÷ total do ecossistema` (sempre sobre o total, mesmo com filtros) |
 | `pace` | `{per_day, pct_per_day, prev_per_day, trend: up|down|flat}` (Decisão 5) |
 | `growth` | `{kind: pct|multiplier|debut|no_base, value, debut_month}` (Decisão 6) |
-| `per_consent_month` | só API: chamadas × 30 ÷ (únicos × 7) |
+| `per_consent_month` | só API: chamadas das últimas 4 semanas ÷ 28 × 30 ÷ média de únicos (PF + PJ) das mesmas 4 semanas (revisão de 2026-10-05) |
 | `error_rate` | só API com status ≠ 200: erros ÷ (sucessos + erros) |
 | `pinned` | está em "Sempre mostrar" |
 | `below_cut` | fixada fora do Top N (exibida abaixo da linha tracejada) |

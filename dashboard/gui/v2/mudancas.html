@@ -69,7 +69,7 @@
     types: [],                                     // [] = todos
 
     signal: 'all',
-    q: '',
+    q: new URLSearchParams(location.search).get('institution') || '',   // vindo de "Ver em 'O que mudou?'"
     groups: Array.isArray(f0.groups) ? f0.groups : [],
   };
   let data = null, searchTimer = null;

@@ -254,7 +254,7 @@ Cada fase de história é um PR próprio contra `main` (plan.md, "Entrega por fa
 
 ### Tests for User Story 4
 
-- [ ] T044 [P] [US4] Testes HTTP em `dashboard/tests/test_v2_institution.py`:
+- [X] T044 [P] [US4] Testes HTTP em `dashboard/tests/test_v2_institution.py`:
   - formato de `GET /api/v2/institution/{uuid}`;
   - `compare=group` e `compare=<uuid>` mudam as referências (`ref_*`);
   - `api_mix` sem `Resource` e somando 100%;
@@ -266,15 +266,15 @@ Cada fase de história é um PR próprio contra `main` (plan.md, "Entrega por fa
 
 ### Implementation for User Story 4
 
-- [ ] T045 [US4] Implementar em `dashboard/services/v2_metrics.py` as funções:
+- [X] T045 [US4] Implementar em `dashboard/services/v2_metrics.py` as funções:
   - `institution_kpis(uuid, ref)`;
   - `api_mix(uuid, ref, week)`, de `api_group_weekly` sem Resource;
   - `api_by_group_monthly(uuid)`;
   - `transmitters(uuid, week)`, de `active_consents`;
   - `error_rate(uuid, ref)`, de `api_status_weekly`: série mensal e por transmissor da última semana;
   - `reference(kind)`, com ecossistema, média do grupo ou outra instituição.
-- [ ] T046 [US4] Implementar `GET /institution/{uuid}` em `dashboard/routers/v2.py`, conforme `contracts/v2-api.md`, incluindo posições nas quatro métricas, evolução com participação (mensal) e alertas dos últimos 12 meses ou último alerta.
-- [ ] T047 [US4] Substituir o bloco "Em construção" de `dashboard/gui/v2/instituicao.html` pela aba completa:
+- [X] T046 [US4] Implementar `GET /institution/{uuid}` em `dashboard/routers/v2.py`, conforme `contracts/v2-api.md`, incluindo posições nas quatro métricas, evolução com participação (mensal) e alertas dos últimos 12 meses ou último alerta.
+- [X] T047 [US4] Substituir o bloco "Em construção" de `dashboard/gui/v2/instituicao.html` pela aba completa:
   - barra com Instituição (busca), Comparar com e Período;
   - cabeçalho com nome, grupo, frase de posições e selo de alertas;
   - 4 cards de indicadores;
@@ -285,8 +285,9 @@ Cada fase de história é um PR próprio contra `main` (plan.md, "Entrega por fa
   - "Taxa de erro de API" (série e por transmissor);
   - "Alertas da instituição".
   Layout de referência: quadro `FinalInstituicao`. Instituição inicial: `?uuid=` → `filters.institution` → maior do PF.
-- [ ] T048 [US4] Ligar cliques de nome de instituição a `/v2/instituicao?uuid=` em `dashboard/gui/v2/index.html` e `dashboard/gui/v2/mudancas.html` (FR-010) e os botões de exportação dos blocos da aba 4 (`exportCSV`/`exportImage`).
-- [ ] T049 [US4] Validação manual: roteiro "Instituição" do `quickstart.md`, alternando "Comparar com" entre ecossistema, média dos Neobancos e Mercado Pago.
+- [X] T048 [US4] Ligar cliques de nome de instituição a `/v2/instituicao?uuid=` em `dashboard/gui/v2/index.html` e `dashboard/gui/v2/mudancas.html` (FR-010) e os botões de exportação dos blocos da aba 4 (`exportCSV`/`exportImage`).
+- [X] T048a [US4] Aplicar a revisão de 2026-10-05 (spec, Clarifications) em `dashboard/routers/v2.py`, `dashboard/services/v2_metrics.py` (`per_30_days`, `per_consent_30d`, `flow_means`) e `dashboard/gui/v2/instituicao.html`: 4 posições, ritmo nos cards, seletor de evolução, seletor de unidade do mix e dos grupos, transmissores com "Outros" e crescimento, taxa de erro em 4 semanas e todos os meses, alertas como na aba 3; `mudancas.html` aceita `?institution=`; testes em `dashboard/tests/test_v2_institution.py`
+- [X] T049 [US4] Validação manual: roteiro "Instituição" do `quickstart.md`, alternando "Comparar com" entre ecossistema, média dos Neobancos e Mercado Pago.
 
 ---
 
