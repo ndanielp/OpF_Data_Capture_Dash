@@ -134,6 +134,9 @@ button, input, select { font: inherit; color: inherit; }
   font-size: 13px; cursor: pointer;
 }
 .v2-chip[aria-pressed="false"] { opacity: .5; }
+/* Filtro de escolha ("só estes"): nada fica apagado; o escolhido fica preenchido. */
+.v2-chip.v2-pick[aria-pressed="false"] { opacity: 1; }
+.v2-chip.v2-pick[aria-pressed="true"] { background: var(--text); border-color: var(--text); color: var(--surface); font-weight: 600; }
 .v2-chip .v2-swatch { width: 10px; height: 10px; border-radius: 3px; }
 .v2-chip-tag {
   display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 4px 0 12px;

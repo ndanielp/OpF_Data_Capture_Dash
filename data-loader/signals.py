@@ -188,8 +188,11 @@ def detect_consent_changes(
     volume_of: dict[tuple[str, str], int],
 ) -> list[Signal]:
     """FR-003/FR-004 — semana contra a observação anterior do próprio receptor,
-    alerta imediato. Só receptores estabelecidos: base ≥ CONSENT_FLOOR e mais de
-    NEW_WINDOW_WEEKS de vida (antes disso ele só pode ser novo entrante).
+    alerta imediato. Só receptores estabelecidos: mais de NEW_WINDOW_WEEKS de vida
+    (antes disso ele só pode ser novo entrante) e ≥ CONSENT_FLOOR consentimentos
+    únicos na semana-base. O piso é sempre medido em únicos, também para ativos
+    (feature 011, FR-032): ativos são ~1,7× os únicos e um piso próprio deixaria
+    passar instituições pequenas.
 
     A idade vem da estreia em consentimentos únicos (`debut_of`), a mesma para as
     duas métricas; na falta dela, da própria série. Semana ausente não vira queda:
@@ -205,7 +208,8 @@ def detect_consent_changes(
         name = g["receptor"].iat[0]
         for i in range(1, len(vals)):
             prev, cur = vals[i - 1], vals[i]
-            if prev < CONSENT_FLOOR or _age_weeks(dates[i], debut) <= NEW_WINDOW_WEEKS:
+            if (volume_of.get((uuid, dates[i - 1]), 0) < CONSENT_FLOOR
+                    or _age_weeks(dates[i], debut) <= NEW_WINDOW_WEEKS):
                 continue
             pct = cur / prev - 1
             if pct > CONSENT_UP:
@@ -236,6 +240,31 @@ def detect_api_changes(
     """
     if pivot.empty:
         return []
+    cond = _api_conditions(pivot, approved_weeks)
+    weeks, cols = pivot.index.tolist(), pivot.columns.tolist()
+
+    out: list[Signal] = []
+    for kind, hit in cond.hits.items():
+        confirmed = hit.astype(int).rolling(API_CONFIRM_WEEKS).sum() == API_CONFIRM_WEEKS
+        first = (confirmed & ~confirmed.shift(1, fill_value=False)).to_numpy()
+        for r, c in zip(*first.nonzero()):
+            uuid, grp = cols[c]
+            week = weeks[r]
+            out.append(Signal(week, kind, "api_group", grp, uuid, names.get(uuid, ""),
+                              float(cond.base.iat[r, c]), float(cond.recent.iat[r, c]),
+                              float(cond.rel[r, c] - 1), volume_of.get((uuid, week), 0)))
+    return out
+
+
+class _ApiConditions(NamedTuple):
+    recent: pd.DataFrame
+    base: pd.DataFrame
+    rel: np.ndarray
+    hits: dict[str, pd.DataFrame]   # 'increase' | 'decrease' → semana × (receptor, grupo)
+
+
+def _api_conditions(pivot: pd.DataFrame, approved_weeks: set[str]) -> _ApiConditions:
+    """Regra 4v4 ajustada pelo ecossistema, comum aos alertas e ao 'em observação'."""
     w = API_WINDOW
     recent = pivot.rolling(w).mean()
     base = pivot.shift(w).rolling(w).mean()
@@ -248,18 +277,50 @@ def detect_api_changes(
 
     eligible = base.to_numpy() >= API_FLOOR
     approved = pivot.index.isin(list(approved_weeks))[:, None]
-    weeks = pivot.index.tolist()
+    hits = {kind: pd.DataFrame(c & eligible & approved)
+            for kind, c in (("increase", rel > API_UP), ("decrease", rel < API_DOWN))}
+    return _ApiConditions(recent, base, rel, hits)
+
+
+class Watch(NamedTuple):
+    week: str
+    confirm_week: str
+    direction: str            # 'increase' | 'decrease'
+    receptor_uuid: str
+    receptor: str
+    api_group: str
+    value_prev: float
+    value_curr: float
+    change_pct: float
+
+
+def detect_api_watch(
+    pivot: pd.DataFrame,
+    approved_weeks: set[str],
+    names: dict[str, str],
+) -> list[Watch]:
+    """Feature 011, FR-030 — condições de API vistas na semana mais recente que
+    ainda não completaram API_CONFIRM_WEEKS semanas seguidas ("em observação").
+    Na semana seguinte viram alerta (se mantidas) ou somem (se não)."""
+    if pivot.empty:
+        return []
+    cond = _api_conditions(pivot, approved_weeks)
+    last = len(pivot.index) - 1
+    week = pivot.index[last]
+    confirm_week = (pd.Timestamp(week) + pd.Timedelta(days=7)).strftime("%Y-%m-%d")
     cols = pivot.columns.tolist()
 
-    out: list[Signal] = []
-    for kind, cond in (("increase", rel > API_UP), ("decrease", rel < API_DOWN)):
-        hit = pd.DataFrame(cond & eligible & approved)
-        confirmed = hit.astype(int).rolling(API_CONFIRM_WEEKS).sum() == API_CONFIRM_WEEKS
-        first = (confirmed & ~confirmed.shift(1, fill_value=False)).to_numpy()
-        for r, c in zip(*first.nonzero()):
+    out: list[Watch] = []
+    for kind, hit in cond.hits.items():
+        h = hit.to_numpy()
+        for c in np.nonzero(h[last])[0]:
+            streak = 0
+            while last - streak >= 0 and h[last - streak, c]:
+                streak += 1
+            if streak >= API_CONFIRM_WEEKS:
+                continue        # já é alerta confirmado
             uuid, grp = cols[c]
-            week = weeks[r]
-            out.append(Signal(week, kind, "api_group", grp, uuid, names.get(uuid, ""),
-                              float(base.iat[r, c]), float(recent.iat[r, c]),
-                              float(rel[r, c] - 1), volume_of.get((uuid, week), 0)))
+            out.append(Watch(week, confirm_week, kind, uuid, names.get(uuid, ""), grp,
+                             float(cond.base.iat[last, c]), float(cond.recent.iat[last, c]),
+                             float(cond.rel[last, c] - 1)))
     return out

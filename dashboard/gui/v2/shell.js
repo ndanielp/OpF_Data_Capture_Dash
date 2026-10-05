@@ -262,6 +262,123 @@
     pop.querySelector('button').focus();
   };
 
+  // ── Alertas: rótulos e descrição curta ───────────────────────────────────
+  V2.KIND_LABEL = { decrease: 'Queda', increase: 'Alta', mixed: 'Quedas e altas', oscillation: 'Oscilação', new_entrant: 'Novo entrante' };
+  V2.KIND_CLASS = { decrease: 'decrease', increase: 'increase', mixed: 'decrease', oscillation: 'oscillation', new_entrant: 'new_entrant' };
+  V2.ordinalStreak = function (n) { return n >= 2 ? n + 'º mês seguido' : ''; };
+  /** Valor de alerta: API em mi/bi; consentimentos inteiros abaixo de 1 mi. */
+  V2.fmtAlertValue = function (v, metric) {
+    if (v == null) return '—';
+    return metric === 'api_group' || Math.abs(v) >= 1e6 ? V2.fmtCompact(v) : V2.fmtInt(v);
+  };
+  /** Frase curta para o resumo da aba 1 (uma linha por instituição). */
+  V2.describeEvent = function (e) {
+    const items = e.items;
+    if (e.kind === 'new_entrant') {
+      const it = items.find(i => i.signal_type === 'new_entrant');
+      return 'Passou de 30 mil consentimentos únicos em ' + V2.fmtDate(it.week).slice(0, 5) + ' (' + V2.fmtInt(it.value_curr) + ')';
+    }
+    if (e.kind === 'oscillation') {
+      return items[0].metric_label + ' ' + (items[0].signal_type === 'decrease' ? 'caíram e voltaram' : 'subiram e voltaram') + ' em uma semana';
+    }
+    const api = items.filter(i => i.metric === 'api_group');
+    const cons = items.filter(i => i.metric !== 'api_group');
+    const parts = [];
+    if (api.length > 1) parts.push('API em ' + (e.kind === 'increase' ? 'alta' : 'queda') + ' em ' + api.length + ' grupos (' + api.map(i => i.api_group_label).join(', ') + ')');
+    else if (api.length === 1) parts.push('API de ' + api[0].api_group_label);
+    cons.forEach(i => parts.push(i.metric_label + ' ' + V2.fmtPct(i.change_pct)));
+    if (e.streak_months >= 2) parts.push(V2.ordinalStreak(e.streak_months));
+    return parts.join(' · ');
+  };
+  /** Número em destaque do evento. */
+  V2.eventHeadline = function (e) {
+    if (e.kind === 'new_entrant') {
+      const it = e.items.find(i => i.signal_type === 'new_entrant');
+      return V2.fmtCompact(it.value_curr);
+    }
+    if (e.kind === 'oscillation') return e.items.map(i => V2.fmtPct(i.change_pct)).join(' → ');
+    const top = e.items.reduce((a, i) => (i.change_pct != null && (a == null || Math.abs(i.change_pct) > Math.abs(a.change_pct))) ? i : a, null);
+    return top ? V2.fmtPct(top.change_pct) : '';
+  };
+
+  // ── Exportação de imagem 16:9 (html-to-image, carregado só quando usado) ──
+  let h2iLoading = null;
+  function loadHtmlToImage() {
+    if (window.htmlToImage) return Promise.resolve();
+    if (!h2iLoading) {
+      h2iLoading = new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = 'https://cdn.jsdelivr.net/npm/html-to-image@1.11.11/dist/html-to-image.js';
+        s.onload = resolve;
+        s.onerror = () => { h2iLoading = null; reject(new Error('Não foi possível carregar o exportador de imagem. Verifique a conexão; o CSV continua disponível.')); };
+        document.head.appendChild(s);
+      });
+    }
+    return h2iLoading;
+  }
+
+  /** Clona o bloco num quadro 1600×900 com título (com filtro), subtítulo,
+   *  conteúdo ajustado ao espaço e rodapé de fonte, e baixa um PNG. */
+  V2.exportImage = async function (card, opts) {
+    const W = 1600, H = 900, PAD = 56;
+    const css = getComputedStyle(document.documentElement);
+    const frame = document.createElement('div');
+    frame.style.cssText = 'position:fixed;left:-20000px;top:0;width:' + W + 'px;height:' + H + 'px;box-sizing:border-box;' +
+      'padding:' + PAD + 'px ' + PAD + 'px 40px;display:flex;flex-direction:column;gap:18px;overflow:hidden;' +
+      'background:' + css.getPropertyValue('--surface') + ';color:' + css.getPropertyValue('--text') + ';' +
+      "font-family:'IBM Plex Sans','Segoe UI',system-ui,sans-serif;font-variant-numeric:tabular-nums;";
+    const head = document.createElement('div');
+    head.innerHTML = '<div style="font-size:15px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:' +
+      css.getPropertyValue('--text-2') + '">' + V2.esc(opts.subtitle || '') + '</div>' +
+      '<div style="font-size:34px;font-weight:700;letter-spacing:-.01em;margin-top:6px">' + V2.esc(opts.title || '') + '</div>';
+    const body = document.createElement('div');
+    body.style.cssText = 'flex:1;min-height:0;position:relative;';
+    const inner = card.cloneNode(true);
+    inner.querySelectorAll('.v2-card-head, .v2-card-actions, .v2-row-menu, button, .v2-card-foot, .v2-noexport').forEach(n => n.remove());
+    inner.style.cssText = 'border:0;padding:0;background:transparent;box-shadow:none;';
+    const origCanvases = card.querySelectorAll('canvas');
+    inner.querySelectorAll('canvas').forEach((c, i) => {
+      const img = document.createElement('img');
+      img.src = origCanvases[i].toDataURL('image/png');
+      img.style.width = origCanvases[i].clientWidth + 'px';
+      c.replaceWith(img);
+    });
+    body.appendChild(inner);
+    const foot = document.createElement('div');
+    foot.style.cssText = 'font-size:14px;color:' + css.getPropertyValue('--text-2') + ';border-top:1px solid ' +
+      css.getPropertyValue('--border') + ';padding-top:12px;display:flex;justify-content:space-between;gap:16px';
+    foot.innerHTML = '<span>' + V2.esc(opts.note || '') + '</span><span>Fonte: dashboard Open Finance Brasil · dados até ' +
+      V2.fmtDate(V2.meta && V2.meta.data_through) + '</span>';
+    frame.append(head, body, foot);
+    document.body.appendChild(frame);
+
+    // Conteúdo maior que o espaço: reduz por escala, preenchendo a largura.
+    const availW = W - 2 * PAD, availH = body.clientHeight;
+    inner.style.width = availW + 'px';
+    const s = Math.min(1, availH / inner.scrollHeight);
+    if (s < 1) {
+      inner.style.width = (availW / s) + 'px';
+      inner.style.transform = 'scale(' + s + ')';
+      inner.style.transformOrigin = 'top left';
+    }
+    try {
+      await loadHtmlToImage();
+      // O quadro fica fora da tela; no clone que vira imagem ele volta para a origem.
+      const base = { width: W, height: H, pixelRatio: 1, style: { position: 'static', left: '0', top: '0' } };
+      let url;
+      try { url = await window.htmlToImage.toPng(frame, base); }
+      catch (e) { url = await window.htmlToImage.toPng(frame, Object.assign({ skipFonts: true }, base)); }
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = opts.filename || 'opf-bloco.png';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    } finally {
+      frame.remove();
+    }
+  };
+
   // ── Exportação CSV ───────────────────────────────────────────────────────
   /** columns: [{label, value: row => string|number}] — números saem com vírgula decimal. */
   V2.exportCSV = function (filename, columns, rows) {

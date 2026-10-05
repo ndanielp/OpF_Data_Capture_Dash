@@ -7,22 +7,326 @@
 <script>try{document.documentElement.dataset.theme=localStorage.getItem('opf:v2:theme')||'light'}catch(e){document.documentElement.dataset.theme='light'}</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" crossorigin="anonymous">
 <link rel="stylesheet" href="/static/v2/v2.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script src="/static/v2/shell.js"></script>
+<style>
+  .mc-bars { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 10px; align-items: end; }
+  .mc-bar { height: 170px; border: 0; background: transparent; padding: 0 4px; border-radius: 6px; display: flex; flex-direction: column;
+            justify-content: flex-end; align-items: stretch; cursor: pointer; color: var(--text-2); }
+  .mc-bar[aria-pressed="true"] { background: var(--surface-2); outline: 2px solid var(--text); color: var(--text); font-weight: 700; }
+  .mc-bar span.n { font-size: 12px; margin-bottom: 4px; }
+  .mc-bar span.seg:first-of-type { border-radius: 3px 3px 0 0; }
+  .mc-months { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 10px; font-size: 12px; color: var(--text-2); text-align: center; }
+  .mc-layout { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 16px; align-items: start; }
+  @media (max-width: 1100px) { .mc-layout { grid-template-columns: 1fr; } }
+  .mc-event { padding: 16px 0; border-top: 1px solid var(--divider); display: flex; flex-direction: column; gap: 10px; }
+  .mc-event:first-child { border-top: 0; }
+  .mc-event-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+  .mc-event-title { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .mc-event-title a.name { font-size: 16px; font-weight: 700; color: var(--text); text-decoration: none; }
+  .mc-event-title a.name:hover { color: var(--link); text-decoration: underline; }
+  .mc-streak { padding: 3px 8px; border-radius: 999px; border: 1px solid var(--control-border); font-size: 12px; font-weight: 600; }
+  .mc-items { display: grid; grid-template-columns: 70px 170px minmax(0, 1fr) 72px; column-gap: 16px; row-gap: 6px; font-size: 13px; }
+  .mc-items .h { color: var(--text-2); font-size: 12px; font-weight: 600; }
+  .mc-neg { color: var(--down); font-weight: 700; }
+  .mc-pos { color: var(--up); font-weight: 700; }
+  .mc-side { display: flex; flex-direction: column; gap: 16px; }
+  .mc-side .v2-card h2 { margin: 0; font-size: 15px; font-weight: 700; }
+  .mc-watch { border-style: dashed; border-color: var(--text-2); }
+  .mc-kv { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; }
+  .mc-rules dt { font-weight: 600; font-size: 13px; }
+  .mc-rules dd { margin: 2px 0 8px; color: var(--text-2); font-size: 13px; }
+  .mc-legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 13px; color: var(--text-2); }
+  .mc-legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .mc-search { min-height: 44px; width: 180px; border-radius: 8px; border: 1px solid var(--control-border); background: var(--surface); padding: 0 12px; }
+</style>
 </head>
 <body>
 <header id="v2-header" class="v2-header"></header>
 <main class="v2-main">
-  <div class="v2-title"><h1>O que mudou</h1></div>
-  <section class="v2-card">
-    <div class="v2-placeholder">
-      <p>Esta aba ainda está em construção no Dashboard 2.0.</p>
-      <p>Enquanto isso, os alertas semana a semana estão no card "O que mudou" do <a href="/">painel atual</a>.</p>
-    </div>
-  </section>
+  <section class="v2-filterbar" id="filterbar" aria-label="Filtros"></section>
+  <div class="v2-title" id="page-title"></div>
+  <article class="v2-card" id="card-months"></article>
+  <div class="mc-layout">
+    <article class="v2-card" id="card-events"></article>
+    <aside class="mc-side" id="side"></aside>
+  </div>
 </main>
-<script>V2.initShell('mudancas').catch(() => {});</script>
+
+<script>
+(function () {
+  'use strict';
+  const MONTHS_FULL = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+  const TYPES = { decrease: 'Quedas', increase: 'Altas', oscillation: 'Oscilações', new_entrant: 'Novos entrantes' };
+  const SIGNALS = { all: 'Todos', consents: 'Consentimentos', api: 'Uso de API' };
+  const SEG_COLORS = { decrease: 'var(--down)', increase: 'var(--up)', new_entrant: 'var(--new)' };
+
+  const f0 = V2.getFilters();
+  const st = {
+    month: null,                                   // null = mais recente
+    types: [],                                     // [] = todos
+
+    signal: 'all',
+    q: '',
+    groups: Array.isArray(f0.groups) ? f0.groups : [],
+  };
+  let data = null, searchTimer = null;
+
+  function monthName(ym, withYear) {
+    const [y, m] = ym.split('-');
+    return MONTHS_FULL[Number(m) - 1] + (withYear ? '/' + y : '');
+  }
+  function monthBounds(ym) {
+    const [y, m] = ym.split('-').map(Number);
+    const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
+    return '01/' + String(m).padStart(2, '0') + ' a ' + last + '/' + String(m).padStart(2, '0') + '/' + y;
+  }
+  function allGroups() { return V2.meta.groups.map(g => g.slug); }
+  function activeGroups() { return st.groups.length ? st.groups : allGroups(); }
+
+  // ── Barra de filtros ─────────────────────────────────────────────────────
+  function renderFilterbar() {
+    const months = (data && data.months || []).slice().reverse();
+    const cur = data ? data.month : null;
+    const typeChips = '<button type="button" class="v2-chip v2-pick" data-type="all" aria-pressed="' + (st.types.length === 0) + '">Todos</button>' +
+      Object.entries(TYPES).map(([k, l]) =>
+        '<button type="button" class="v2-chip v2-pick" data-type="' + k + '" aria-pressed="' + st.types.includes(k) + '">' + l + '</button>').join('');
+    const groups = V2.meta.groups.map(g =>
+      '<button type="button" class="v2-chip" data-group="' + g.slug + '" aria-pressed="' + activeGroups().includes(g.slug) + '">' +
+      '<span class="v2-swatch" style="background:' + g.color + '"></span>' + g.label + '</button>').join('');
+    document.getElementById('filterbar').innerHTML =
+      '<div class="v2-fb-row"><div class="v2-fb-group">' +
+        '<label class="v2-field"><span class="v2-label">Mês</span><select class="v2-select" id="f-month" style="min-width:180px">' +
+          months.map(m => '<option value="' + m.month + '"' + (m.month === cur ? ' selected' : '') + '>' +
+            monthName(m.month, true).replace(/^./, c => c.toUpperCase()) + '</option>').join('') + '</select></label>' +
+        '<fieldset class="v2-field"><legend>Tipo</legend><div class="v2-chips">' + typeChips + '</div></fieldset>' +
+        '<fieldset class="v2-field"><legend>Sinal</legend><div class="v2-seg" data-seg="signal">' +
+          Object.entries(SIGNALS).map(([k, l]) => '<button type="button" data-v="' + k + '" aria-pressed="' + (k === st.signal) + '">' + l + '</button>').join('') +
+        '</div></fieldset>' +
+      '</div><button type="button" class="v2-btn" id="f-export">Exportar alertas (CSV)</button></div>' +
+      '<div class="v2-fb-row"><div class="v2-fb-group">' +
+        '<label class="v2-field"><span class="v2-label">Instituição</span><input type="search" class="mc-search" id="f-q" placeholder="Buscar…" value="' + V2.esc(st.q) + '"></label>' +
+        '<fieldset class="v2-field"><legend>Grupos</legend><div class="v2-chips">' + groups + '</div></fieldset>' +
+      '</div></div>';
+  }
+
+  const fb = document.getElementById('filterbar');
+  fb.addEventListener('click', ev => {
+    const t = ev.target.closest('[data-type]');
+    if (t) {
+      // "Todos" limpa; um tipo mostra só ele; outros tipos somam; sem nenhum (ou com
+      // os quatro) volta para "Todos".
+      const k = t.dataset.type;
+      if (k === 'all') st.types = [];
+      else st.types = st.types.includes(k) ? st.types.filter(x => x !== k) : st.types.concat(k);
+      if (st.types.length === Object.keys(TYPES).length) st.types = [];
+      return load();
+    }
+    const s = ev.target.closest('[data-seg] button');
+    if (s) { st.signal = s.dataset.v; return load(); }
+    const g = ev.target.closest('[data-group]');
+    if (g) {
+      let cur = activeGroups().slice();
+      cur = cur.includes(g.dataset.group) ? cur.filter(x => x !== g.dataset.group) : cur.concat(g.dataset.group);
+      st.groups = (cur.length === 0 || cur.length === allGroups().length) ? [] : cur;
+      V2.setFilters({ groups: st.groups });
+      return load();
+    }
+    if (ev.target.id === 'f-export') exportCsv();
+  });
+  fb.addEventListener('change', ev => { if (ev.target.id === 'f-month') { st.month = ev.target.value; load(); } });
+  fb.addEventListener('input', ev => {
+    if (ev.target.id !== 'f-q') return;
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => { st.q = ev.target.value.trim(); load(true); }, 300);
+  });
+
+  // ── Dados ────────────────────────────────────────────────────────────────
+  async function load(keepFocus) {
+    const q = new URLSearchParams();
+    if (st.month) q.set('month', st.month);
+    if (st.types.length) q.set('types', st.types.join(','));
+    if (st.signal !== 'all') q.set('signal', st.signal);
+    if (st.q) q.set('institution', st.q);
+    if (st.groups.length) q.set('groups', st.groups.join(','));
+    ['card-months', 'card-events'].forEach(id => V2.setLoading(document.getElementById(id), true));
+    try {
+      data = await V2.fetchJSON('/api/v2/changes?' + q.toString());
+      st.month = data.month;
+      const focus = keepFocus && document.activeElement && document.activeElement.id;
+      renderFilterbar();
+      if (focus) { const el = document.getElementById(focus); el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
+      render();
+    } catch (e) {
+      document.getElementById('card-events').innerHTML = V2.errorBox(e.message);
+    } finally {
+      ['card-months', 'card-events'].forEach(id => V2.setLoading(document.getElementById(id), false));
+    }
+  }
+
+  // ── Render ───────────────────────────────────────────────────────────────
+  function filterLabel() {
+    const parts = [];
+    if (st.types.length) parts.push('só ' + st.types.map(k => TYPES[k].toLowerCase()).join(' e '));
+    if (st.signal !== 'all') parts.push('só ' + SIGNALS[st.signal].toLowerCase());
+    if (st.groups.length) parts.push('só ' + st.groups.map(V2.groupLabel).join(' e '));
+    if (st.q) parts.push('"' + st.q + '"');
+    return parts.join(' · ');
+  }
+  function render() {
+    const s = data.summary;
+    if ((data.unavailable || []).includes('signals')) {
+      document.getElementById('page-title').innerHTML = '<h1>O que mudou</h1>';
+      document.getElementById('card-months').innerHTML = '<div class="v2-placeholder">Os alertas ainda não foram calculados nesta base. Rode <code>python compute_signals.py</code> no data-loader e publique a base.</div>';
+      document.getElementById('card-events').innerHTML = '';
+      document.getElementById('side').innerHTML = '';
+      return;
+    }
+    document.getElementById('page-title').innerHTML =
+      '<h1>O que mudou em ' + monthName(data.month, true) + '</h1><p>' + monthBounds(data.month) + ' · ' +
+      s.alerts + (s.alerts === 1 ? ' alerta' : ' alertas') + ' em ' + s.institutions + (s.institutions === 1 ? ' instituição' : ' instituições') +
+      (s.watching ? ' · ' + s.watching + ' em observação' : '') + '</p>';
+    renderMonths();
+    renderEvents();
+    renderSide();
+  }
+
+  function renderMonths() {
+    const months = data.months;
+    const max = Math.max.apply(null, months.map(m => m.decrease + m.increase + m.new_entrant).concat([1]));
+    const avg = months.reduce((a, m) => a + m.decrease + m.increase + m.new_entrant, 0) / (months.length || 1);
+    const px = n => (120 * n / max).toFixed(0) + 'px';
+    const bars = months.map(m => {
+      const total = m.decrease + m.increase + m.new_entrant;
+      const seg = (k) => m[k] ? '<span class="seg" style="height:' + px(m[k]) + ';background:' + SEG_COLORS[k] + '"></span>' : '';
+      return '<button type="button" class="mc-bar" data-month="' + m.month + '" aria-pressed="' + (m.month === data.month) + '" ' +
+        'aria-label="' + monthName(m.month, true) + ': ' + total + ' alertas">' +
+        '<span class="n">' + total + '</span>' + seg('new_entrant') + seg('increase') + seg('decrease') + '</button>';
+    }).join('');
+    const labels = months.map((m, i) => '<span' + (m.month === data.month ? ' style="font-weight:700;color:var(--text)"' : '') + '>' +
+      (i === 0 || m.month.endsWith('-01') ? V2.fmtMonth(m.month) : MONTHS_FULL[Number(m.month.slice(5)) - 1].slice(0, 3)) + '</span>').join('');
+    const sel = months.find(m => m.month === data.month);
+    const selTotal = sel ? sel.decrease + sel.increase + sel.new_entrant : 0;
+    const vsAvg = selTotal > avg * 1.2 ? 'acima da média' : selTotal < avg * 0.8 ? 'abaixo da média' : 'dentro da média';
+    document.getElementById('card-months').innerHTML =
+      '<div class="v2-card-head"><div><h2>Alertas por mês' + (filterLabel() ? ' · ' + V2.esc(filterLabel()) : '') + '</h2>' +
+        '<span class="v2-sub">Clique num mês para ver os alertas dele · ' + monthName(data.month) + ' ficou ' + vsAvg +
+        ' dos últimos 12 meses (' + new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 0 }).format(avg) + ')</span></div>' +
+        '<div class="v2-card-actions"><div class="mc-legend"><span><span class="v2-dot" style="background:var(--down)"></span>Quedas</span>' +
+        '<span><span class="v2-dot" style="background:var(--up)"></span>Altas</span>' +
+        '<span><span class="v2-dot" style="background:var(--new)"></span>Novos entrantes</span></div>' +
+        '<button type="button" class="v2-icon-btn" data-img="months" aria-label="Copiar como imagem">' + V2.icon('image') + '</button></div></div>' +
+      '<div class="mc-bars">' + bars + '</div><div class="mc-months">' + labels + '</div>' +
+      '<div class="v2-card-foot"><span>Contagem bruta de alertas (oscilação conta 2) · Fonte: dashboard Open Finance Brasil</span></div>';
+  }
+
+  function itemRows(items, metricHeader) {
+    const head = '<span class="h">Semana</span><span class="h">' + metricHeader + '</span><span class="h">Antes → depois</span><span class="h v2-r">Var.</span>';
+    return head + items.map(i => {
+      const wk = V2.fmtDate(i.week).slice(0, 5);
+      if (i.signal_type === 'new_entrant') {
+        return '<span>' + wk + '</span><span>' + V2.esc(i.metric_label) + '</span><span>passou de 30 mil: ' + V2.fmtInt(i.value_curr) + '</span><span></span>';
+      }
+      const cls = i.change_pct < 0 ? 'mc-neg' : 'mc-pos';
+      return '<span>' + wk + '</span><span>' + V2.esc(i.metric_label) + '</span>' +
+        '<span>' + V2.fmtAlertValue(i.value_prev, i.metric) + ' → ' + V2.fmtAlertValue(i.value_curr, i.metric) + '</span>' +
+        '<span class="v2-r ' + cls + '">' + V2.fmtPct(i.change_pct) + '</span>';
+    }).join('');
+  }
+  function renderEvents() {
+    const el = document.getElementById('card-events');
+    if (!data.events.length) {
+      el.innerHTML = '<div class="v2-placeholder">Nenhum alerta em ' + monthName(data.month, true) +
+        (filterLabel() ? ' com estes filtros' : '') + '. Escolha outro mês na barra acima.</div>';
+      return;
+    }
+    const prevName = (() => { const p = new Date(Date.UTC(+data.month.slice(0, 4), +data.month.slice(5) - 2, 1)); return MONTHS_FULL[p.getUTCMonth()]; })();
+    el.innerHTML =
+      '<div class="v2-card-head"><div><h2>Alertas de ' + monthName(data.month, true) + (filterLabel() ? ' · ' + V2.esc(filterLabel()) : '') + '</h2>' +
+        '<span class="v2-sub">Uma linha por instituição · ordenadas pela maior variação</span></div>' +
+        '<div class="v2-card-actions"><button type="button" class="v2-icon-btn" data-img="events" aria-label="Copiar como imagem">' + V2.icon('image') + '</button>' +
+        '<button type="button" class="v2-icon-btn" data-csv="events" aria-label="Baixar CSV dos alertas">' + V2.icon('download') + '</button></div></div>' +
+      '<ul style="list-style:none;margin:0;padding:0">' + data.events.map(e => {
+        const n = e.items.length;
+        const badge = V2.KIND_LABEL[e.kind] + (n > 1 && e.kind !== 'oscillation' ? ' · ' + n : '');
+        const apiOnly = e.items.every(i => i.metric === 'api_group');
+        const note = e.kind === 'oscillation'
+          ? 'Voltou ao nível anterior em uma semana · conta como 2 alertas, mostrado como 1 evento'
+          : (e.previous_month_summary ? 'Em ' + prevName + ': ' + e.previous_month_summary.map(i => i.metric_label + ' ' + V2.fmtPct(i.change_pct)).join(', ') : '');
+        return '<li class="mc-event">' +
+          '<div class="mc-event-head"><div class="mc-event-title">' +
+            '<span class="v2-badge ' + V2.KIND_CLASS[e.kind] + '">' + badge + '</span>' +
+            '<a class="name" href="/v2/instituicao?uuid=' + encodeURIComponent(e.uuid) + '">' + V2.esc(e.name) + '</a>' +
+            '<span class="v2-legend"><span><span class="v2-dot" style="background:' + V2.groupColor(e.group) + '"></span>' + V2.groupLabel(e.group) + '</span></span>' +
+            (e.streak_months >= 2 ? '<span class="mc-streak">' + V2.ordinalStreak(e.streak_months) + '</span>' : '') +
+          '</div><a class="v2-noexport" href="/v2/instituicao?uuid=' + encodeURIComponent(e.uuid) + '" style="font-size:13px;font-weight:600;text-decoration:none;min-height:32px;display:inline-flex;align-items:center">Abrir perfil →</a></div>' +
+          '<div class="mc-items">' + itemRows(e.items, apiOnly ? 'Grupo de API' : 'Métrica') + '</div>' +
+          (note ? '<span class="v2-small v2-muted">' + V2.esc(note) + '</span>' : '') +
+        '</li>';
+      }).join('') + '</ul>';
+  }
+
+  function renderSide() {
+    const w = data.watching;
+    const watch = '<section class="v2-card mc-watch"><h2>Em observação</h2>' +
+      '<span class="v2-small v2-muted">Condição de API vista em 1 semana; vira alerta se a próxima confirmar.</span>' +
+      (w.length ? w.map(x => '<div style="display:flex;flex-direction:column;gap:2px;padding-top:8px">' +
+        '<div class="mc-kv"><span><b>' + V2.esc(x.name) + '</b> · ' + V2.esc(x.api_group_label) + '</span><b>' + V2.fmtPct(x.change_pct) + '</b></div>' +
+        '<span class="v2-small v2-muted">' + V2.fmtCompact(x.value_prev) + ' → ' + V2.fmtCompact(x.value_curr) + ' · decide com a semana de ' + V2.fmtDate(x.confirm_week).slice(0, 5) + '</span></div>').join('')
+        : '<span class="v2-small" style="padding-top:6px">Nada em observação na semana mais recente.</span>') + '</section>';
+    const groups = '<section class="v2-card"><h2>Por grupo de instituição</h2>' +
+      (data.by_group.length ? data.by_group.map(g => '<div class="mc-kv"><span class="v2-legend" style="color:var(--text)"><span><span class="v2-dot" style="background:' +
+        V2.groupColor(g.group) + '"></span>' + V2.groupLabel(g.group) + '</span></span><span>' + g.alerts + (g.alerts === 1 ? ' alerta' : ' alertas') +
+        ' · ' + g.institutions + ' inst.</span></div>').join('') : '<span class="v2-small v2-muted">Sem alertas no mês.</span>') + '</section>';
+    const rules = '<section class="v2-card"><h2>Como os alertas são calculados</h2><dl class="mc-rules" style="margin:0">' +
+      data.rules.map(r => '<dt>' + V2.esc(r.title) + '</dt><dd>' + V2.esc(r.text) + '</dd>').join('') + '</dl>' +
+      (data.computed_at ? '<span class="v2-small v2-muted">Calculados em ' + V2.fmtDate(data.computed_at) + '</span>' : '') + '</section>';
+    document.getElementById('side').innerHTML = watch + groups + rules;
+  }
+
+  // ── Interações nos blocos ────────────────────────────────────────────────
+  document.querySelector('.v2-main').addEventListener('click', ev => {
+    const b = ev.target.closest('[data-month]');
+    if (b) { st.month = b.dataset.month; return load(); }
+    const img = ev.target.closest('[data-img]');
+    if (img) {
+      const card = img.closest('.v2-card');
+      const isEvents = img.dataset.img === 'events';
+      V2.exportImage(card, {
+        title: (isEvents ? 'O que mudou em ' + monthName(data.month, true) : 'Alertas por mês') + (filterLabel() ? ' · ' + filterLabel() : ''),
+        subtitle: 'Alertas de mudança de comportamento · ' + monthBounds(data.month),
+        note: isEvents ? data.summary.alerts + ' alertas em ' + data.summary.institutions + ' instituições' : 'Contagem bruta (oscilação conta 2)',
+        filename: 'opf-o-que-mudou-' + img.dataset.img + '-' + data.month + '.png',
+      }).catch(e => alert(e.message));
+      return;
+    }
+    if (ev.target.closest('[data-csv]')) exportCsv();
+  });
+
+  function exportCsv() {
+    if (!data) return;
+    const rows = [];
+    data.events.forEach(e => e.items.forEach(i => rows.push(Object.assign({ _e: e }, i))));
+    V2.exportCSV('opf-o-que-mudou-' + data.month + '.csv', [
+      { label: 'Mês', value: () => data.month },
+      { label: 'Instituição', value: r => r._e.name },
+      { label: 'Grupo', value: r => V2.groupLabel(r._e.group) },
+      { label: 'Evento', value: r => V2.KIND_LABEL[r._e.kind] },
+      { label: 'Meses seguidos', value: r => r._e.streak_months },
+      { label: 'Semana', value: r => r.week },
+      { label: 'Alerta', value: r => V2.KIND_LABEL[r.signal_type] },
+      { label: 'Métrica', value: r => r.metric_label },
+      { label: 'Antes', value: r => r.value_prev },
+      { label: 'Depois', value: r => r.value_curr },
+      { label: 'Variação (%)', value: r => r.change_pct == null ? null : Math.round(r.change_pct * 1000) / 10 },
+    ], rows);
+  }
+
+  V2.initShell('mudancas').then(() => { renderFilterbar(); load(); })
+    .catch(e => { document.getElementById('card-events').innerHTML = V2.errorBox(e.message); });
+})();
+</script>
 </body>
 </html>

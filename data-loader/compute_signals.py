@@ -39,7 +39,7 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 
-def _detect_all(con: sqlite3.Connection) -> tuple[list[signals.Signal], dict]:
+def _detect_all(con: sqlite3.Connection) -> tuple[list[signals.Signal], list[signals.Watch], dict]:
     """Carrega as séries e aplica todas as regras. Não escreve nada."""
     unique = signals.load_consent_series(con, "unique_consents")
     active = signals.load_consent_series(con, "active_consents")
@@ -53,17 +53,19 @@ def _detect_all(con: sqlite3.Connection) -> tuple[list[signals.Signal], dict]:
     found += signals.detect_consent_changes(unique, "unique_consents", debut_of, volume_of)
     found += signals.detect_consent_changes(active, "active_consents", debut_of, volume_of)
     found += signals.detect_api_changes(pivot, api_approved, api_names, volume_of)
+    watch = signals.detect_api_watch(pivot, api_approved, api_names)
 
     meta = {
         "consents_through": unique["date"].max() if not unique.empty else None,
         "api_through": pivot.index.max() if not pivot.empty else None,
         "api_skipped_weeks": api_skipped,
     }
-    return found, meta
+    return found, watch, meta
 
 
-def _write(con: sqlite3.Connection, found: list[signals.Signal], meta: dict) -> None:
-    """Substitui behavior_signals e behavior_signals_run numa única transação."""
+def _write(con: sqlite3.Connection, found: list[signals.Signal],
+           watch: list[signals.Watch], meta: dict) -> None:
+    """Substitui behavior_signals, behavior_watch e behavior_signals_run numa única transação."""
     computed_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     with con:  # commit no fim; rollback se qualquer passo falhar
         con.execute("DELETE FROM behavior_signals")
@@ -73,6 +75,14 @@ def _write(con: sqlite3.Connection, found: list[signals.Signal], meta: dict) -> 
                     value_prev, value_curr, change_pct, volume)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             [tuple(s) for s in found],
+        )
+        con.execute("DELETE FROM behavior_watch")
+        con.executemany(
+            """INSERT INTO behavior_watch
+                   (week, confirm_week, direction, receptor_uuid, receptor, api_group,
+                    value_prev, value_curr, change_pct)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            [tuple(w) for w in watch],
         )
         con.execute(
             """INSERT OR REPLACE INTO behavior_signals_run
@@ -90,8 +100,8 @@ def compute(con: sqlite3.Connection) -> dict:
     t0 = time.perf_counter()
     scrapers.refresh_api_status_weekly(con)
     status_secs = time.perf_counter() - t0
-    found, meta = _detect_all(con)
-    _write(con, found, meta)
+    found, watch, meta = _detect_all(con)
+    _write(con, found, watch, meta)
     by_type = Counter(s.signal_type for s in found)
     latest = meta["consents_through"]
     return {
@@ -100,6 +110,8 @@ def compute(con: sqlite3.Connection) -> dict:
         "by_type": dict(by_type),
         "latest_week_count": sum(1 for s in found if s.week == latest),
         "api_status_secs": status_secs,
+        "watch": len(watch),
+        "by_metric": dict(Counter(s.metric for s in found)),
     }
 
 
@@ -125,8 +137,9 @@ def main() -> int:
     log.info("Alertas calculados: %d (novos entrantes: %d | altas: %d | quedas: %d)",
              summary["total"], t.get("new_entrant", 0), t.get("increase", 0),
              t.get("decrease", 0))
-    log.info("Semana mais recente (%s): %d alertas",
-             summary["consents_through"], summary["latest_week_count"])
+    log.info("Por métrica: %s", summary["by_metric"])
+    log.info("Semana mais recente (%s): %d alertas · %d em observação",
+             summary["consents_through"], summary["latest_week_count"], summary["watch"])
     log.info("[OK] behavior_signals reconstruída")
     return 0
 

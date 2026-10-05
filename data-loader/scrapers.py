@@ -400,6 +400,22 @@ def open_db(path: Path) -> sqlite3.Connection:
             PRIMARY KEY (date, receptor_uuid, transmitter_uuid, status)
         )
     """)
+    # Condições de API "em observação" (feature 011): vistas na semana mais recente,
+    # aguardando a semana de confirmação. Reconstruída junto com behavior_signals.
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS behavior_watch (
+            week           TEXT    NOT NULL,
+            confirm_week   TEXT    NOT NULL,
+            direction      TEXT    NOT NULL,
+            receptor_uuid  TEXT    NOT NULL,
+            receptor       TEXT    NOT NULL DEFAULT '',
+            api_group      TEXT    NOT NULL,
+            value_prev     REAL,
+            value_curr     REAL,
+            change_pct     REAL,
+            PRIMARY KEY (week, receptor_uuid, api_group)
+        )
+    """)
     con.execute("""
         CREATE TABLE IF NOT EXISTS behavior_signals_run (
             id                 INTEGER PRIMARY KEY CHECK (id = 1),

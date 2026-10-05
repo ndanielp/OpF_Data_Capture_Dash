@@ -85,6 +85,7 @@ CREATE TABLE fetch_attempts (run_id TEXT, phase TEXT, target TEXT, started_at TE
 CREATE TABLE run_summary (run_id TEXT PRIMARY KEY);
 """
 
+# Tabelas novas da feature 011 — ausentes na base "antiga" dos testes de fallback.
 DDL_STATUS = """
 CREATE TABLE api_status_weekly (
     date TEXT NOT NULL, receptor_uuid TEXT NOT NULL, receptor TEXT NOT NULL DEFAULT '',
@@ -92,7 +93,29 @@ CREATE TABLE api_status_weekly (
     status INTEGER NOT NULL, total INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (date, receptor_uuid, transmitter_uuid, status)
 );
+CREATE TABLE behavior_watch (
+    week TEXT NOT NULL, confirm_week TEXT NOT NULL, direction TEXT NOT NULL,
+    receptor_uuid TEXT NOT NULL, receptor TEXT NOT NULL DEFAULT '', api_group TEXT NOT NULL,
+    value_prev REAL, value_curr REAL, change_pct REAL, PRIMARY KEY (week, receptor_uuid, api_group)
+);
 """
+
+# Alertas de agosto/2026 (aba "O que mudou?"):
+#   Nubank: 2 quedas de API · Belvo: queda em jul e ago (2º mês seguido)
+#   Santander: queda e alta de ativos em semanas seguidas (oscilação) · Shopee: novo entrante
+SIGNALS = [
+    # week, signal_type, metric, api_group, uuid, receptor, prev, curr, pct
+    ("2026-03-13", "increase",    "unique_consents", "",           "rec-sant",  "SANTANDER BRASIL", 100, 130, 0.30),
+    ("2026-07-31", "decrease",    "api_group",       "Credito",    "rec-belvo", "BELVO IP", 2e6, 0.86e6, -0.57),
+    ("2026-08-07", "decrease",    "api_group",       "Identidade", "rec-nu",    "NUBANK", 2.2e6, 0.41e6, -0.81),
+    ("2026-08-07", "decrease",    "api_group",       "Conta",      "rec-belvo", "BELVO IP", 10e6, 5e6, -0.50),
+    ("2026-08-14", "decrease",    "active_consents", "",           "rec-sant",  "SANTANDER BRASIL", 301235, 208345, -0.31),
+    ("2026-08-14", "new_entrant", "unique_consents", "",           "rec-shop",  "SHOPEE", None, 31481, None),
+    ("2026-08-21", "increase",    "active_consents", "",           "rec-sant",  "SANTANDER BRASIL", 208345, 304464, 0.46),
+    ("2026-08-21", "decrease",    "api_group",       "Conta",      "rec-nu",    "NUBANK", 79.8e6, 32.4e6, -0.61),
+]
+WATCH = [("2026-08-28", "2026-09-04", "decrease", "rec-klavi", "KLAVI INSTITUICAO DE PAGAMENTO",
+          "Investimento", 116.2e6, 68.2e6, -0.44)]
 
 
 def calls_ok(uuid: str, i: int) -> int | None:
@@ -107,9 +130,16 @@ def calls_err(uuid: str, i: int) -> int | None:
     return ok // 20 if uuid == "rec-nu" else ok // 10   # Nubank 5%/105, demais 10%/110
 
 
-def build_db(path: Path, with_status_table: bool = True) -> Path:
+def build_db(path: Path, with_status_table: bool = True, with_signals: bool = True) -> Path:
     con = sqlite3.connect(str(path))
     con.executescript(DDL + (DDL_STATUS if with_status_table else ""))
+    if with_signals:
+        con.executemany("INSERT INTO behavior_signals (week, signal_type, metric, api_group, receptor_uuid, "
+                        "receptor, value_prev, value_curr, change_pct) VALUES (?,?,?,?,?,?,?,?,?)", SIGNALS)
+        if with_status_table:
+            con.executemany("INSERT INTO behavior_watch VALUES (?,?,?,?,?,?,?,?,?)", WATCH)
+    else:
+        con.execute("DROP TABLE behavior_signals")
     for i, week in enumerate(WEEKS):
         for uuid, (name, _grp) in INSTITUTIONS.items():
             pf = cpf(uuid, i)
