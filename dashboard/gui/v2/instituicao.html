@@ -11,27 +11,453 @@
 <link rel="stylesheet" href="/static/v2/v2.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script src="/static/v2/shell.js"></script>
+<style>
+  .in-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; flex-wrap: wrap; }
+  .in-head h1 { margin: 0; font-size: 30px; font-weight: 700; letter-spacing: -0.01em; }
+  .in-pill { padding: 6px 12px; border-radius: 999px; background: var(--surface-2); font-size: 13px; font-weight: 600; }
+  .in-pick { min-height: 46px; min-width: 240px; border-radius: 8px; border: 1px solid var(--control-border); background: var(--surface);
+             padding: 0 12px; text-align: left; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; }
+  .in-bars li { display: grid; grid-template-columns: 130px minmax(0, 1fr) 60px 76px; gap: 12px; align-items: center; padding: 7px 0; border-top: 1px solid var(--divider); font-size: 14px; }
+  .in-pair li { display: grid; grid-template-columns: 120px minmax(0, 1fr) 150px; gap: 12px; align-items: center; padding: 6px 0; font-size: 13px; }
+  .in-pair .tr { display: flex; flex-direction: column; gap: 3px; }
+  .in-pair .tr div { height: 10px; border-radius: 2px; }
+  .in-spark li { display: grid; grid-template-columns: 130px 130px minmax(0, 1fr) 72px; gap: 12px; align-items: center; padding: 9px 0; border-top: 1px solid var(--divider); font-size: 14px; }
+  .in-err-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 32px; }
+  @media (max-width: 1000px) { .in-err-grid { grid-template-columns: 1fr; } }
+  .in-cols { display: grid; gap: 10px; align-items: end; height: 150px; border-bottom: 1px solid var(--control-border); }
+  .in-col { display: flex; gap: 3px; align-items: flex-end; justify-content: center; height: 100%; }
+  .in-col div { width: 12px; border-radius: 3px 3px 0 0; }
+  .in-col-labels { display: grid; gap: 10px; font-size: 11px; color: var(--text-2); text-align: center; }
+  .in-chart { position: relative; height: 240px; }
+  ul.in-list { list-style: none; margin: 0; padding: 0; }
+</style>
 </head>
 <body>
 <header id="v2-header" class="v2-header"></header>
 <main class="v2-main">
-  <div class="v2-title"><h1 id="inst-title">Como opera uma instituição</h1></div>
-  <section class="v2-card">
-    <div class="v2-placeholder">
-      <p>Esta aba ainda está em construção no Dashboard 2.0.</p>
-      <p>Enquanto isso, o perfil de cada instituição está no <a href="/profile">Perfil Receptores do painel atual</a>.</p>
-    </div>
-  </section>
+  <section class="v2-filterbar" id="filterbar" aria-label="Filtros"></section>
+  <div id="head"></div>
+  <div class="v2-grid v2-grid-4" id="kpis"></div>
+  <div class="v2-grid v2-grid-rank">
+    <article class="v2-card" id="card-evo"></article>
+    <article class="v2-card" id="card-mix"></article>
+  </div>
+  <div class="v2-grid v2-grid-rank">
+    <article class="v2-card" id="card-groups"></article>
+    <article class="v2-card" id="card-tx"></article>
+  </div>
+  <article class="v2-card" id="card-err"></article>
+  <article class="v2-card" id="card-alerts"></article>
 </main>
+
 <script>
-V2.initShell('instituicao').then(meta => {
-  const uuid = new URLSearchParams(location.search).get('uuid');
-  const inst = uuid && meta.institutions.find(i => i.uuid === uuid);
-  if (inst) {
-    V2.setFilters({ institution: inst.uuid });
-    document.getElementById('inst-title').textContent = 'Como opera: ' + inst.short;
+(function () {
+  'use strict';
+  const PERIODS = { '12m': ['Últimos 12 meses', 364, '12 meses'], '6m': ['Últimos 6 meses', 182, '6 meses'],
+                    '3m': ['Últimos 3 meses', 91, '3 meses'], 'all': ['Desde o início', null, 'no período'] };
+  const MONTHS = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+  const f0 = V2.getFilters();
+  const EVO = { unique_pf: 'PF', unique_pj: 'PJ', unique_total: 'PF + PJ', active: 'Ativos', api: 'API', api_per_consent: 'API/(PF + PJ)' };
+  const MIX = { share: '%', total: 'API total', per_consent: 'API/(PF + PJ)' };
+  const st = {
+    uuid: new URLSearchParams(location.search).get('uuid') || f0.institution || null,
+    compare: f0.compare || 'ecosystem',
+    period: PERIODS[f0.period] ? f0.period : '12m',
+    evo: EVO[f0.inst_evo] ? f0.inst_evo : 'unique_total',
+    mix: MIX[f0.inst_mix] ? f0.inst_mix : 'per_consent',
+  };
+  let d = null, chart = null;
+
+  const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+  const inst = u => (V2.meta.institutions || []).find(i => i.uuid === u);
+  const pct1 = v => v == null ? '—' : new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(v * 100) + '%';
+  const pp = v => (v > 0 ? '+' : v < 0 ? '−' : '') + new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(Math.abs(v * 100)) + ' pp';
+  function periodStart() {
+    const days = PERIODS[st.period][1];
+    if (days == null) return '2000-01-01';
+    const dt = new Date(V2.meta.data_through + 'T00:00:00Z');
+    dt.setUTCDate(dt.getUTCDate() - days);
+    return dt.toISOString().slice(0, 10);
   }
-}).catch(() => {});
+  function save() {
+    V2.setFilters({ institution: st.uuid, compare: st.compare, period: st.period, inst_evo: st.evo, inst_mix: st.mix });
+    history.replaceState(null, '', '/v2/instituicao?uuid=' + encodeURIComponent(st.uuid));
+  }
+  function actions(key) {
+    return '<div class="v2-card-actions"><button type="button" class="v2-icon-btn" data-img="' + key + '" aria-label="Copiar como imagem">' + V2.icon('image') + '</button></div>';
+  }
+  function head(title, sub, key) {
+    return '<div class="v2-card-head"><div><h2>' + title + '</h2><span class="v2-sub">' + sub + '</span></div>' + actions(key) + '</div>';
+  }
+
+  // ── Barra de filtros ─────────────────────────────────────────────────────
+  function renderFilterbar() {
+    const me = inst(st.uuid);
+    const grpLabel = me ? V2.groupLabel(me.group) : '';
+    const other = !['ecosystem', 'group'].includes(st.compare) ? inst(st.compare) : null;
+    document.getElementById('filterbar').innerHTML =
+      '<div class="v2-fb-row"><div class="v2-fb-group">' +
+        '<div class="v2-field"><span class="v2-label">Instituição</span><button type="button" class="in-pick" id="f-inst">' +
+          (me ? '<span class="v2-dot" style="background:' + V2.groupColor(me.group) + '"></span>' + V2.esc(me.short) : 'Escolher…') + '</button></div>' +
+        '<label class="v2-field"><span class="v2-label">Comparar com</span><select class="v2-select" id="f-compare">' +
+          '<option value="ecosystem"' + (st.compare === 'ecosystem' ? ' selected' : '') + '>Ecossistema</option>' +
+          '<option value="group"' + (st.compare === 'group' ? ' selected' : '') + '>Média do grupo (' + V2.esc(grpLabel) + ')</option>' +
+          (other ? '<option value="' + other.uuid + '" selected>' + V2.esc(other.short) + '</option>' : '') +
+          '<option value="__pick">Outra instituição…</option></select></label>' +
+        '<label class="v2-field"><span class="v2-label">Período</span><select class="v2-select" id="f-period">' +
+          Object.entries(PERIODS).map(([k, v]) => '<option value="' + k + '"' + (k === st.period ? ' selected' : '') + '>' + v[0] + '</option>').join('') +
+        '</select></label>' +
+      '</div><button type="button" class="v2-btn" id="f-export">Exportar perfil (CSV)</button></div>';
+  }
+  const fb = document.getElementById('filterbar');
+  fb.addEventListener('click', ev => {
+    if (ev.target.closest('#f-inst')) {
+      return V2.openInstitutionPicker(ev.target.closest('#f-inst'), u => {
+        st.uuid = u;
+        if (st.compare === u) st.compare = 'ecosystem';
+        load();
+      }, [st.uuid]);
+    }
+    if (ev.target.id === 'f-export') exportCsv();
+  });
+  fb.addEventListener('change', ev => {
+    if (ev.target.id === 'f-period') { st.period = ev.target.value; return load(); }
+    if (ev.target.id === 'f-compare') {
+      if (ev.target.value === '__pick') {
+        return V2.openInstitutionPicker(ev.target, u => { st.compare = u; load(); }, [st.uuid]);
+      }
+      st.compare = ev.target.value;
+      load();
+    }
+  });
+
+  // ── Dados ────────────────────────────────────────────────────────────────
+  async function load() {
+    save();
+    renderFilterbar();
+    document.querySelectorAll('.v2-card').forEach(c => V2.setLoading(c, true));
+    const q = new URLSearchParams({ compare: st.compare, start: periodStart() });
+    try {
+      d = await V2.fetchJSON('/api/v2/institution/' + encodeURIComponent(st.uuid) + '?' + q.toString());
+      render();
+    } catch (e) {
+      document.getElementById('head').innerHTML = V2.errorBox(e.message);
+    } finally {
+      document.querySelectorAll('.v2-card').forEach(c => V2.setLoading(c, false));
+    }
+  }
+
+  // ── Render ───────────────────────────────────────────────────────────────
+  const METRIC_SHORT = { unique_pf: 'consentimentos únicos PF', unique_pj: 'únicos PJ', active: 'ativos', api: 'chamadas de API' };
+  function rankSentence() {
+    const r = d.institution.ranks;
+    const byRank = {};
+    Object.entries(r).forEach(([m, n]) => { if (n) (byRank[n] = byRank[n] || []).push(METRIC_SHORT[m]); });
+    const parts = Object.keys(byRank).sort((a, b) => a - b).map(n => n + 'º em ' + byRank[n].join(' e '));
+    const api = d.kpis.api;
+    if (api && api.share != null && d.unique_total_share != null) {
+      parts.push('faz <b>' + V2.fmtShare(api.share) + ' das chamadas de API</b> do ecossistema com ' + V2.fmtShare(d.unique_total_share) + ' dos consentimentos');
+    }
+    return parts.join(' · ');
+  }
+  function render() {
+    const me = d.institution, ref = d.compare.label;
+    const n12 = d.alerts.events.reduce((a, e) => a + e.items.length, 0);
+    const pill = (d.unavailable || []).includes('signals') ? '' :
+      '<span class="in-pill">' + (n12 ? n12 + (n12 === 1 ? ' alerta' : ' alertas') + ' nos últimos 12 meses' : 'Sem alertas nos últimos 12 meses') + '</span>';
+    document.getElementById('head').innerHTML = '<div class="in-head"><div style="display:flex;flex-direction:column;gap:6px">' +
+      '<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap"><h1>' + V2.esc(me.name) + '</h1>' +
+      '<span class="v2-legend"><span><span class="v2-dot" style="background:' + V2.groupColor(me.group) + '"></span>' + V2.groupLabel(me.group) + '</span></span></div>' +
+      '<p style="margin:0;font-size:15px">' + rankSentence() + '</p>' +
+      '<p class="v2-muted" style="margin:0;font-size:13px">Semana de ' + V2.fmtDate(d.week) + ' · crescimento: ' + PERIODS[st.period][0].toLowerCase() + ' · comparado com ' + V2.esc(ref) + '</p></div>' + pill + '</div>';
+
+    const paceLine = (p, flow) => {
+      if (!p) return '';
+      const v = flow ? V2.fmtCompact(p.per_day) : V2.fmtSigned(p.per_day);
+      const prev = p.prev_per_day == null ? '' : ' <span class="v2-muted v2-small">(antes ' + (flow ? V2.fmtCompact(p.prev_per_day) : V2.fmtSigned(p.prev_per_day)) + ')</span>';
+      return '<span style="font-size:13px">Ritmo: <b' + (p.per_day < 0 ? ' class="v2-neg"' : '') + '>' + v + '/dia</b> ' + V2.trendArrow(p.trend) + prev + '</span>';
+    };
+    const card = (label, k, flow, extra) => {
+      if (!k) return '<div class="v2-card"><span class="v2-kpi-label">' + label + '</span><span class="v2-kpi-value">—</span></div>';
+      return '<div class="v2-card"><span class="v2-kpi-label">' + label + '</span>' +
+        '<span class="v2-kpi-value">' + V2.fmtCompact(k.value) + '</span>' +
+        paceLine(k.pace, flow) +
+        '<span class="v2-muted" style="font-size:13px">' + V2.fmtShare(k.share) + ' do total · ' + k.rank + 'º · ' + V2.fmtGrowth(k.growth) + ' em ' + PERIODS[st.period][2] + '</span>' +
+        '<span class="v2-muted v2-small">' + V2.esc(ref) + ': ' + V2.fmtGrowth(k.ref_growth) + (extra || '') + '</span></div>';
+    };
+    const api = d.kpis.api;
+    document.getElementById('kpis').innerHTML =
+      card('Consentimentos únicos PF', d.kpis.unique_pf, false) + card('Consentimentos únicos PJ', d.kpis.unique_pj, false) +
+      card('Consentimentos ativos', d.kpis.active, false) +
+      card('Chamadas de API por semana', api, true, api && api.per_consent_month != null
+        ? '<br><b style="color:var(--text)">' + V2.fmtInt(api.per_consent_month) + ' por consentimento/mês</b> · ' + V2.esc(ref) + ': ' + V2.fmtInt(api.ref_per_consent_month) +
+          '<br>Média das últimas 4 semanas, normalizada para 30 dias' : '');
+
+    renderEvolution(); renderMix(); renderGroups(); renderTx(); renderErr(); renderAlerts();
+  }
+
+  /** Eixo: 25 mi · 2,5 mi · 800 mil — sem casas decimais sobrando. */
+  function axis(v) {
+    const f = dd => new Intl.NumberFormat('pt-BR', { maximumFractionDigits: dd });
+    if (Math.abs(v) >= 1e9) return f(1).format(v / 1e9) + ' bi';
+    if (Math.abs(v) >= 1e6) return f(1).format(v / 1e6) + ' mi';
+    if (Math.abs(v) >= 1e3) return f(0).format(v / 1e3) + ' mil';
+    return f(0).format(v);
+  }
+  function segButtons(name, options, current) {
+    return '<div class="v2-seg" data-seg="' + name + '">' + Object.entries(options).map(([k, l]) =>
+      '<button type="button" data-v="' + k + '" aria-pressed="' + (k === current) + '">' + l + '</button>').join('') + '</div>';
+  }
+  const EVO_SUB = {
+    unique_total: 'Consentimentos únicos (PF + PJ)', unique_pf: 'Consentimentos únicos PF', unique_pj: 'Consentimentos únicos PJ',
+    active: 'Consentimentos ativos', api: 'Chamadas de API em 30 dias (média das últimas 4 semanas)',
+    api_per_consent: 'Chamadas de API por consentimento (PF + PJ) em 30 dias',
+  };
+
+  // ── Bloco 4 · Evolução (seletor de métrica) ──────────────────────────────
+  function renderEvolution() {
+    const el = document.getElementById('card-evo');
+    const ev = d.evolution[st.evo];
+    const ratio = st.evo === 'api_per_consent';
+    const sel = '<div style="margin:4px 0 8px">' + segButtons('evo', EVO, st.evo) + '</div>';
+    if (!ev || !ev.points.length) {
+      el.innerHTML = head('Evolução', EVO_SUB[st.evo] + ' · sem dados no período', 'evo') + sel;
+      return;
+    }
+    const v0 = ev.values[0], v1 = ev.values[ev.values.length - 1];
+    const s0 = ev.shares[0], s1 = ev.shares[ev.shares.length - 1];
+    const r1 = ev.ref && ev.ref.values.length ? ev.ref.values[ev.ref.values.length - 1] : null;
+    let title, foot;
+    if (ratio) {
+      title = r1 == null ? 'Intensidade de uso' : v1 > r1 * 1.1 ? 'Usa mais dados por cliente' : v1 < r1 * 0.9 ? 'Usa menos dados por cliente' : 'Usa dados no mesmo ritmo por cliente';
+      foot = V2.fmtInt(v0) + ' → ' + V2.fmtInt(v1) + ' por consentimento/mês' + (r1 != null ? ' · ' + V2.esc(ev.ref.label) + ': ' + V2.fmtInt(r1) : '');
+    } else {
+      title = v1 >= v0 ? (s1 < s0 ? 'Cresce, mas perde espaço' : 'Cresce e ganha espaço') : (s1 < s0 ? 'Encolhe e perde espaço' : 'Encolhe, mas ganha espaço');
+      foot = V2.fmtCompact(v0) + ' → ' + V2.fmtCompact(v1) + ' · participação ' + pct1(s0) + ' → ' + pct1(s1) + ' (' + pp(s1 - s0) + ')';
+    }
+    el.innerHTML = head(title, EVO_SUB[st.evo] + (ratio ? '' : ' e participação no ecossistema') + ' · fim de cada mês', 'evo') + sel +
+      '<div class="in-chart"><canvas id="evo-chart" aria-label="' + V2.esc(EVO_SUB[st.evo]) + ' mês a mês"></canvas></div>' +
+      '<div class="v2-card-foot"><span>' + foot + '</span></div>';
+    const color = V2.groupColor(d.institution.group);
+    const labels = ev.points.map(p => MONTHS[+p.slice(5) - 1] + '/' + p.slice(2, 4));
+    const fmt = v => ratio ? V2.fmtInt(v) + '/mês' : V2.fmtCompact(v);
+    const datasets = [{ label: d.institution.name, data: ev.values, borderColor: color, backgroundColor: color, borderWidth: 3, pointRadius: 3, tension: 0.2, spanGaps: false }];
+    if (ev.ref && ev.ref.values.length) {
+      const byPoint = Object.fromEntries(ev.ref.points.map((p, i) => [p, ev.ref.values[i]]));
+      datasets.push({ label: ev.ref.label, data: ev.points.map(p => byPoint[p] ?? null), borderColor: css('--text-2'), borderDash: [6, 4], borderWidth: 2, pointRadius: 0, tension: 0.2, spanGaps: false });
+    }
+    if (chart) chart.destroy();
+    chart = new Chart(document.getElementById('evo-chart'), {
+      type: 'line', data: { labels, datasets },
+      options: { maintainAspectRatio: false, animation: false,
+        plugins: { legend: { display: datasets.length > 1, labels: { color: css('--text-2') } },
+          tooltip: { callbacks: { label: c => c.dataset.label + ': ' + fmt(c.parsed.y) + (c.datasetIndex === 0 && ev.shares[c.dataIndex] != null ? ' · ' + pct1(ev.shares[c.dataIndex]) + ' do total' : '') } } },
+        scales: { x: { ticks: { color: css('--text-2') }, grid: { display: false } },
+                  y: { beginAtZero: true, ticks: { color: css('--text-2'), callback: ratio ? (v => V2.fmtInt(v)) : axis }, grid: { color: css('--divider') } } } },
+    });
+  }
+
+  // ── Bloco 5 · Mix de API (seletor de unidade) ────────────────────────────
+  const MIX_FIELD = { share: ['share', 'ref_share'], total: ['calls_30d', 'ref_calls_30d'], per_consent: ['per_consent', 'ref_per_consent'] };
+  function mixFmt(v) {
+    if (v == null) return '—';
+    return st.mix === 'share' ? V2.fmtShare(v) : st.mix === 'total' ? V2.fmtCompact(v) : V2.fmtInt(v);
+  }
+  function renderMix() {
+    const el = document.getElementById('card-mix');
+    const m = d.api_mix;
+    const sub = { share: '% das chamadas por grupo de dados', total: 'Chamadas por grupo de dados em 30 dias',
+                  per_consent: 'Chamadas por consentimento (PF + PJ) em 30 dias, por grupo de dados' }[st.mix];
+    const sel = '<div style="margin:4px 0 8px">' + segButtons('mix', MIX, st.mix) + '</div>';
+    if (!m.length) { el.innerHTML = head('Para que usa os dados', 'Sem chamadas de API nas últimas 4 semanas', 'mix') + sel; return; }
+    const [fm, fr] = MIX_FIELD[st.mix];
+    // Em "API total", instituição e ecossistema/grupo têm escalas muito diferentes: a barra
+    // de referência só aparece contra outra instituição; nos demais, o valor fica em texto.
+    const sameScale = st.mix !== 'total' || d.compare.kind === 'institution';
+    const maxMe = Math.max.apply(null, m.map(x => x[fm] || 0).concat([1e-9]));
+    const max = sameScale ? Math.max.apply(null, m.map(x => Math.max(x[fm] || 0, x[fr] || 0)).concat([1e-9])) : maxMe;
+    const color = V2.groupColor(d.institution.group), refc = css('--control-border');
+    let note = '';
+    if (st.mix === 'share') {
+      const diffs = m.filter(x => x.share != null && x.ref_share != null).map(x => [x.label, x.share - x.ref_share]).sort((a, b) => b[1] - a[1]);
+      const more = diffs[0], less = diffs[diffs.length - 1];
+      if (more && less && more[1] > 0.005 && less[1] < -0.005) note = 'Pesa mais em ' + more[0] + ' (' + pp(more[1]) + ') e menos em ' + less[0] + ' (' + pp(less[1]) + ') que ' + d.compare.label;
+    } else if (st.mix === 'per_consent') {
+      const r = m.filter(x => x.per_consent && x.ref_per_consent).map(x => [x.label, x.per_consent / x.ref_per_consent]).sort((a, b) => b[1] - a[1]);
+      if (r.length) note = 'Maior intensidade relativa: ' + r[0][0] + ' (' + new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 1 }).format(r[0][1]) + '× ' + d.compare.label + ')';
+    }
+    el.innerHTML = head('Para que usa os dados', sub + ' (sem Resource) · ' + V2.esc(d.institution.name) + ' contra ' + V2.esc(d.compare.label), 'mix') + sel +
+      '<div class="v2-legend"><span><span class="v2-dot" style="background:' + color + '"></span>' + V2.esc(d.institution.name) + '</span>' +
+      '<span><span class="v2-dot" style="background:' + refc + '"></span>' + V2.esc(d.compare.label) + '</span></div>' +
+      '<ul class="in-list in-pair">' + m.map(x => '<li><span style="font-weight:600">' + V2.esc(x.label) + '</span>' +
+        '<div class="tr"><div style="width:' + (100 * (x[fm] || 0) / max).toFixed(1) + '%;background:' + color + '"></div>' +
+        (sameScale ? '<div style="width:' + (100 * (x[fr] || 0) / max).toFixed(1) + '%;background:' + refc + '"></div>' : '') + '</div>' +
+        '<span>' + mixFmt(x[fm]) + ' · ref ' + mixFmt(x[fr]) + '</span></li>').join('') + '</ul>' +
+      '<div class="v2-card-foot">' + (note ? '<span>' + V2.esc(note) + '</span>' : '') +
+        '<span>Últimas 4 semanas normalizadas para 30 dias · sem o grupo Resource (por isso a soma difere do card de API)</span></div>';
+  }
+
+  // ── Bloco 6 · Chamadas por grupo (mesma unidade do mix) ──────────────────
+  function spark(values, color) {
+    const vals = values.filter(v => v != null);
+    if (!vals.length) return '';
+    const min = Math.min.apply(null, vals), max = Math.max.apply(null, vals), span = (max - min) || 1;
+    const pts = values.map((v, i) => v == null ? null : (values.length > 1 ? (i * 120 / (values.length - 1)) : 0).toFixed(1) + ',' + (26 - 24 * (v - min) / span).toFixed(1)).filter(Boolean).join(' ');
+    return '<svg viewBox="0 0 120 28" width="120" height="28" aria-hidden="true"><polyline points="' + pts + '" style="fill:none;stroke:' + color + ';stroke-width:2;stroke-linejoin:round"></polyline></svg>';
+  }
+  function renderGroups() {
+    const el = document.getElementById('card-groups');
+    const unit = st.mix;
+    const rows = d.api_by_group.filter(g => g.units[unit]);
+    const sub = { share: '% das chamadas da instituição por grupo', total: 'Chamadas em 30 dias', per_consent: 'Chamadas por consentimento em 30 dias' }[unit];
+    const growth = u => u.growth.kind === 'pp' ? pp(u.growth.value) : V2.fmtGrowth(u.growth);
+    el.innerHTML = head('Chamadas por grupo de API', sub + ' · linha = fim de cada mês · unidade do seletor do mix', 'groups') +
+      (rows.length ? '<ul class="in-list in-spark">' + rows.map(g => { const u = g.units[unit]; return '<li><span style="font-weight:600">' + V2.esc(g.label) + '</span>' + spark(u.monthly, g.color) +
+        '<span class="v2-r">' + mixFmt(u.from) + ' → ' + mixFmt(u.to) + '</span><span class="v2-r" style="font-weight:600">' + growth(u) + '</span></li>'; }).join('') + '</ul>'
+        : '<div class="v2-placeholder">Sem chamadas de API no período.</div>');
+  }
+
+  // ── Bloco 7 · Transmissores (top 8 + Outros, com crescimento) ────────────
+  function renderTx() {
+    const el = document.getElementById('card-tx');
+    const t = d.transmitters;
+    const named = t.filter(x => !x.other);
+    const max = Math.max.apply(null, t.map(x => x.value).concat([1]));
+    const top6 = named.slice(0, 6).reduce((a, x) => a + (x.share || 0), 0);
+    el.innerHTML = head('De onde vêm os consentimentos ativos', 'Instituições que transmitem os dados · semana de ' + V2.fmtDate(d.week) + ' · cor = grupo · crescimento em ' + PERIODS[st.period][2], 'tx') +
+      (t.length ? '<ul class="in-list in-bars">' + t.map(x => '<li style="grid-template-columns:150px minmax(0,1fr) 56px 76px 76px">' +
+        '<span style="font-weight:' + (x.other ? 500 : 600) + (x.other ? ';color:var(--text-2)' : '') + '">' + V2.esc(x.name) + '</span>' +
+        '<div class="v2-track" style="height:10px"><div style="width:' + (100 * x.value / max).toFixed(1) + '%;background:' + (x.other ? css('--control-border') : V2.groupColor(x.group)) + '"></div></div>' +
+        '<span class="v2-r" style="font-weight:600">' + V2.fmtShare(x.share) + '</span><span class="v2-r">' + V2.fmtCompact(x.value) + '</span>' +
+        '<span class="v2-r v2-muted">' + (x.growth ? V2.fmtGrowth(x.growth) : '') + '</span></li>').join('') + '</ul>' +
+        '<div class="v2-card-foot"><span>Os ' + Math.min(6, named.length) + ' maiores transmissores somam ' + V2.fmtShare(top6) + '</span></div>'
+        : '<div class="v2-placeholder">Sem consentimentos ativos registrados.</div>');
+  }
+
+  // ── Bloco 8 · Taxa de erro (4 semanas, todos os meses) ───────────────────
+  function renderErr() {
+    const el = document.getElementById('card-err');
+    const e = d.error_rate;
+    if (!e) {
+      el.innerHTML = head('Taxa de erro de API', '% das chamadas que voltaram com erro (500)', 'err') +
+        '<div class="v2-placeholder">Os dados de erro ainda não foram gerados nesta base. Rode <code>python compute_signals.py</code> no data-loader e publique a base.</div>';
+      return;
+    }
+    const color = V2.groupColor(d.institution.group), refc = css('--control-border');
+    const ser = e.series;
+    const max = Math.max.apply(null, ser.map(s => Math.max(s.value || 0, s.ref || 0)).concat([0.001]));
+    const cols = 'grid-template-columns:repeat(' + ser.length + ',minmax(0,1fr))';
+    const tx = e.by_transmitter, txMax = Math.max.apply(null, tx.map(x => x.value || 0).concat([0.001]));
+    const ratio = e.ref_current ? e.current / e.ref_current : null;
+    const verdict = ratio == null ? '' : ratio < 0.8 ? 'Erra menos que ' + d.compare.label : ratio > 1.2 ? 'Erra mais que ' + d.compare.label : 'Erra no mesmo nível de ' + d.compare.label;
+    el.innerHTML = head('Taxa de erro de API', '% das chamadas que voltaram com erro (status 500) · ' + V2.esc(d.institution.name) + ' contra ' + V2.esc(d.compare.label), 'err') +
+      '<div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap"><span class="v2-kpi-value">' + pct1(e.current) + '</span>' +
+      '<span class="v2-muted">' + V2.esc(d.compare.label) + ' ' + pct1(e.ref_current) + ' · últimas 4 semanas até ' + V2.fmtDate(e.week) + '</span></div>' +
+      '<div class="in-err-grid"><div style="display:flex;flex-direction:column;gap:8px"><span style="font-weight:600;font-size:13px">Mês a mês (soma das semanas do mês)</span>' +
+        '<div class="in-cols" style="' + cols + ';gap:4px" role="img" aria-label="Taxa de erro mensal">' + ser.map(s =>
+          '<div class="in-col" title="' + MONTHS[+s.point.slice(5) - 1] + '/' + s.point.slice(2, 4) + ': ' + pct1(s.value) + ' · ' + V2.esc(d.compare.label) + ' ' + pct1(s.ref) + '">' +
+          '<div style="width:9px;height:' + (130 * (s.value || 0) / max).toFixed(0) + 'px;background:' + color + '"></div>' +
+          '<div style="width:9px;height:' + (130 * (s.ref || 0) / max).toFixed(0) + 'px;background:' + refc + '"></div></div>').join('') + '</div>' +
+        '<div class="in-col-labels" style="' + cols + ';gap:4px">' + ser.map(s => '<span>' + MONTHS[+s.point.slice(5) - 1] + '</span>').join('') + '</div>' +
+        '<div class="v2-legend"><span><span class="v2-dot" style="background:' + color + '"></span>' + V2.esc(d.institution.name) + ' ' + pct1(ser.length ? ser[ser.length - 1].value : null) + ' no último mês</span>' +
+        '<span><span class="v2-dot" style="background:' + refc + '"></span>' + V2.esc(d.compare.label) + '</span></div></div>' +
+      '<div style="display:flex;flex-direction:column;gap:8px"><span style="font-weight:600;font-size:13px">Por transmissor · últimas 4 semanas (onde o erro acontece)</span>' +
+        '<ul class="in-list in-bars">' + tx.map((x, i) => '<li style="grid-template-columns:130px minmax(0,1fr) 60px"><span style="font-weight:600">' + V2.esc(x.name) + '</span>' +
+          '<div class="v2-track" style="height:10px"><div style="width:' + (100 * (x.value || 0) / txMax).toFixed(1) + '%;background:' + (i === 0 ? 'var(--down)' : css('--text-2')) + '"></div></div>' +
+          '<span class="v2-r"' + (i === 0 ? ' style="font-weight:700"' : '') + '>' + pct1(x.value) + '</span></li>').join('') + '</ul></div></div>' +
+      (verdict ? '<div class="v2-card-foot"><span>' + V2.esc(verdict) + (tx.length ? ' · onde mais erra: ' + V2.esc(tx[0].name) + ' (' + pct1(tx[0].value) + ')' : '') + '</span></div>' : '');
+  }
+
+  // ── Bloco 9 · Alertas (como na aba 3) ────────────────────────────────────
+  function renderAlerts() {
+    const el = document.getElementById('card-alerts');
+    const a = d.alerts;
+    const MONTHS_FULL = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+    const item = i => '<span>' + V2.fmtDate(i.week).slice(0, 5) + '</span><span>' + V2.esc(i.metric_label) + '</span>' +
+      '<span>' + (i.signal_type === 'new_entrant' ? 'passou de 30 mil: ' + V2.fmtInt(i.value_curr) : V2.fmtAlertValue(i.value_prev, i.metric) + ' → ' + V2.fmtAlertValue(i.value_curr, i.metric)) + '</span>' +
+      '<span class="v2-r" style="font-weight:700;color:' + (i.change_pct < 0 ? 'var(--down)' : 'var(--up)') + '">' + (i.change_pct == null ? '' : V2.fmtPct(i.change_pct)) + '</span>';
+    let body = '';
+    if ((d.unavailable || []).includes('signals')) {
+      body = '<span class="v2-muted">Alertas ainda não calculados nesta base.</span>';
+    } else {
+      if (a.watching.length) {
+        body += '<div style="border:1px dashed var(--text-2);border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;gap:4px">' +
+          '<b style="font-size:14px">Em observação</b>' + a.watching.map(w => '<span style="font-size:13px">' + V2.esc(w.api_group_label) + ': ' +
+            V2.fmtCompact(w.value_prev) + ' → ' + V2.fmtCompact(w.value_curr) + ' (<b>' + V2.fmtPct(w.change_pct) + '</b>) · decide com a semana de ' + V2.fmtDate(w.confirm_week).slice(0, 5) + '</span>').join('') + '</div>';
+      }
+      if (a.events.length) {
+        body += '<ul class="in-list">' + a.events.map(e => {
+          const n = e.items.length;
+          const badge = V2.KIND_LABEL[e.kind] + (n > 1 && e.kind !== 'oscillation' ? ' · ' + n : '');
+          return '<li style="padding:12px 0;border-top:1px solid var(--divider);display:flex;flex-direction:column;gap:8px">' +
+            '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><span class="v2-badge ' + V2.KIND_CLASS[e.kind] + '">' + badge + '</span>' +
+            '<b>' + MONTHS_FULL[+e.month.slice(5) - 1] + '/' + e.month.slice(0, 4) + '</b>' +
+            (e.streak_months >= 2 ? '<span class="v2-small v2-muted">' + V2.ordinalStreak(e.streak_months) + '</span>' : '') + '</div>' +
+            '<div class="mc-items" style="display:grid;grid-template-columns:60px 170px minmax(0,1fr) 72px;column-gap:16px;row-gap:4px;font-size:13px">' + e.items.map(item).join('') + '</div>' +
+            (e.kind === 'oscillation' ? '<span class="v2-small v2-muted">Voltou ao nível anterior em uma semana · 2 alertas, 1 evento</span>' : '') + '</li>';
+        }).join('') + '</ul>';
+      } else {
+        body += '<span class="v2-muted">Nenhum alerta nos últimos 12 meses' + (a.last_alert
+          ? ' · o último foi em ' + V2.fmtDate(a.last_alert.week) + ': ' + a.last_alert.items.map(i => V2.KIND_LABEL[i.signal_type].toLowerCase() + ' em ' + i.metric_label).join(', ')
+          : ' · nenhum alerta registrado') + '</span>';
+      }
+    }
+    el.innerHTML = '<div class="v2-card-head"><div><h2>Alertas de ' + V2.esc(d.institution.name) + '</h2><span class="v2-sub">Últimos 12 meses · mesmas regras de "O que mudou?"</span></div>' +
+      '<a href="/v2/mudancas?institution=' + encodeURIComponent(d.institution.name) + '" style="font-weight:600;text-decoration:none;min-height:44px;display:inline-flex;align-items:center">Ver em "O que mudou?" →</a></div>' + body;
+  }
+
+  // Seletores dos blocos 4 e 5 (o bloco 6 segue o do mix).
+  document.querySelector('.v2-main').addEventListener('click', ev => {
+    const b = ev.target.closest('#card-evo [data-seg] button, #card-mix [data-seg] button');
+    if (!b) return;
+    const name = b.parentElement.dataset.seg;
+    st[name] = b.dataset.v;
+    save();
+    if (name === 'evo') renderEvolution(); else { renderMix(); renderGroups(); }
+  });
+
+  // ── Exportação ───────────────────────────────────────────────────────────
+  document.querySelector('.v2-main').addEventListener('click', ev => {
+    const b = ev.target.closest('[data-img]');
+    if (!b) return;
+    const card = b.closest('.v2-card');
+    V2.exportImage(card, {
+      title: d.institution.name + ' · ' + card.querySelector('h2').textContent,
+      subtitle: card.querySelector('.v2-sub').textContent,
+      note: 'Comparado com ' + d.compare.label,
+      filename: 'opf-instituicao-' + d.institution.name.toLowerCase().replace(/\W+/g, '-') + '-' + b.dataset.img + '-' + d.week + '.png',
+    }).catch(e => alert(e.message));
+  });
+  function exportCsv() {
+    if (!d) return;
+    const rows = [];
+    Object.entries(d.kpis).forEach(([m, k]) => k && rows.push({ s: 'Indicador', i: METRIC_SHORT[m], v: k.value, sh: k.share, r: k.rank, g: V2.fmtGrowth(k.growth), rg: V2.fmtGrowth(k.ref_growth) }));
+    d.api_mix.forEach(x => rows.push({ s: 'Mix de API (30 dias)', i: x.label, v: x.calls_30d, sh: x.share, rsh: x.ref_share,
+                                       pc: x.per_consent, rpc: x.ref_per_consent }));
+    d.api_by_group.forEach(x => x.units.total && rows.push({ s: 'Chamadas por grupo (30 dias)', i: x.label, v: x.units.total.to,
+                                                             g: V2.fmtGrowth(x.units.total.growth), pc: x.units.per_consent && x.units.per_consent.to }));
+    d.transmitters.forEach(x => rows.push({ s: 'Transmissor', i: x.name, v: x.value, sh: x.share, g: x.growth ? V2.fmtGrowth(x.growth) : '' }));
+    if (d.error_rate) d.error_rate.by_transmitter.forEach(x => rows.push({ s: 'Taxa de erro por transmissor', i: x.name, sh: x.value }));
+    const p = x => x == null ? null : Math.round(x * 10000) / 100;
+    V2.exportCSV('opf-instituicao-' + d.institution.name.toLowerCase().replace(/\W+/g, '-') + '-' + d.week + '.csv', [
+      { label: 'Seção', value: r => r.s }, { label: 'Item', value: r => r.i }, { label: 'Valor', value: r => r.v },
+      { label: 'Participação (%)', value: r => p(r.sh) }, { label: 'Referência (%) · ' + d.compare.label, value: r => p(r.rsh) },
+      { label: 'Por consentimento/mês', value: r => r.pc == null ? null : Math.round(r.pc) },
+      { label: 'Por consentimento/mês · ' + d.compare.label, value: r => r.rpc == null ? null : Math.round(r.rpc) },
+      { label: 'Posição', value: r => r.r }, { label: 'Crescimento', value: r => r.g }, { label: 'Crescimento ' + d.compare.label, value: r => r.rg },
+    ], rows);
+  }
+
+  // ── Boot ─────────────────────────────────────────────────────────────────
+  V2.initShell('instituicao').then(async meta => {
+    if (!st.uuid || !inst(st.uuid)) {
+      const top = await V2.fetchJSON('/api/v2/ranking?metric=unique_pf&limit=1');
+      st.uuid = top.rows.length ? top.rows[0].uuid : (meta.institutions[0] || {}).uuid;
+    }
+    if (st.compare !== 'ecosystem' && st.compare !== 'group' && (!inst(st.compare) || st.compare === st.uuid)) st.compare = 'ecosystem';
+    load();
+  }).catch(e => { document.getElementById('head').innerHTML = V2.errorBox(e.message); });
+})();
 </script>
 </body>
 </html>

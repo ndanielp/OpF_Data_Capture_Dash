@@ -240,6 +240,11 @@ async def test_ranking_api_errors_and_per_consent(client):
     assert d["ecosystem"]["error_rate"] is not None
 
     d = (await client.get("/api/v2/ranking", params={"metric": "api", "scale": "per_consent"})).json()
+    nu = next(x for x in d["rows"] if x["uuid"] == "rec-nu")
+    last4 = range(F.N_WEEKS - 4, F.N_WEEKS)
+    calls30 = sum(F.calls_ok("rec-nu", i) for i in last4) / 4 * 30 / 7
+    uniq = sum(F.cpf("rec-nu", i) + F.cnpj("rec-nu", i) for i in last4) / 4
+    assert nu["per_consent_month"] == pytest.approx(calls30 / uniq)   # mesma regra da aba 4
     per = [x["per_consent_month"] for x in d["rows"]]
     assert per == sorted(per, reverse=True)
     assert all(x["share"] is None for x in d["rows"])

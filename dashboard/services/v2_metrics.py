@@ -13,6 +13,7 @@ import sqlite3
 from pathlib import Path
 from typing import Iterable
 
+import numpy as np
 import pandas as pd
 from cachetools import TTLCache
 
@@ -225,18 +226,26 @@ def growth_stock(s: pd.Series, start: pd.Timestamp, end: pd.Timestamp) -> dict:
     return format_growth(last[1] / float(first.iloc[0]), debut, start)
 
 
-def growth_flow(s: pd.Series, start: pd.Timestamp, end: pd.Timestamp) -> dict:
-    """Média das 4 semanas até o fim contra a média das 4 semanas até o início."""
+def flow_means(s: pd.Series, start: pd.Timestamp, end: pd.Timestamp) -> tuple[float | None, float | None]:
+    """Médias semanais das 4 semanas até o início e das 4 até o fim (base do crescimento
+    de fluxos: uma semana isolada não vira base)."""
     win = pd.Timedelta(days=PACE_WINDOW_DAYS)
     start = _period_start(s, start)
-    debut = _debut(s)
     head = s[(s.index > start - win) & (s.index <= start)].dropna()
     if head.empty:   # período começa na primeira semana da base
         head = s[(s.index >= start) & (s.index < start + win)].dropna()
     tail = s[(s.index > end - win) & (s.index <= end)].dropna()
-    if head.empty or tail.empty or head.mean() <= 0:
+    return (float(head.mean()) if len(head) else None, float(tail.mean()) if len(tail) else None)
+
+
+def growth_flow(s: pd.Series, start: pd.Timestamp, end: pd.Timestamp) -> dict:
+    """Média das 4 semanas até o fim contra a média das 4 semanas até o início."""
+    head, tail = flow_means(s, start, end)
+    start = _period_start(s, start)
+    debut = _debut(s)
+    if head is None or tail is None or head <= 0:
         return format_growth(None, debut, start)
-    return format_growth(float(tail.mean()) / float(head.mean()), debut, start)
+    return format_growth(tail / head, debut, start)
 
 
 def _growth_sort_key(g: dict) -> float:
@@ -390,6 +399,92 @@ def group_events(month_rows: pd.DataFrame, all_rows: pd.DataFrame, month: str,
         })
     events.sort(key=lambda e: (_KIND_ORDER.get(e["kind"], 0), -(e["max_abs_change"] or 0), e["name"]))
     return events
+
+
+# ── Instituição (aba "Como opera uma instituição?") ──────────────────────────
+
+def ref_members(compare: str, uuid: str, group_of: dict[str, str], universe: Iterable[str]) -> list[str] | None:
+    """Quem entra na referência: None = ecossistema inteiro; 'group' = instituições
+    do mesmo grupo (soma do grupo); outro UUID = só ela."""
+    if compare == "ecosystem":
+        return None
+    if compare == "group":
+        g = group_of.get(uuid, "outros")
+        return [u for u in universe if group_of.get(u, "outros") == g]
+    return [compare]
+
+
+def series_of(wide: pd.DataFrame, members: list[str] | None) -> pd.Series:
+    """Soma semanal dos membros (None = todos). Semana sem nenhum dado → NaN."""
+    if wide.empty:
+        return pd.Series(dtype=float)
+    cols = wide.columns if members is None else [c for c in members if c in wide.columns]
+    if not len(cols):
+        return pd.Series(np.nan, index=wide.index)
+    return wide[cols].sum(axis=1, min_count=1)
+
+
+def per_30_days(weekly: pd.Series) -> pd.Series:
+    """Fluxo semanal → equivalente a 30 dias pelas últimas 4 semanas (soma ÷ 28 × 30;
+    revisão da aba 4 em 2026-10-05). Semana sem dado não entra na média."""
+    return weekly.rolling(4, min_periods=1).mean() * 30 / 7
+
+
+def per_consent_30d(calls_weekly: pd.Series, unique_weekly: pd.Series) -> pd.Series:
+    """Chamadas em 30 dias ÷ média de consentimentos únicos (PF + PJ) das mesmas 4 semanas."""
+    u = unique_weekly.reindex(calls_weekly.index).rolling(4, min_periods=1).mean()
+    return (per_30_days(calls_weekly) / u).where(u > 0)
+
+
+def paired_sums(calls_wide: pd.DataFrame, unique_wide: pd.DataFrame,
+                members: list[str] | None) -> tuple[pd.Series, pd.Series]:
+    """Somas de chamadas e de consentimentos únicos de um conjunto (None = todos),
+    contando, em cada semana, só os consentimentos de quem teve chamadas naquela
+    semana — senão quem não usa API infla o denominador do "por consentimento"."""
+    cols = [c for c in (calls_wide.columns if members is None else members)
+            if c in calls_wide.columns and c in unique_wide.columns]
+    if not cols:
+        empty = pd.Series(np.nan, index=calls_wide.index)
+        return empty, empty
+    c = calls_wide[cols]
+    u = unique_wide.reindex(calls_wide.index)[cols].where(c.notna() & (c > 0))
+    return c.sum(axis=1, min_count=1), u.sum(axis=1, min_count=1)
+
+
+def monthly_last(s: pd.Series, start: pd.Timestamp, end: pd.Timestamp) -> pd.DataFrame:
+    """Último valor de cada mês do período (research.md, Decisão 8): colunas month,
+    week, value. Mês sem nenhum dado fica de fora — nunca vira zero."""
+    s = s[(s.index >= start) & (s.index <= end)].dropna()
+    if s.empty:
+        return pd.DataFrame(columns=["month", "week", "value"])
+    df = pd.DataFrame({"week": s.index, "value": s.to_numpy()})
+    df["month"] = df["week"].dt.strftime("%Y-%m")
+    return df.groupby("month", as_index=False).last()[["month", "week", "value"]]
+
+
+def load_api_groups() -> pd.DataFrame:
+    """api_group_weekly longa (status 200): date (Timestamp), uuid, grp, value."""
+    df = _query("SELECT date, receptor_uuid AS uuid, grp, SUM(req_week) AS value "
+                "FROM api_group_weekly GROUP BY date, receptor_uuid, grp").copy()
+    df["date"] = pd.to_datetime(df["date"])
+    return df
+
+
+def load_transmitters(uuid: str) -> pd.DataFrame:
+    """Consentimentos ativos da instituição por transmissor (todas as semanas)."""
+    df = _query("SELECT date, transmitter_uuid, transmitter, SUM(total) AS value FROM active_consents "
+                "WHERE receptor_uuid = ? GROUP BY date, transmitter_uuid", (uuid,)).copy()
+    df["date"] = pd.to_datetime(df["date"])
+    return df
+
+
+def load_status_by_transmitter(uuid: str) -> pd.DataFrame:
+    """Chamadas da instituição por transmissor e status. TableMissing sem api_status_weekly."""
+    df = _query("SELECT date, transmitter_uuid, MAX(transmitter) AS transmitter, status, SUM(total) AS value "
+                "FROM api_status_weekly WHERE receptor_uuid = ? GROUP BY date, transmitter_uuid, status",
+                (uuid,)).copy()
+    df["date"] = pd.to_datetime(df["date"])
+    return df
 
 
 def ecosystem_by_group(values: pd.Series, group_of: dict[str, str]) -> list[dict]:

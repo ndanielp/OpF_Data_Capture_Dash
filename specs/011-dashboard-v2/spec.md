@@ -15,6 +15,20 @@
 - Q: Qual versão fica no endereço principal? → A: O legado continua no endereço principal e nos endereços atuais; o 2.0 ganha endereço próprio até a virada, feita depois, num passo separado.
 - Q: Qual é a primeira entrega? → A: "Quem lidera?", já com a estrutura completa do 2.0 (abas, barra de filtros, cabeçalho, acesso ao legado).
 
+### Session 2026-10-05 — revisão da aba "Como opera uma instituição?"
+
+Revisão bloco a bloco com o responsável do produto, depois de ver a aba com dados reais.
+
+- Q: Filtros (instituição, comparar com, período, CSV)? → A: Mantidos. "Média do grupo" é a soma do grupo (média ponderada pelo tamanho).
+- Q: Cabeçalho? → A: A frase de posições mostra sempre as 4 métricas (PF, PJ, ativos, API); antes cortava em 3 posições diferentes.
+- Q: Cards de indicadores? → A: Ganham o ritmo por dia das últimas 4 semanas, com seta ↑↓ contra as 4 anteriores, como na aba 1.
+- Q: Gráfico de evolução? → A: Seletor PF · PJ · PF + PJ · Ativos · API · API/(PF + PJ), padrão PF + PJ. API/(PF + PJ) = chamadas por consentimento/mês (abaixo); sem participação; referência sempre desenhada (mesma escala) e título de intensidade ("Usa mais/menos dados por cliente"). Nas contagens, a referência só é desenhada contra outra instituição.
+- Q: Mix de API? → A: Seletor % · API total · API/(PF + PJ), padrão API/(PF + PJ), normalizado pelas últimas 4 semanas para 30 dias: chamadas das 4 semanas ÷ 28 × 30; por consentimento = esse total ÷ média de consentimentos únicos (PF + PJ) das mesmas 4 semanas. A mesma conta vale para o card de API.
+- Q: Chamadas por grupo de API? → A: Seguem a unidade do seletor do mix; minilinha mensal e crescimento como antes (em %, a variação é em pontos percentuais).
+- Q: Transmissores? → A: Linha "Outros (N transmissores)" fecha os 100%; coluna de crescimento no período por transmissor.
+- Q: Taxa de erro? → A: Valor atual e lista por transmissor sobre as últimas 4 semanas; série com todos os meses do período (mês = soma das semanas do mês).
+- Q: Alertas da instituição? → A: Como na aba 3: eventos por mês com oscilação agrupada e reincidência, "em observação" da instituição e link que abre "O que mudou?" filtrado por ela.
+
 ## Contexto de uso
 
 Os dados são semanais e a base é atualizada uma vez por mês. O responsável do produto abre o painel 1 a 2 vezes por mês, analisa o que mudou desde a última atualização e leva prints e dados exportados para slides. O painel atual é organizado por fonte de dados (Ecossistema, Perfil Receptores, Ativos); o 2.0 é organizado pelas perguntas que ele responde.
@@ -159,7 +173,7 @@ Como analista, quero ver quem ganha e quem perde espaço ao longo do período e 
 - **FR-020**: Usuários MUST poder incluir instituições em "Sempre mostrar" e em "Excluir do ranking". Fixadas fora do Top 15 aparecem abaixo de linha tracejada com a posição real; excluídas saem e a seguinte completa 15; posições e participação continuam calculadas sobre o ecossistema inteiro.
 - **FR-021**: No primeiro acesso, o Bradesco MUST estar em "Sempre mostrar". As escolhas de fixar e excluir MUST ser salvas no navegador e valer para todas as métricas.
 - **FR-022**: Usuários MUST poder ordenar o ranking por total, ritmo ou crescimento; na métrica API, também por chamadas por consentimento.
-- **FR-023**: Na métrica API, a barra MUST mostrar "Escala" (Total, padrão; Por consentimento/mês) e "Status" (Sucesso, padrão; Erros; Todas). Chamadas por consentimento/mês = chamadas da semana × 30 ÷ (consentimentos únicos × 7), a mesma conta da Escala atual. Com "Erros", a coluna por consentimento dá lugar à taxa de erro.
+- **FR-023**: Na métrica API, a barra MUST mostrar "Escala" (Total, padrão; Por consentimento/mês) e "Status" (Sucesso, padrão; Erros; Todas). Chamadas por consentimento/mês = chamadas das últimas 4 semanas normalizadas para 30 dias ÷ média de consentimentos únicos (PF + PJ) das mesmas semanas — a mesma regra da aba 4 (revisão de 2026-10-05); no ecossistema e no grupo, só entram instituições com chamadas. Com "Erros", a coluna por consentimento dá lugar à taxa de erro.
 - **FR-024**: Na métrica API, MUST haver os indicadores: chamadas na semana, ritmo por dia, chamadas por consentimento/mês do ecossistema e concentração nas 3 maiores.
 - **FR-025**: A aba MUST terminar com o resumo do último ciclo de alertas e um atalho para "O que mudou?".
 
@@ -184,7 +198,7 @@ Como analista, quero ver quem ganha e quem perde espaço ao longo do período e 
 **Aba "Como opera uma instituição?"**
 
 - **FR-038**: A instituição MUST ser escolhida por busca ou por clique em ranking/alerta; "Comparar com" oferece ecossistema (padrão), média do grupo ou outra instituição.
-- **FR-039**: A aba MUST mostrar: consentimentos únicos PF e PJ, ativos e chamadas de API (com por consentimento/mês) com participação e crescimento; evolução com participação; mix de API por grupo de dados contra a referência; chamadas por grupo de API com tendência de 12 meses; transmissores de origem dos consentimentos ativos; taxa de erro (500) ao longo do tempo e por transmissor contra a referência; e alertas da instituição.
+- **FR-039**: A aba MUST mostrar, com as regras da revisão de 2026-10-05 (Clarifications): posições nas 4 métricas; cards de únicos PF e PJ, ativos e chamadas de API com participação, posição, ritmo por dia, crescimento e referência (API com chamadas por consentimento/mês sobre 4 semanas normalizadas para 30 dias); evolução com seletor de 6 métricas (padrão PF + PJ); mix de API com seletor de unidade (padrão por consentimento); chamadas por grupo de API na unidade do mix; transmissores com "Outros" e crescimento; taxa de erro (500) sobre 4 semanas e mês a mês, também por transmissor; e alertas agrupados como na aba 3, com "em observação".
 
 ### Key Entities
 
