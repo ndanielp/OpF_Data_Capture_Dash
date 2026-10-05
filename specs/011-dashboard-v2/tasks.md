@@ -185,12 +185,12 @@ Cada fase de história é um PR próprio contra `main` (plan.md, "Entrega por fa
 
 ### Tests for User Story 2
 
-- [ ] T028 [P] [US2] Teste em `data-loader/tests/test_signals.py`: receptor com únicos em 20.000 e ativos subindo de 40.000 para 60.000 não gera alerta de `active_consents`; receptor com únicos ≥ 30.000 continua gerando.
-- [ ] T029 [P] [US2] Testes em `data-loader/tests/test_signals.py` para `behavior_watch`:
+- [X] T028 [P] [US2] Teste em `data-loader/tests/test_signals.py`: receptor com únicos em 20.000 e ativos subindo de 40.000 para 60.000 não gera alerta de `active_consents`; receptor com únicos ≥ 30.000 continua gerando.
+- [X] T029 [P] [US2] Testes em `data-loader/tests/test_signals.py` para `behavior_watch`:
   - condição de API vista só na última semana entra em `behavior_watch` com `confirm_week` = semana seguinte e não em `behavior_signals`;
   - condição confirmada em 2 semanas sai de `behavior_watch` e vira alerta;
   - rebuild idempotente.
-- [ ] T030 [P] [US2] Testes HTTP em `dashboard/tests/test_v2_changes.py`:
+- [X] T030 [P] [US2] Testes HTTP em `dashboard/tests/test_v2_changes.py`:
   - formato de `GET /api/v2/changes`;
   - queda + alta em semanas seguidas viram um evento `oscillation`, e `summary.alerts` continua contando 2;
   - instituição com alertas em meses consecutivos tem `streak_months` = 2 e `previous_month_summary`;
@@ -201,20 +201,20 @@ Cada fase de história é um PR próprio contra `main` (plan.md, "Entrega por fa
 
 ### Implementation for User Story 2
 
-- [ ] T031 [US2] Em `data-loader/signals.py` (`detect_consent_changes`), trocar a elegibilidade para os consentimentos únicos da semana-base (`volume_of[(uuid, semana_anterior)] ≥ CONSENT_FLOOR`) nas duas métricas e atualizar a docstring (research.md, Decisão 4).
-- [ ] T032 [US2] Em `data-loader/signals.py`, criar `detect_api_watch(pivot, approved_weeks, names)`. Reaproveita o cálculo 4v4 ajustado pelo ecossistema de `detect_api_changes` (extrair a parte comum numa função privada, sem duplicar) e devolve as condições na última semana aprovada que ainda não completaram `API_CONFIRM_WEEKS`.
-- [ ] T033 [US2] Adicionar o DDL de `behavior_watch` (`data-model.md`) em `scrapers.open_db()` (`data-loader/scrapers.py`) e gravá-la em `data-loader/compute_signals.py`, na mesma transação de `behavior_signals` (apagar e inserir). Registrar a contagem no log.
-- [ ] T034 [US2] Rodar `python compute_signals.py` na base local e registrar em `specs/011-dashboard-v2/quickstart.md` as contagens resultantes: alertas por métrica (ativos devem cair de 25 para cerca de 20) e linhas de `behavior_watch`.
-- [ ] T035 [US2] Implementar em `dashboard/services/v2_metrics.py`:
+- [X] T031 [US2] Em `data-loader/signals.py` (`detect_consent_changes`), trocar a elegibilidade para os consentimentos únicos da semana-base (`volume_of[(uuid, semana_anterior)] ≥ CONSENT_FLOOR`) nas duas métricas e atualizar a docstring (research.md, Decisão 4).
+- [X] T032 [US2] Em `data-loader/signals.py`, criar `detect_api_watch(pivot, approved_weeks, names)`. Reaproveita o cálculo 4v4 ajustado pelo ecossistema de `detect_api_changes` (extrair a parte comum numa função privada, sem duplicar) e devolve as condições na última semana aprovada que ainda não completaram `API_CONFIRM_WEEKS`.
+- [X] T033 [US2] Adicionar o DDL de `behavior_watch` (`data-model.md`) em `scrapers.open_db()` (`data-loader/scrapers.py`) e gravá-la em `data-loader/compute_signals.py`, na mesma transação de `behavior_signals` (apagar e inserir). Registrar a contagem no log.
+- [X] T034 [US2] Rodar `python compute_signals.py` na base local e registrar em `specs/011-dashboard-v2/quickstart.md` as contagens resultantes: alertas por métrica (ativos devem cair de 25 para cerca de 20) e linhas de `behavior_watch`.
+- [X] T035 [US2] Implementar em `dashboard/services/v2_metrics.py`:
   - `group_events(signals, month)`: uma entrada por instituição; oscilação = alertas de consentimento com sinais opostos, mesma métrica, semanas consecutivas; `max_abs_change`; `items` ordenados;
   - `streaks(signals, month)`: meses consecutivos com alerta até o mês e resumo do mês anterior;
   - `monthly_counts(signals, months=12)` por tipo.
   Seguir research.md, Decisão 9.
-- [ ] T036 [US2] Implementar `GET /changes` em `dashboard/routers/v2.py`, conforme `contracts/v2-api.md`:
+- [X] T036 [US2] Implementar `GET /changes` em `dashboard/routers/v2.py`, conforme `contracts/v2-api.md`:
   - parâmetros `month`, `types`, `signal`, `institution`, `groups`;
   - `summary`, `events` ordenados por `max_abs_change`, `watching` de `behavior_watch`, `by_group`, `rules` (texto das regras em linguagem simples) e `computed_at`;
   - rótulo de grupo de API vem de `API_GROUPS`.
-- [ ] T037 [US2] Substituir o bloco "Em construção" de `dashboard/gui/v2/mudancas.html` pela aba completa:
+- [X] T037 [US2] Substituir o bloco "Em construção" de `dashboard/gui/v2/mudancas.html` pela aba completa:
   - barra de filtros: Mês, Tipo, Sinal, Instituição (busca) e Grupos;
   - título "O que mudou em <mês>" com contagens;
   - barra de 12 meses empilhada por tipo (queda, alta, novo entrante), com o mês selecionado destacado e meses clicáveis;
@@ -222,8 +222,8 @@ Cada fase de história é um PR próprio contra `main` (plan.md, "Entrega por fa
   - lateral com "Em observação" (borda tracejada), alertas por grupo e "Como os alertas são calculados";
   - estado "nenhum alerta no mês" e estado `unavailable`.
   Layout de referência: quadro `FinalMudancas`.
-- [ ] T038 [US2] Trocar a fonte do bloco final de `dashboard/gui/v2/index.html` para `/api/v2/changes` (mês mais recente): selo, instituição, descrição curta, maior variação e link "Ver tudo em 'O que mudou?' →".
-- [ ] T039 [US2] Validação manual: roteiro 9 do `quickstart.md`. Também conferir que o card "O que mudou" do legado em `/` reflete o piso novo (menos alertas de ativos) sem quebrar.
+- [X] T038 [US2] Trocar a fonte do bloco final de `dashboard/gui/v2/index.html` para `/api/v2/changes` (mês mais recente): selo, instituição, descrição curta, maior variação e link "Ver tudo em 'O que mudou?' →".
+- [X] T039 [US2] Validação manual: roteiro 9 do `quickstart.md`. Também conferir que o card "O que mudou" do legado em `/` reflete o piso novo (menos alertas de ativos) sem quebrar.
 
 **Checkpoint**: PR 2 (US2 + US3) — a revisão mensal já cabe no 2.0.
 
@@ -235,14 +235,14 @@ Cada fase de história é um PR próprio contra `main` (plan.md, "Entrega por fa
 
 **Independent Test**: Roteiro 7 de `quickstart.md`, nas abas 1 e 3.
 
-- [ ] T040 [US3] Implementar em `dashboard/gui/v2/shell.js` `exportCSV(block)`, que a partir de `{title, columns, rows, filtersLabel, week}` gera CSV com separador `;`, decimal com vírgula, cabeçalho em português e UTF-8 com BOM. Nome do arquivo: `opf-<aba>-<bloco>-<AAAA-MM-DD>.csv`.
-- [ ] T041 [US3] Implementar em `dashboard/gui/v2/shell.js` `exportImage(cardEl, meta)`:
+- [X] T040 [US3] Implementar em `dashboard/gui/v2/shell.js` `exportCSV(block)`, que a partir de `{title, columns, rows, filtersLabel, week}` gera CSV com separador `;`, decimal com vírgula, cabeçalho em português e UTF-8 com BOM. Nome do arquivo: `opf-<aba>-<bloco>-<AAAA-MM-DD>.csv`.
+- [X] T041 [US3] Implementar em `dashboard/gui/v2/shell.js` `exportImage(cardEl, meta)`:
   - clona o bloco num quadro 1600×900 fora da tela, com título (incluindo `filtersLabel`), subtítulo (métrica e semana), o conteúdo e o rodapé "Fonte: dashboard Open Finance Brasil · dados até DD/MM/AAAA";
   - converte canvas de Chart.js em `<img>` antes da captura;
   - gera o PNG com `html-to-image` (carregado via CDN em todas as páginas de `gui/v2/`);
   - em caso de falha, mostra mensagem legível e mantém o CSV disponível.
-- [ ] T042 [US3] Ligar os botões "Copiar como imagem" e "Baixar CSV" (ícones com `aria-label`) em todos os `.v2-card` de `dashboard/gui/v2/index.html` e `dashboard/gui/v2/mudancas.html`. O botão "Exportar dados (CSV)" da barra exporta o ranking ou a lista completa. Títulos de bloco mostram o filtro ativo (FR-013).
-- [ ] T043 [US3] Validação manual: roteiro 7 do `quickstart.md`. Abrir o CSV no Excel (acentos e números certos) e colar o PNG num slide 16:9 sem recorte.
+- [X] T042 [US3] Ligar os botões "Copiar como imagem" e "Baixar CSV" (ícones com `aria-label`) em todos os `.v2-card` de `dashboard/gui/v2/index.html` e `dashboard/gui/v2/mudancas.html`. O botão "Exportar dados (CSV)" da barra exporta o ranking ou a lista completa. Títulos de bloco mostram o filtro ativo (FR-013).
+- [X] T043 [US3] Validação manual: roteiro 7 do `quickstart.md`. Abrir o CSV no Excel (acentos e números certos) e colar o PNG num slide 16:9 sem recorte.
 
 ---
 

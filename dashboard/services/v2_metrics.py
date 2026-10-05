@@ -299,6 +299,99 @@ def filters_label(groups: list[str] | None, excluded: list[dict]) -> str:
     return " · ".join(parts)
 
 
+# ── Alertas (aba "O que mudou?") ─────────────────────────────────────────────
+
+CONSENT_METRICS = ("unique_consents", "active_consents")
+_KIND_ORDER = {"decrease": 0, "increase": 0, "mixed": 0, "oscillation": 1, "new_entrant": 2}
+
+
+def load_signals() -> pd.DataFrame:
+    """behavior_signals com mês, grupo e nome curto. TableMissing se ainda não gerada."""
+    df = _query("SELECT week, signal_type, metric, api_group, receptor_uuid, receptor, "
+                "value_prev, value_curr, change_pct FROM behavior_signals")
+    df = df.copy()
+    df["month"] = df["week"].str[:7]
+    df["group"] = df["receptor"].map(resolve_institution_group)
+    df["short"] = df["receptor"].map(short_name)
+    return df
+
+
+def load_watch() -> pd.DataFrame:
+    try:
+        df = _query("SELECT week, confirm_week, direction, receptor_uuid, receptor, api_group, "
+                    "value_prev, value_curr, change_pct FROM behavior_watch")
+    except TableMissing:
+        return pd.DataFrame(columns=["week", "confirm_week", "direction", "receptor_uuid", "receptor",
+                                     "api_group", "value_prev", "value_curr", "change_pct", "group", "short"])
+    df = df.copy()
+    df["group"] = df["receptor"].map(resolve_institution_group)
+    df["short"] = df["receptor"].map(short_name)
+    return df
+
+
+def month_range(last: str, n: int = 12) -> list[str]:
+    end = pd.Period(last, freq="M")
+    return [str(end - i) for i in range(n - 1, -1, -1)]
+
+
+def _oscillation_flags(items: list[dict]) -> list[bool]:
+    """Queda seguida de alta (ou o contrário) na mesma métrica de consentimento, em
+    semanas consecutivas: os dois alertas formam uma oscilação (research.md, Decisão 9)."""
+    flags = [False] * len(items)
+    for i, a in enumerate(items):
+        for j, b in enumerate(items):
+            if (j > i and a["metric"] in CONSENT_METRICS and a["metric"] == b["metric"]
+                    and {a["signal_type"], b["signal_type"]} == {"increase", "decrease"}
+                    and abs((pd.Timestamp(b["week"]) - pd.Timestamp(a["week"])).days) == 7):
+                flags[i] = flags[j] = True
+    return flags
+
+
+def _event_kind(items: list[dict]) -> str:
+    rest = {i["signal_type"] for i in items if not i["oscillation"]}
+    if not rest:
+        return "oscillation"
+    if rest == {"new_entrant"}:
+        return "new_entrant"
+    rest.discard("new_entrant")
+    return rest.pop() if len(rest) == 1 else "mixed"
+
+
+def streak(months_with_alert: set[str], month: str) -> int:
+    n, p = 0, pd.Period(month, freq="M")
+    while str(p) in months_with_alert:
+        n, p = n + 1, p - 1
+    return n
+
+
+def group_events(month_rows: pd.DataFrame, all_rows: pd.DataFrame, month: str,
+                 item_fmt) -> list[dict]:
+    """Uma entrada por instituição no mês: itens, tipo do evento, maior variação e
+    reincidência (meses seguidos com alerta até o mês, com resumo do anterior)."""
+    events = []
+    prev_month = str(pd.Period(month, freq="M") - 1)
+    for uuid, g in month_rows.groupby("receptor_uuid", sort=False):
+        g = g.sort_values(["week", "metric", "api_group"])
+        items = [item_fmt(r) for r in g.to_dict(orient="records")]
+        for it, flag in zip(items, _oscillation_flags(items)):
+            it["oscillation"] = flag
+        mine = all_rows[all_rows["receptor_uuid"] == uuid]
+        n = streak(set(mine["month"]), month)
+        prev = mine[mine["month"] == prev_month].sort_values("week")
+        changes = [abs(i["change_pct"]) for i in items if i["change_pct"] is not None]
+        first = g.iloc[0]
+        events.append({
+            "uuid": uuid, "name": first["short"], "group": first["group"],
+            "kind": _event_kind(items),
+            "max_abs_change": max(changes) if changes else None,
+            "streak_months": n,
+            "items": items,
+            "previous_month_summary": [item_fmt(r) for r in prev.to_dict(orient="records")] if n >= 2 else None,
+        })
+    events.sort(key=lambda e: (_KIND_ORDER.get(e["kind"], 0), -(e["max_abs_change"] or 0), e["name"]))
+    return events
+
+
 def ecosystem_by_group(values: pd.Series, group_of: dict[str, str]) -> list[dict]:
     total = float(values.sum())
     out = []

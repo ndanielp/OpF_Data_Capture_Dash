@@ -132,8 +132,8 @@ def test_write_is_atomic_on_failure(con, monkeypatch):
     good = S.Signal("2024-01-05", "decrease", "unique_consents", "", "new", "new", None, 1.0, None, 0)
     bad = S.Signal("2024-01-05", "increase", "unique_consents", "", "x", "x", None, 1.0, None, 0)
     monkeypatch.setattr(compute_signals, "_detect_all",
-                        lambda c: ([good, bad, bad], {"consents_through": None, "api_through": None,
-                                                      "api_skipped_weeks": []}))
+                        lambda c: ([good, bad, bad], [], {"consents_through": None, "api_through": None,
+                                                          "api_skipped_weeks": []}))
     with pytest.raises(sqlite3.IntegrityError):
         compute_signals.compute(con)
 
@@ -266,6 +266,46 @@ def test_api_increase_not_confirmed_yet(con):
     _api_scenario(con, [2_000_000] * 57 + [6_000_000] * 3)
     compute_signals.compute(con)
     assert signals_rows(con, metric="api_group") == []
+
+
+def watch_rows(con):
+    con.row_factory = sqlite3.Row
+    rows = [dict(r) for r in con.execute("SELECT * FROM behavior_watch ORDER BY receptor_uuid, api_group")]
+    con.row_factory = None
+    return rows
+
+
+def test_api_condition_on_last_week_goes_to_watch(con):
+    """Feature 011 (FR-030): condição vista só na última semana fica 'em observação',
+    com a semana que vai confirmar ou descartar."""
+    _api_scenario(con, [2_000_000] * 57 + [6_000_000] * 3)
+    compute_signals.compute(con)
+    rows = watch_rows(con)
+    assert [(r["receptor_uuid"], r["api_group"], r["direction"], r["week"]) for r in rows] == [
+        ("rec-a", "Conta", "increase", WEEKS[-1])]
+    assert rows[0]["confirm_week"] == (pd.Timestamp(WEEKS[-1]) + pd.Timedelta(days=7)).strftime("%Y-%m-%d")
+    assert rows[0]["value_prev"] == pytest.approx(2_000_000)
+    assert signals_rows(con, metric="api_group") == []
+
+
+def test_confirmed_api_alert_is_not_in_watch_and_rebuild_is_idempotent(con):
+    _api_scenario(con, [2_000_000] * 40 + [6_000_000] * (N_WEEKS - 40))
+    compute_signals.compute(con)
+    compute_signals.compute(con)
+    assert watch_rows(con) == []
+    assert len(signals_rows(con, metric="api_group")) == 1
+
+
+def test_active_consents_floor_is_measured_in_unique(con):
+    """Feature 011 (FR-032): ativos acima de 30 mil não bastam — o piso vale para
+    os únicos da semana-base."""
+    established(con, "rec-small", "Pequena", level=20_000)
+    add_active(con, "rec-small", "Pequena", [40_000] * 40 + [60_000] * (N_WEEKS - 40))
+    established(con, "rec-big", "Grande", level=100_000)
+    add_active(con, "rec-big", "Grande", [200_000] * 40 + [260_000] * (N_WEEKS - 40))
+    compute_signals.compute(con)
+    rows = signals_rows(con, metric="active_consents")
+    assert [(r["receptor_uuid"], r["signal_type"]) for r in rows] == [("rec-big", "increase")]
 
 
 def test_api_ecosystem_wide_rise_is_not_a_signal(con):

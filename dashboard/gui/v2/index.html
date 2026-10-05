@@ -7,7 +7,7 @@
 <script>try{document.documentElement.dataset.theme=localStorage.getItem('opf:v2:theme')||'light'}catch(e){document.documentElement.dataset.theme='light'}</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" crossorigin="anonymous">
 <link rel="stylesheet" href="/static/v2/v2.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script src="/static/v2/shell.js"></script>
@@ -322,7 +322,8 @@
     return '<article class="v2-card" data-card="' + key + '">' +
       '<div class="v2-card-head"><div><h2>' + title + (d.filters_label ? ' · ' + V2.esc(d.filters_label) : '') + '</h2>' +
         '<span class="v2-sub">' + sub + '</span></div>' +
-        '<div class="v2-card-actions"><button type="button" class="v2-icon-btn" data-csv="' + key + '" aria-label="Baixar CSV deste ranking">' + V2.icon('download') + '</button></div></div>' +
+        '<div class="v2-card-actions"><button type="button" class="v2-icon-btn" data-img="' + key + '" aria-label="Copiar como imagem">' + V2.icon('image') + '</button>' +
+        '<button type="button" class="v2-icon-btn" data-csv="' + key + '" aria-label="Baixar CSV deste ranking">' + V2.icon('download') + '</button></div></div>' +
       '<div class="v2-rank-scroll">' + headHtml + '<ol class="v2-rank-list">' + rows + '</ol></div>' +
       '<div class="v2-card-foot">' + (excl ? '<span>' + excl + '</span>' : '') + '<span>' + rule + ' · ' + SOURCE + '</span></div>' +
       '</article>';
@@ -369,6 +370,18 @@
         { label: 'Abrir perfil →', link: true, onClick: () => { location.href = '/v2/instituicao?uuid=' + encodeURIComponent(uuid); } },
       ]);
     }
+    const img = ev.target.closest('[data-img]');
+    if (img) {
+      const card = img.closest('.v2-card');
+      const pair = st.metric === 'unique' ? last[img.dataset.img === 'pf' ? 0 : 1] : last[0];
+      V2.exportImage(card, {
+        title: card.querySelector('h2').textContent,
+        subtitle: card.querySelector('.v2-sub').textContent,
+        note: 'Ritmo: novos por dia nas últimas 4 semanas · cor = grupo',
+        filename: 'opf-quem-lidera-' + st.metric + '-' + img.dataset.img + '-' + pair[1].week + '.png',
+      }).catch(e => alert(e.message));
+      return;
+    }
     const c = ev.target.closest('[data-csv]');
     if (c) {
       const pair = st.metric === 'unique' ? last[c.dataset.csv === 'pf' ? 0 : 1] : last[0];
@@ -402,20 +415,38 @@
   }
   function exportAll() { if (last) exportCsv(last); }
 
-  // ── O que mudou (resumo do último ciclo) ─────────────────────────────────
+  // ── O que mudou (resumo do último ciclo, até 6 linhas) ───────────────────
+  const CHANGES_MAX = 6;
   async function renderChanges() {
     const el = document.getElementById('changes');
-    try {
-      const s = await V2.fetchJSON('/api/signals');
-      const month = (s.consents_through || '').slice(0, 7);
-      const count = s.weeks.filter(w => w.week.startsWith(month)).reduce((a, w) => a + w.count, 0);
-      el.innerHTML = '<section class="v2-card"><div class="v2-card-head"><div><h2>O que mudou desde a última atualização</h2>' +
-        '<span class="v2-sub">' + (month ? V2.fmtMonth(month) + ' · ' + count + (count === 1 ? ' alerta' : ' alertas') : 'Alertas ainda não calculados') + '</span></div></div>' +
-        '<span class="v2-muted">A lista completa, com oscilações e o que está em observação, chega na aba "O que mudou?" do 2.0. ' +
-        'Por enquanto, os alertas semana a semana estão no <a href="/">painel atual</a>.</span></section>';
-    } catch (e) {
-      el.innerHTML = '';
-    }
+    let d;
+    try { d = await V2.fetchJSON('/api/v2/changes'); } catch (e) { el.innerHTML = ''; return; }
+    if ((d.unavailable || []).includes('signals') || !d.month) { el.innerHTML = ''; return; }
+    const s = d.summary;
+    const [y, m] = d.month.split('-').map(Number);
+    const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
+    const period = '01/' + String(m).padStart(2, '0') + ' a ' + last + '/' + String(m).padStart(2, '0') + '/' + y;
+    const shown = d.events.slice(0, CHANGES_MAX);
+    const rows = shown.map(e => {
+      const n = e.items.length;
+      const badge = V2.KIND_LABEL[e.kind] + (n > 1 && e.kind !== 'oscillation' ? ' · ' + n : '');
+      const big = V2.eventHeadline(e);
+      const color = e.kind === 'new_entrant' ? 'var(--new)' : e.kind === 'oscillation' ? 'var(--osc)' : e.kind === 'increase' ? 'var(--up)' : 'var(--down)';
+      return '<li style="display:grid;grid-template-columns:150px minmax(0,1fr) 130px;gap:16px;align-items:center;padding:12px 0;border-top:1px solid var(--divider)">' +
+        '<span><span class="v2-badge ' + V2.KIND_CLASS[e.kind] + '">' + badge + '</span></span>' +
+        '<span><a href="/v2/instituicao?uuid=' + encodeURIComponent(e.uuid) + '" style="color:var(--text);font-weight:700;text-decoration:none">' + V2.esc(e.name) + '</a>' +
+          ' <span class="v2-muted">· ' + V2.esc(V2.describeEvent(e)) + '</span></span>' +
+        '<span class="v2-r" style="font-size:' + (big.length > 8 ? 16 : 22) + 'px;font-weight:700;color:' + color + '">' + big + '</span></li>';
+    }).join('');
+    const more = d.events.length > CHANGES_MAX ? '<span class="v2-small v2-muted">+' + (d.events.length - CHANGES_MAX) + ' outras instituições na aba "O que mudou?"</span>' : '';
+    el.innerHTML = '<section class="v2-card" data-card="changes">' +
+      '<div class="v2-card-head"><div><h2>O que mudou desde a última atualização</h2>' +
+        '<span class="v2-sub">' + period + ' · ' + s.alerts + (s.alerts === 1 ? ' alerta' : ' alertas') + ' em ' + s.institutions +
+        (s.institutions === 1 ? ' instituição' : ' instituições') + (s.watching ? ' · ' + s.watching + ' em observação' : '') + '</span></div>' +
+        '<a href="/v2/mudancas" style="font-weight:600;text-decoration:none;min-height:44px;display:inline-flex;align-items:center">Ver tudo em "O que mudou?" →</a></div>' +
+      (shown.length ? '<ul style="list-style:none;margin:0;padding:0">' + rows + '</ul>' + more
+                    : '<span class="v2-muted">Nenhum alerta no último mês.</span>') +
+      '</section>';
   }
 
   // ── Boot ─────────────────────────────────────────────────────────────────

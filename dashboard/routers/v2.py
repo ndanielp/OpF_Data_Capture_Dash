@@ -15,6 +15,9 @@ import pandas as pd
 from fastapi import APIRouter, HTTPException, Query
 
 from services import v2_metrics as M
+import re
+import unicodedata
+
 from services.constants import API_GROUPS, GROUP_COLORS_V2, GROUP_LABELS_V2, INSTITUTION_GROUP_SLUGS
 
 router = APIRouter()
@@ -210,5 +213,151 @@ def ranking(
         "rows": out_rows,
         "excluded": excl,
         "filters_label": M.filters_label(grp, excl),
+        "unavailable": [],
+    })
+
+
+# ── /changes ──────────────────────────────────────────────────────────────────
+
+_EVENT_KINDS = ("decrease", "increase", "oscillation", "new_entrant")
+_SIGNALS = ("all", "consents", "api")
+_METRIC_LABELS = {"unique_consents": "Consentimentos únicos", "active_consents": "Consentimentos ativos"}
+_RULES = [
+    {"title": "Consentimentos",
+     "text": "Semana contra a anterior: queda de 10% ou alta de 20%. Só instituições com "
+             "30 mil consentimentos únicos ou mais na semana-base, também para os ativos."},
+    {"title": "Uso de API",
+     "text": "Média de 4 semanas contra as 4 anteriores, descontado o movimento do ecossistema; "
+             "−40% ou +100%, confirmado por 2 semanas seguidas."},
+    {"title": "Novo entrante",
+     "text": "Passa de 30 mil consentimentos únicos nas primeiras 26 semanas."},
+    {"title": "Em observação",
+     "text": "Condição de API vista em 1 semana; vira alerta se a semana seguinte confirmar."},
+]
+
+
+def _norm(s: str) -> str:
+    return "".join(c for c in unicodedata.normalize("NFD", s or "") if unicodedata.category(c) != "Mn").lower()
+
+
+def _api_label(slug: str | None) -> str | None:
+    return API_GROUPS.get(slug, {}).get("display", slug) if slug else None
+
+
+def _item(r: dict) -> dict:
+    api = r.get("api_group") or None
+    return {
+        "week": r["week"], "signal_type": r["signal_type"], "metric": r["metric"],
+        "metric_label": _api_label(api) if r["metric"] == "api_group" else _METRIC_LABELS.get(r["metric"], r["metric"]),
+        "api_group": api, "api_group_label": _api_label(api),
+        "value_prev": r.get("value_prev"), "value_curr": r.get("value_curr"),
+        "change_pct": r.get("change_pct"),
+    }
+
+
+def _empty_changes(month: str | None, unavailable: list[str]) -> dict:
+    return {"month": month, "months": [], "summary": {"alerts": 0, "institutions": 0, "watching": 0, "by_kind": {}},
+            "events": [], "watching": [], "by_group": [], "rules": _RULES, "computed_at": None,
+            "unavailable": unavailable}
+
+
+@router.get("/changes")
+def changes(
+    month:       Optional[str] = Query(None),
+    types:       Optional[str] = Query(None),
+    signal:      str = Query("all"),
+    institution: Optional[str] = Query(None),
+    groups:      Optional[str] = Query(None),
+) -> dict:
+    if month is not None and not re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", month):
+        raise HTTPException(422, detail="Mês inválido em 'month': use AAAA-MM.")
+    signal = _choice(signal, _SIGNALS, "signal")
+    kinds = _list(types) or list(_EVENT_KINDS)
+    bad = [k for k in kinds if k not in _EVENT_KINDS]
+    if bad:
+        raise HTTPException(422, detail=f"Tipo inválido em 'types': use {', '.join(_EVENT_KINDS)}.")
+
+    try:
+        sig = M.load_signals()
+    except M.TableMissing:
+        return _clean(_empty_changes(month, ["signals"]))
+    computed = M.computed_at()
+    run_through = None
+    try:
+        run = M._query("SELECT consents_through FROM behavior_signals_run WHERE id = 1")
+        run_through = None if run.empty else run.iloc[0, 0]
+    except M.TableMissing:
+        pass
+    last_month = (run_through or (sig["week"].max() if not sig.empty else None) or "")[:7] or None
+    if last_month is None:
+        return _clean(_empty_changes(month, []))
+    month = month or last_month
+
+    grp = _groups(groups)
+    q = _norm(institution or "").strip()
+
+    def keep(df: pd.DataFrame) -> pd.DataFrame:
+        if signal == "consents":
+            df = df[df["metric"].isin(M.CONSENT_METRICS)]
+        elif signal == "api":
+            df = df[df["metric"] == "api_group"]
+        if grp:
+            df = df[df["group"].isin(grp)]
+        if q:
+            df = df[df["short"].map(_norm).str.contains(q, regex=False) | df["receptor"].map(_norm).str.contains(q, regex=False)]
+        return df
+
+    filtered = keep(sig)
+
+    def events_of(m: str) -> list[dict]:
+        evs = M.group_events(filtered[filtered["month"] == m], sig, m, _item)
+        return [e for e in evs if e["kind"] in kinds or (e["kind"] == "mixed" and {"decrease", "increase"} & set(kinds))]
+
+    events = events_of(month)
+    # Barra de meses: só os alertas do tipo escolhido (oscilação conta seus 2 alertas).
+    def counted(i: dict) -> bool:
+        if not _list(types):
+            return True
+        return "oscillation" in kinds if i["oscillation"] else i["signal_type"] in kinds
+
+    months = []
+    for m in M.month_range(last_month):
+        items = [i for e in (events if m == month else events_of(m)) for i in e["items"] if counted(i)]
+        months.append({"month": m, **{k: sum(1 for i in items if i["signal_type"] == k)
+                                       for k in ("decrease", "increase", "new_entrant")}})
+
+    watch = M.load_watch()
+    if not watch.empty and signal != "consents":
+        if grp:
+            watch = watch[watch["group"].isin(grp)]
+        if q:
+            watch = watch[watch["short"].map(_norm).str.contains(q, regex=False)]
+    else:
+        watch = watch.iloc[0:0]
+    watching = [{"uuid": w["receptor_uuid"], "name": w["short"], "group": w["group"],
+                 "direction": w["direction"], "api_group": w["api_group"], "api_group_label": _api_label(w["api_group"]),
+                 "value_prev": w["value_prev"], "value_curr": w["value_curr"], "change_pct": w["change_pct"],
+                 "week": w["week"], "confirm_week": w["confirm_week"]}
+                for w in watch.sort_values("change_pct").to_dict(orient="records")]
+
+    by_kind: dict[str, int] = {}
+    for e in events:
+        by_kind[e["kind"]] = by_kind.get(e["kind"], 0) + 1
+    by_group = []
+    for g in GROUP_LABELS_V2:
+        evs = [e for e in events if e["group"] == g]
+        if evs:
+            by_group.append({"group": g, "alerts": sum(len(e["items"]) for e in evs), "institutions": len(evs)})
+
+    return _clean({
+        "month": month,
+        "months": months,
+        "summary": {"alerts": sum(len(e["items"]) for e in events), "institutions": len(events),
+                    "watching": len(watching), "by_kind": by_kind},
+        "events": events,
+        "watching": watching,
+        "by_group": by_group,
+        "rules": _RULES,
+        "computed_at": computed,
         "unavailable": [],
     })
