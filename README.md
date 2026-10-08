@@ -57,7 +57,7 @@ docker compose up
                               │
                               ├─ dev local (auto-detect)  →  [dashboard local]
                               │
-                              └─ sync_to_gcs.py  →  gs://opf-data-bucket/data/consents.db
+                              └─ sync_to_gcs.py  →  gs://opf-data-bucket-us/data/consents.db
                                                        │
                                                        └─ entrypoint.sh download
                                                               ↓

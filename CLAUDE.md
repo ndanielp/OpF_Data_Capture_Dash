@@ -173,7 +173,7 @@ New panel organized by analytical question, served alongside the legacy one (whi
 
 **`.env` overrides** (copy `.env.example`): `LOCAL_LOG_DIR`, `DB_PATH`, `DEFAULT_WORKERS`.
 
-**GCS env vars** (Cloud Run): `GCS_BUCKET`, `GCS_PREFIX` (default `data/`), `GOOGLE_CLOUD_PROJECT`.
+**GCS env vars** (Cloud Run): `GCS_BUCKET`, `GCS_PREFIX` (default `data/`), `GOOGLE_CLOUD_PROJECT`. The bucket (`opf-data-bucket-us`) must stay in the same region as the Cloud Run service (`us-central1`): every instance start downloads the whole `consents.db`, and cross-region transfer is billed per GB.
 
 ## API Payload Reference
 

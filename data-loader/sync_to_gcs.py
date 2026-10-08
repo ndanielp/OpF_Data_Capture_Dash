@@ -18,7 +18,7 @@ import logging
 from pathlib import Path
 
 # -- Configuracao -----------------------------------------------------------
-DEFAULT_BUCKET  = "opf-data-bucket"   # <- edite se quiser evitar variavel de ambiente
+DEFAULT_BUCKET  = "opf-data-bucket-us"  # <- edite se quiser evitar variavel de ambiente
 DEFAULT_PROJECT = "opf-dash"          # <- ID do projeto GCP
 GCS_DB_BLOB     = "data/consents.db"  # unico arquivo que o dashboard usa
 
