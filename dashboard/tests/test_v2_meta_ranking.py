@@ -253,6 +253,22 @@ async def test_ranking_api_errors_and_per_consent(client):
 
 
 @pytest.mark.asyncio
+async def test_ranking_api_group_share_over_last_4_weeks(client):
+    e = (await client.get("/api/v2/ranking", params={"metric": "api"})).json()["ecosystem"]
+    last4 = range(F.N_WEEKS - 4, F.N_WEEKS)
+    calls = {u: sum(F.calls_ok(u, i) or 0 for i in last4) for u in F.INSTITUTIONS}   # Belvo tem 1 semana sem coleta
+    total = sum(calls.values())
+    assert e["total_4w"] == total
+    by = {g["group"]: g for g in e["by_group_4w"]}
+    itps = calls["rec-belvo"] + calls["rec-klavi"]
+    assert by["itps"]["value"] == itps and by["itps"]["share"] == pytest.approx(itps / total)
+    assert sum(g["share"] for g in e["by_group_4w"]) == pytest.approx(1.0)
+    # Fora da métrica API o campo não existe como proporção.
+    e = (await client.get("/api/v2/ranking", params={"metric": "active"})).json()["ecosystem"]
+    assert e["by_group_4w"] is None
+
+
+@pytest.mark.asyncio
 async def test_ranking_api_fallback_and_unavailable_without_status_table(client, use_db, db_no_status):
     use_db(db_no_status)
     ok = (await client.get("/api/v2/ranking", params={"metric": "api"})).json()
