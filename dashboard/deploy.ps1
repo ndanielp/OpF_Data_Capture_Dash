@@ -18,7 +18,9 @@ $PROJECT_ID   = "opf-dash"
 $REGION       = "us-central1"
 $REPO         = "opf-repo"
 $SERVICE_NAME = "opf-dashboard"
-$GCS_BUCKET   = "opf-data-bucket"
+# Bucket na mesma regiao do Cloud Run: o download da base a cada inicio de instancia
+# nao paga transferencia entre regioes (o bucket antigo ficava em southamerica-east1).
+$GCS_BUCKET   = "opf-data-bucket-us"
 $IMAGE        = "us-central1-docker.pkg.dev/$PROJECT_ID/$REPO/${SERVICE_NAME}:latest"
 $GCLOUD       = "$env:LOCALAPPDATA\Google\Cloud SDK\google-cloud-sdk\bin\gcloud.cmd"
 

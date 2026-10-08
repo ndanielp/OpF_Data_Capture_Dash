@@ -82,7 +82,7 @@ Requer:
 
 - Autenticação: `gcloud auth application-default login`
 - Variáveis de ambiente (ou edite os defaults em `sync_to_gcs.py`):
-  - `GCS_BUCKET=opf-data-bucket`
+  - `GCS_BUCKET=opf-data-bucket-us` (us-central1, mesma região do Cloud Run)
   - `GOOGLE_CLOUD_PROJECT=opf-dash`
 
 Só o(s) `.db` é(são) sincronizado(s); CSVs ficam apenas locais.
