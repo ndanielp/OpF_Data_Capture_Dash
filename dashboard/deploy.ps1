@@ -90,6 +90,8 @@ Write-OK "Build concluido e imagem enviada para o Artifact Registry"
 # -- Passo 3: Deploy no Cloud Run -------------------------------------------
 Write-Step "Fazendo deploy no Cloud Run ($REGION)..."
 
+# Memoria: a base (~3,9 GiB) e baixada para o filesystem em memoria da instancia;
+# 8 GiB deixa folga para o Python e o cache do Dashboard 2.0 (8 GiB exige 2 CPUs).
 # Nota: gcloud.cmd escreve progresso no stderr; redirecionar com 2>&1 | ForEach-Object
 # evita o falso erro NativeCommandError do PowerShell
 & $GCLOUD run deploy $SERVICE_NAME `
@@ -97,8 +99,8 @@ Write-Step "Fazendo deploy no Cloud Run ($REGION)..."
     --platform managed `
     --region $REGION `
     --port 8000 `
-    --memory 4Gi `
-    --cpu 1 `
+    --memory 8Gi `
+    --cpu 2 `
     --set-env-vars "GCS_BUCKET=$GCS_BUCKET,GOOGLE_CLOUD_PROJECT=$PROJECT_ID" `
     --allow-unauthenticated `
     --min-instances 0 `
