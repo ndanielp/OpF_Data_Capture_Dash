@@ -188,7 +188,7 @@
     const parts = byGroup.filter(g => g.share).map(g => {
       const c = V2.groupColor(g.group);
       return '<div style="width:' + (g.share * 100).toFixed(2) + '%;background:' + c + ';color:' + textOn(c) + '">' +
-        (g.share >= 0.12 ? V2.fmtShare(g.share) : '') + '</div>';
+        (g.share >= 0.06 ? V2.fmtShare(g.share) : '') + '</div>';
     }).join('');
     const aria = byGroup.map(g => V2.groupLabel(g.group) + ' ' + V2.fmtShare(g.share)).join(', ');
     const legend = byGroup.map(g => '<span><span class="v2-dot" style="background:' + V2.groupColor(g.group) + '"></span>' +
@@ -217,7 +217,14 @@
     const p = e.pace || {};
     const card = (label, value, sub) => '<div class="v2-card"><span class="v2-kpi-label">' + label + '</span>' +
       '<span class="v2-kpi-value">' + value + '</span><span class="v2-muted" style="font-size:13px">' + sub + '</span></div>';
-    return '<div class="v2-grid v2-grid-4">' +
+    const what = d.status === '500' ? 'erros' : 'chamadas';
+    // Mesma barra de grupos das outras métricas, sobre a soma das últimas 4 semanas.
+    const groups = '<div class="v2-card">' +
+      '<div class="v2-kpi-row" style="justify-content:space-between"><span style="font-weight:600">' +
+        (d.status === '500' ? 'Erros' : 'Chamadas') + ' por grupo de instituição · ' + V2.fmtCompact(e.total_4w) + ' nas últimas 4 semanas</span>' +
+        '<span class="v2-muted" style="font-size:13px">% das ' + what + ' das últimas 4 semanas · grupo do receptor</span></div>' +
+      stack(e.by_group_4w || e.by_group, 'das ' + what + ' de API nas últimas 4 semanas') + '</div>';
+    return '<div style="display:flex;flex-direction:column;gap:16px"><div class="v2-grid v2-grid-4">' +
       card(errMode ? (d.status === '500' ? 'Erros na semana' : 'Chamadas na semana (todas)') : 'Chamadas na semana',
            V2.fmtCompact(e.total), e.receptors + ' receptores · ' + V2.fmtGrowth(e.growth) + ' em ' + PERIODS[st.period][2]) +
       card('Ritmo por dia · 4 semanas', V2.fmtCompact(p.per_day) + ' ' + V2.trendArrow(p.trend, errMode),
@@ -226,7 +233,7 @@
         ? card('Taxa de erro', V2.fmtShare(e.error_rate), 'erros ÷ (sucesso + erros) no ecossistema')
         : card('Por consentimento', V2.fmtInt(e.per_consent_month) + '/mês', 'ecossistema · últimas 4 semanas normalizadas para 30 dias')) +
       card('Concentração', V2.fmtShare(e.top3_share), (d.status === '500' ? 'dos erros' : 'das chamadas') + ' vêm das 3 maiores') +
-      '</div>';
+      '</div>' + groups + '</div>';
   }
   function renderSummary() {
     const el = document.getElementById('summary');

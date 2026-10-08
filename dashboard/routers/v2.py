@@ -193,6 +193,12 @@ def ranking(
     eco = wide.sum(axis=1, min_count=1)
     top3 = values.sort_values(ascending=False).head(3).sum() / total if is_api and total else None
     eco_per_consent = per_consent(*M.paired_sums(wide, uniq, None)) if is_api else None
+    # API: proporção por grupo sobre a soma das últimas 4 semanas (uma semana isolada oscila).
+    by_group_4w = total_4w = None
+    if is_api:
+        last4 = wide[(wide.index > week - pd.Timedelta(days=M.PACE_WINDOW_DAYS)) & (wide.index <= week)].sum(axis=0)
+        last4 = last4[last4 > 0]
+        by_group_4w, total_4w = M.ecosystem_by_group(last4, group_of), float(last4.sum())
     eco_error = None
     if is_api and status != "200":
         ok_sum, err_sum = float(ok_at.sum()), float(err_at.sum())
@@ -209,6 +215,8 @@ def ranking(
             "total": total,
             "receptors": int(len(values)),
             "by_group": M.ecosystem_by_group(values, group_of),
+            "by_group_4w": by_group_4w,
+            "total_4w": total_4w,
             "pace": (M.pace_flow if is_api else M.pace_stock)(eco, week),
             "growth": (M.growth_flow if is_api else M.growth_stock)(eco, start_ts, week),
             "per_consent_month": eco_per_consent,
