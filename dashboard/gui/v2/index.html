@@ -356,8 +356,9 @@
     renderRankings();
   }
 
-  // Menu por linha e CSV por card
-  document.getElementById('rankings').addEventListener('click', ev => {
+  // Menu por linha, imagem e CSV por card. O listener fica em <main> (e não em #rankings) para
+  // alcançar também o resumo "O que mudou", que fica fora da lista de rankings.
+  document.querySelector('.v2-main').addEventListener('click', ev => {
     const m = ev.target.closest('[data-menu]');
     if (m) {
       const uuid = m.dataset.menu, prefs = V2.getPrefs(), pinned = prefs.pinned.includes(uuid);
