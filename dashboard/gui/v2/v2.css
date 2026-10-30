@@ -138,6 +138,13 @@ button, input, select { font: inherit; color: inherit; }
 .v2-btn:hover { border-color: var(--text-2); }
 /* "Exportar CSV" da barra de filtros: à direita em todas as abas, inclusive quando quebra de linha. */
 .v2-fb-export { margin-left: auto; }
+/* Mais de uma exportação na barra (ex.: "Exportar slide" + "Exportar CSV"): ficam juntas, à direita. */
+.v2-fb-actions { display: flex; gap: var(--sp-2); flex-wrap: wrap; margin-left: auto; }
+.v2-fb-actions .v2-fb-export { margin-left: 0; }
+.v2-btn:disabled { opacity: .45; cursor: not-allowed; }
+/* Slide (V2.exportSlide): células e linhas mais compactas, com o mesmo tamanho de texto. */
+.v2-slide .v2-card { padding: var(--sp-4); gap: var(--sp-1h); }
+.v2-slide .in-bars li, .v2-slide .in-spark li, .v2-slide .in-pair li { padding: var(--sp-1) 0; }
 /* Link que age como botão (ex.: "Abrir perfil →"): mesma altura de toque dos controles. */
 .v2-link-action { display: inline-flex; align-items: center; min-height: 44px; font-weight: 600; text-decoration: none; }
 

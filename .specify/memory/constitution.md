@@ -1,6 +1,25 @@
 <!--
 SYNC IMPACT REPORT
 ==================
+Version change: 1.3.0 → 1.4.0
+Bump type: MINOR — one Shell v2 rule extended (Principle VI §6.8 "Export").
+
+Modified principles:
+  Principle VI §6.8:
+    - "Export": besides the per-block image and the single "Exportar CSV", a page may offer
+      one "Exportar slide" in the filter bar, next to "Exportar CSV": a 1600×900 PNG that
+      composes the page's blocks in the same frame as the block images (title with active
+      filters, source footer), without reducing text below the minimum (lists that do not fit
+      are cut to the largest items with "+N"). First use: /v2/instituicao (feature 014),
+      without the alerts, the API error rate and the by-group calls.
+    Why: a profile slide used to be assembled by hand from several block images.
+    Decided by the product owner on 2026-10-30.
+
+Templates reviewed: no template change.
+Follow-up TODOs: none.
+
+Previous report (1.2.0 → 1.3.0)
+-------------------------------
 Version change: 1.2.0 → 1.3.0
 Bump type: MINOR — material change to two Shell v2 rules (Principle VI §6.8).
 
@@ -369,6 +388,8 @@ Canonical reference: `specs/011-dashboard-v2/contracts/v2-ui-shell.md`.
   and source. CSV (`;`, decimal comma, UTF-8 BOM) is one "Exportar CSV" button per
   page, in the filter bar, right-aligned and with the same label on every tab;
   blocks that already export their own CSV (rankings, monthly alerts) keep that icon.
+  A page may also offer one "Exportar slide" (PNG 1600×900) next to it, composing the page's
+  blocks in the same frame; text never shrinks below the minimum (lists are cut with "+N").
 - **Loading/errors**: visible loading state per card and human-readable error
   messages, as in Principle III.
 
@@ -442,4 +463,4 @@ optional even for "small" changes.
 **Runtime guidance**: See `CLAUDE.md` at the repository root for agent-specific
 development guidance (commands, architecture diagrams, SQL schema reference).
 
-**Version**: 1.3.0 | **Ratified**: 2026-05-18 | **Last Amended**: 2026-10-30
+**Version**: 1.4.0 | **Ratified**: 2026-05-18 | **Last Amended**: 2026-10-30
