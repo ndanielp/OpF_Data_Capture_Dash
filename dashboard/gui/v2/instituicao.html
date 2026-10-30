@@ -253,7 +253,8 @@
   const MIX_FIELD = { share: ['share', 'ref_share'], total: ['calls_30d', 'ref_calls_30d'], per_consent: ['per_consent', 'ref_per_consent'] };
   function mixFmt(v) {
     if (v == null) return '—';
-    return st.mix === 'share' ? V2.fmtShare(v) : st.mix === 'total' ? V2.fmtCompact(v) : V2.fmtInt(v);
+    // API/(PF + PJ): 1 casa decimal (nos endpoints e grupos pequenos o inteiro escondia a diferença).
+    return st.mix === 'share' ? V2.fmtShare(v) : st.mix === 'total' ? V2.fmtCompact(v) : V2.fmtDec(v, 1);
   }
   function renderMix() {
     const el = document.getElementById('card-mix');
@@ -336,8 +337,8 @@
     const max = sameScale ? Math.max.apply(null, rows.map(x => Math.max(x[fm] || 0, x[fr] || 0)).concat([1e-9])) : maxMe;
     const color = V2.groupColor(d.institution.group), refc = css('--control-border');
     const tot = ep.total;
-    const totalTxt = { share: '100%', total: V2.fmtCompact(tot.calls_30d), per_consent: V2.fmtInt(tot.per_consent) }[st.mix];
-    const refTotal = { share: '100%', total: V2.fmtCompact(tot.ref_calls_30d), per_consent: V2.fmtInt(tot.ref_per_consent) }[st.mix];
+    const totalTxt = { share: '100%', total: V2.fmtCompact(tot.calls_30d), per_consent: V2.fmtDec(tot.per_consent, 1) }[st.mix];
+    const refTotal = { share: '100%', total: V2.fmtCompact(tot.ref_calls_30d), per_consent: V2.fmtDec(tot.ref_per_consent, 1) }[st.mix];
     const unused = rows.filter(x => !x.used).length;
     el.innerHTML = head('Para que usa os dados', sub + ' · ' + V2.esc(apiMeta.label) + ' · ' + V2.esc(d.institution.name) + ' contra ' + V2.esc(d.compare.label), 'mix') +
       '<div style="margin:var(--sp-1) 0 var(--sp-2);display:flex;gap:var(--sp-3);flex-wrap:wrap;align-items:flex-end">' + view + segButtons('mix', MIX, st.mix) + picker + '</div>' +
@@ -506,8 +507,8 @@
     V2.exportCSV('opf-instituicao-' + d.institution.name.toLowerCase().replace(/\W+/g, '-') + '-' + d.week + '.csv', [
       { label: 'Seção', value: r => r.s }, { label: 'Item', value: r => r.i }, { label: 'Valor', value: r => r.v },
       { label: 'Participação (%)', value: r => p(r.sh) }, { label: 'Referência (%) · ' + d.compare.label, value: r => p(r.rsh) },
-      { label: 'Por consentimento/mês', value: r => r.pc == null ? null : Math.round(r.pc) },
-      { label: 'Por consentimento/mês · ' + d.compare.label, value: r => r.rpc == null ? null : Math.round(r.rpc) },
+      { label: 'Por consentimento/mês', value: r => r.pc == null ? null : Math.round(r.pc * 10) / 10 },
+      { label: 'Por consentimento/mês · ' + d.compare.label, value: r => r.rpc == null ? null : Math.round(r.rpc * 10) / 10 },
       { label: 'Posição', value: r => r.r }, { label: 'Crescimento', value: r => r.g }, { label: 'Crescimento ' + d.compare.label, value: r => r.rg },
     ], rows);
   }

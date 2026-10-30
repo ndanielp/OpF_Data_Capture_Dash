@@ -126,6 +126,8 @@
     return nf(0).format(Math.round(v));
   };
   V2.fmtShare = function (s) { return s == null ? '—' : nf(1).format(s * 100) + '%'; };
+  /** Número com `digits` casas decimais (vírgula decimal, separador de milhar). */
+  V2.fmtDec = function (v, digits) { return v == null || isNaN(v) ? '—' : nf(digits).format(v); };
   /** Variação em pontos percentuais; `v` já vem em pp (para fração, use fmtPp(v * 100)). */
   V2.fmtPp = function (v) { return v == null ? '—' : (v > 0 ? '+' : v < 0 ? '−' : '') + nf(1).format(Math.abs(v)) + ' pp'; };
   /** Eixo de gráfico: 25 mi · 2,5 mi · 800 mil — sem casas decimais sobrando. */
