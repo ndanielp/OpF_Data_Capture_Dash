@@ -640,7 +640,7 @@ def institution(
 
 
 # ── /institution/{uuid}/endpoints ─────────────────────────────────────────────
-# "Para que usa os dados" por endpoint (feature 012): todos os endpoints do catálogo de uma
+# "Quais dados busca" por endpoint (feature 012): todos os endpoints do catálogo de uma
 # API, na mesma janela (4 semanas normalizadas para 30 dias) e unidades do mix por grupo.
 # Contrato: specs/012-periodo-ano-api-endpoint/contracts/v2-api-delta.md
 

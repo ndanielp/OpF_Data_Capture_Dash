@@ -159,13 +159,14 @@ New panel organized by analytical question, served alongside the legacy one (whi
 | `/v2` | Quem lidera? (ranking Top 15, pin/exclude, pace, growth) | `GET /api/v2/ranking` |
 | `/v2/evolucao` | Como evolui? (lines, group share, pp gains/losses, quarterly pace) | `GET /api/v2/evolution` |
 | `/v2/mudancas` | O que mudou? (alerts by month, oscillation, "em observação") | `GET /api/v2/changes` |
-| `/v2/instituicao` | Como opera uma instituição? (KPIs, API mix by group or by endpoint, transmitters, error rate, alerts) | `GET /api/v2/institution/{uuid}`, `GET /api/v2/institution/{uuid}/endpoints` |
+| `/v2/instituicao` | Como opera uma instituição? (KPIs, "Quais dados busca" = API mix by group or by endpoint, transmitters, error rate, alerts) | `GET /api/v2/institution/{uuid}`, `GET /api/v2/institution/{uuid}/endpoints` |
 
 - `GET /api/v2/meta` — data dates, group colors/labels and the institution catalog (used by every tab).
 - Code: `routers/v2.py` (endpoints, contract in `specs/011-dashboard-v2/contracts/v2-api.md`), `services/v2_metrics.py` (pure pandas rules over wide weekly frames; `TTLCache` keyed by DB mtime, warmed at startup by `server._warm_v2_cache`).
 - Frontend: `gui/v2/` — `shell.js` (`window.V2`: header/tabs, filters shared via `sessionStorage['opf:v2:filters']`, ranking prefs in `localStorage['opf:v2:ranking']`, formatting, 16:9 image and CSV export), `v2.css` (light theme default), one HTML per tab. Group colors: `services/constants.py::GROUP_COLORS_V2`.
 - Shared rules: API flows are normalized as the last 4 weeks → 30 days; "por consentimento/mês" = that ÷ mean unique consents (PF + PJ), ecosystem counting only receptors with calls in each week; monthly points = last week with data of each institution in the month (a missing week is a gap, never zero).
 - Period filter: `V2.PERIODS` / `V2.periodStart` / `V2.periodShort` in `shell.js` (12m, 6m, 3m, "Desde o começo do ano" = Jan 1 of the year of `data_through`, all). `GET /api/v2/evolution` takes `scale=total|per_consent` (metric=api only; the page opens in per-consent, where share blocks are off and `share_available` is false). `GET /api/v2/institution/{uuid}/endpoints?api=` lists every endpoint of one API (catalog from `endpoint_history`, unused ones with zero); contract in `specs/012-periodo-ano-api-endpoint/contracts/v2-api-delta.md`.
+- Slide export (feature 014): `/v2/instituicao` has "Exportar slide" in the filter bar — a 1600×900 PNG built by `V2.exportSlide` (`shell.js`, shares the frame with `V2.exportImage`) from the page's blocks, without alerts, the API error rate or the by-group calls; "Quais dados busca" (the block formerly "Para que usa os dados") always comes complete, transmitters are cut with "+N" (text never shrinks). Front-end only.
 - Tests: `dashboard/tests/test_v2_*.py` over the synthetic DB in `tests/v2_fixtures.py`.
 
 ## Key Configuration
@@ -190,5 +191,5 @@ Omitting optional fields in `/api/api-requests` acts as "no filter" — used by 
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan
-at `specs/012-periodo-ano-api-endpoint/plan.md`.
+at `specs/014-slide-instituicao/plan.md`.
 <!-- SPECKIT END -->

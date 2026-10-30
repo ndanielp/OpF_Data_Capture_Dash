@@ -108,7 +108,9 @@
         '<label class="v2-field"><span class="v2-label">Período</span><select class="v2-select" id="f-period">' +
           Object.entries(PERIODS).map(([k, v]) => '<option value="' + k + '"' + (k === st.period ? ' selected' : '') + '>' + v[0] + '</option>').join('') +
         '</select></label>' +
-      '</div><button type="button" class="v2-btn v2-fb-export" id="f-export" title="Exportar o perfil da instituição em CSV">Exportar CSV</button></div>';
+      '</div><div class="v2-fb-actions">' +
+        '<button type="button" class="v2-btn" id="f-slide" title="Baixar o perfil da instituição como slide (imagem 16:9, sem alertas nem taxa de erro)"' + (d ? '' : ' disabled') + '>Exportar slide</button>' +
+        '<button type="button" class="v2-btn v2-fb-export" id="f-export" title="Exportar o perfil da instituição em CSV">Exportar CSV</button></div></div>';
   }
   const fb = document.getElementById('filterbar');
   fb.addEventListener('click', ev => {
@@ -120,6 +122,7 @@
       }, [st.uuid]);
     }
     if (ev.target.id === 'f-export') exportCsv();
+    if (ev.target.id === 'f-slide') exportSlide();
   });
   fb.addEventListener('change', ev => {
     if (ev.target.id === 'f-period') { st.period = ev.target.value; return load(); }
@@ -142,6 +145,7 @@
     try {
       d = await V2.fetchJSON('/api/v2/institution/' + encodeURIComponent(st.uuid) + '?' + q.toString());
       render();
+      document.getElementById('f-slide').disabled = false;
       if (st.mixview === 'endpoint') loadEndpoints();
     } catch (e) {
       document.getElementById('head').innerHTML = V2.errorBox(e.message);
@@ -194,7 +198,7 @@
       card('Consentimentos ativos', d.kpis.active, false) +
       card('Chamadas de API por semana', api, true, api && api.per_consent_month != null
         ? '<br><b style="color:var(--text)">' + V2.fmtInt(api.per_consent_month) + ' por consentimento/mês</b> · ' + V2.esc(ref) + ': ' + V2.fmtInt(api.ref_per_consent_month) +
-          '<br>Média das últimas 4 semanas, normalizada para 30 dias' : '');
+          '<br class="v2-noslide"><span class="v2-noslide">Média das últimas 4 semanas, normalizada para 30 dias</span>' : '');
 
     renderEvolution(); renderMix(); renderGroups(); renderTx(); renderErr(); renderAlerts();
   }
@@ -230,6 +234,12 @@
     el.innerHTML = head(title, EVO_SUB[st.evo] + (ratio ? '' : ' e participação no ecossistema') + ' · fim de cada mês', 'evo') + sel +
       '<div class="in-chart"><canvas id="evo-chart" aria-label="' + V2.esc(EVO_SUB[st.evo]) + ' mês a mês"></canvas></div>' +
       '<div class="v2-card-foot"><span>' + foot + '</span></div>';
+    if (chart) chart.destroy();
+    chart = new Chart(document.getElementById('evo-chart'), evoConfig(ev, ratio));
+  }
+
+  /** Configuração do gráfico da evolução; o slide a usa de novo, com tamanho próprio (extra). */
+  function evoConfig(ev, ratio, extra) {
     const color = V2.groupColor(d.institution.group);
     const labels = ev.points.map(p => MONTHS[+p.slice(5) - 1] + '/' + p.slice(2, 4));
     const fmt = v => ratio ? V2.fmtInt(v) + '/mês' : V2.fmtCompact(v);
@@ -238,15 +248,12 @@
       const byPoint = Object.fromEntries(ev.ref.points.map((p, i) => [p, ev.ref.values[i]]));
       datasets.push({ label: ev.ref.label, data: ev.points.map(p => byPoint[p] ?? null), borderColor: css('--text-2'), borderDash: [6, 4], borderWidth: 2, pointRadius: 0, tension: 0.2, spanGaps: false });
     }
-    if (chart) chart.destroy();
-    chart = new Chart(document.getElementById('evo-chart'), {
-      type: 'line', data: { labels, datasets },
-      options: { maintainAspectRatio: false, animation: false,
+    return { type: 'line', data: { labels, datasets },
+      options: Object.assign({ maintainAspectRatio: false, animation: false,
         plugins: { legend: { display: datasets.length > 1, labels: { color: css('--text-2') } },
           tooltip: { callbacks: { label: c => c.dataset.label + ': ' + fmt(c.parsed.y) + (c.datasetIndex === 0 && ev.shares[c.dataIndex] != null ? ' · ' + pct1(ev.shares[c.dataIndex]) + ' do total' : '') } } },
         scales: { x: { ticks: { color: css('--text-2') }, grid: { display: false } },
-                  y: { beginAtZero: true, ticks: { color: css('--text-2'), callback: ratio ? (v => V2.fmtInt(v)) : axis }, grid: { color: css('--divider') } } } },
-    });
+                  y: { beginAtZero: true, ticks: { color: css('--text-2'), callback: ratio ? (v => V2.fmtInt(v)) : axis }, grid: { color: css('--divider') } } } }, extra) };
   }
 
   // ── Bloco 5 · Mix de API (seletor de unidade) ────────────────────────────
@@ -264,7 +271,7 @@
     const view = segButtons('mixview', MIXVIEW, st.mixview);
     if (st.mixview === 'endpoint') return renderEndpoints(el, view);
     const sel = '<div style="margin:var(--sp-1) 0 var(--sp-2);display:flex;gap:var(--sp-3);flex-wrap:wrap">' + view + segButtons('mix', MIX, st.mix) + '</div>';
-    if (!m.length) { el.innerHTML = head('Para que usa os dados', 'Sem chamadas de API nas últimas 4 semanas', 'mix') + sel; return; }
+    if (!m.length) { el.innerHTML = head('Quais dados busca', 'Sem chamadas de API nas últimas 4 semanas', 'mix') + sel; return; }
     const [fm, fr] = MIX_FIELD[st.mix];
     // Em "API total", instituição e ecossistema/grupo têm escalas muito diferentes: a barra
     // de referência só aparece contra outra instituição; nos demais, o valor fica em texto.
@@ -281,7 +288,7 @@
       const r = m.filter(x => x.per_consent && x.ref_per_consent).map(x => [x.label, x.per_consent / x.ref_per_consent]).sort((a, b) => b[1] - a[1]);
       if (r.length) note = 'Maior intensidade relativa: ' + r[0][0] + ' (' + new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 1 }).format(r[0][1]) + '× ' + d.compare.label + ')';
     }
-    el.innerHTML = head('Para que usa os dados', sub + ' (sem Resource) · ' + V2.esc(d.institution.name) + ' contra ' + V2.esc(d.compare.label), 'mix') + sel +
+    el.innerHTML = head('Quais dados busca', sub + ' (sem Resource) · ' + V2.esc(d.institution.name) + ' contra ' + V2.esc(d.compare.label), 'mix') + sel +
       '<div class="v2-legend"><span><span class="v2-dot" style="background:' + color + '"></span>' + V2.esc(d.institution.name) + '</span>' +
       '<span><span class="v2-dot" style="background:' + refc + '"></span>' + V2.esc(d.compare.label) + '</span></div>' +
       '<ul class="in-list in-pair">' + m.map(x => '<li><span style="font-weight:600">' + V2.esc(x.label) + '</span>' +
@@ -313,7 +320,7 @@
   function renderEndpoints(el, view) {
     const sub = { share: '% das chamadas da API por endpoint', total: 'Chamadas por endpoint em 30 dias',
                   per_consent: 'Chamadas por consentimento (PF + PJ) em 30 dias, por endpoint' }[st.mix];
-    const top = (extra) => head('Para que usa os dados', 'Por endpoint · ' + extra, 'mix') +
+    const top = (extra) => head('Quais dados busca', 'Por endpoint · ' + extra, 'mix') +
       '<div style="margin:var(--sp-1) 0 var(--sp-2);display:flex;gap:var(--sp-3);flex-wrap:wrap">' + view + segButtons('mix', MIX, st.mix) + '</div>';
     if (!ep) { el.innerHTML = top('carregando…'); return; }
     if (ep.error) { el.innerHTML = top('indisponível') + V2.errorBox(ep.error); return; }
@@ -340,7 +347,7 @@
     const totalTxt = { share: '100%', total: V2.fmtCompact(tot.calls_30d), per_consent: V2.fmtDec(tot.per_consent, 1) }[st.mix];
     const refTotal = { share: '100%', total: V2.fmtCompact(tot.ref_calls_30d), per_consent: V2.fmtDec(tot.ref_per_consent, 1) }[st.mix];
     const unused = rows.filter(x => !x.used).length;
-    el.innerHTML = head('Para que usa os dados', sub + ' · ' + V2.esc(apiMeta.label) + ' · ' + V2.esc(d.institution.name) + ' contra ' + V2.esc(d.compare.label), 'mix') +
+    el.innerHTML = head('Quais dados busca', sub + ' · ' + V2.esc(apiMeta.label) + ' · ' + V2.esc(d.institution.name) + ' contra ' + V2.esc(d.compare.label), 'mix') +
       '<div style="margin:var(--sp-1) 0 var(--sp-2);display:flex;gap:var(--sp-3);flex-wrap:wrap;align-items:flex-end">' + view + segButtons('mix', MIX, st.mix) + picker + '</div>' +
       '<div class="v2-legend"><span><span class="v2-dot" style="background:' + color + '"></span>' + V2.esc(d.institution.name) + '</span>' +
       '<span><span class="v2-dot" style="background:' + refc + '"></span>' + V2.esc(d.compare.label) + '</span></div>' +
@@ -488,6 +495,38 @@
       filename: 'opf-instituicao-' + d.institution.name.toLowerCase().replace(/\W+/g, '-') + '-' + b.dataset.img + '-' + d.week + '.png',
     }).catch(e => alert(e.message));
   });
+  /** Slide 16:9 do perfil: indicadores, evolução, "Quais dados busca" (completo) e transmissores — sem alertas, taxa de erro nem chamadas por grupo. */
+  function exportSlide() {
+    if (!d) return;
+    if (document.querySelector('.v2-card.loading')) return alert('Aguarde o carregamento dos blocos para exportar o slide.');
+    if (st.mixview === 'endpoint' && (!ep || ep.error || (ep.unavailable || []).includes('endpoints'))) {
+      return alert('O detalhe por endpoint não está disponível. Volte para "Por grupo de API" para exportar o slide.');
+    }
+    const ev = d.evolution[st.evo], ratio = st.evo === 'api_per_consent';
+    const hasChart = ev && ev.points.length && document.getElementById('evo-chart');
+    const chart = !hasChart ? undefined : (w, h) => {
+      const cv = document.createElement('canvas');
+      cv.width = w; cv.height = h;
+      const c = new Chart(cv, evoConfig(ev, ratio, { responsive: false, devicePixelRatio: 1 }));
+      const url = cv.toDataURL('image/png');
+      c.destroy();
+      return url;
+    };
+    const el = id => document.getElementById(id);
+    V2.exportSlide({
+      subtitle: 'Como opera uma instituição · semana de ' + V2.fmtDate(d.week),
+      title: d.institution.name + ' · ' + PERIODS[st.period][0].toLowerCase() + ' · comparado com ' + d.compare.label,
+      note: 'Chamadas de API: últimas 4 semanas normalizadas para 30 dias · mix sem o grupo Resource',
+      filename: 'opf-instituicao-' + d.institution.name.toLowerCase().replace(/\W+/g, '-') + '-slide-' + d.week + '.png',
+      rows: [
+        { weight: 0, cells: Array.from(document.querySelectorAll('#kpis > .v2-card')).map(c => ({ el: c })) },
+        { weight: 1, cells: [
+          { stack: [{ el: el('card-evo'), title: true, chart }, { el: el('card-tx'), title: true, more: 'transmissores' }] },
+          { el: el('card-mix'), title: true },
+        ] },
+      ],
+    }).catch(e => alert(e.message));
+  }
   function exportCsv() {
     if (!d) return;
     const rows = [];

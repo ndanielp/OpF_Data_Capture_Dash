@@ -373,14 +373,15 @@
     return h2iLoading;
   }
 
-  /** Clona o bloco num quadro 1600×900 com título (com filtro), subtítulo,
-   *  conteúdo ajustado ao espaço e rodapé de fonte, e baixa um PNG. */
-  V2.exportImage = async function (card, opts) {
-    const W = 1600, H = 900, PAD = 56;
+  const FRAME_W = 1600, FRAME_H = 900, FRAME_PAD = 56;
+
+  /** Quadro 1600×900 das imagens exportadas: subtítulo e título no alto, `body` no meio (quem
+   *  chama preenche) e rodapé de fonte. Fica fora da tela até virar PNG. */
+  function newFrame(opts) {
     const css = getComputedStyle(document.documentElement);
     const frame = document.createElement('div');
-    frame.style.cssText = 'position:fixed;left:-20000px;top:0;width:' + W + 'px;height:' + H + 'px;box-sizing:border-box;' +
-      'padding:' + PAD + 'px ' + PAD + 'px 40px;display:flex;flex-direction:column;gap:18px;overflow:hidden;' +
+    frame.style.cssText = 'position:fixed;left:-20000px;top:0;width:' + FRAME_W + 'px;height:' + FRAME_H + 'px;box-sizing:border-box;' +
+      'padding:' + FRAME_PAD + 'px ' + FRAME_PAD + 'px 40px;display:flex;flex-direction:column;gap:18px;overflow:hidden;' +
       'background:' + css.getPropertyValue('--surface') + ';color:' + css.getPropertyValue('--text') + ';' +
       "font-family:'IBM Plex Sans','Segoe UI',system-ui,sans-serif;font-variant-numeric:tabular-nums;";
     const head = document.createElement('div');
@@ -389,6 +390,40 @@
       '<div style="font-size:var(--text-kpi-lg);font-weight:700;letter-spacing:-.01em;margin-top:var(--sp-1h)">' + V2.esc(opts.title || '') + '</div>';
     const body = document.createElement('div');
     body.style.cssText = 'flex:1;min-height:0;position:relative;';
+    const foot = document.createElement('div');
+    foot.style.cssText = 'font-size:var(--text-body);color:' + css.getPropertyValue('--text-2') + ';border-top:1px solid ' +
+      css.getPropertyValue('--border') + ';padding-top:var(--sp-3);display:flex;justify-content:space-between;gap:var(--sp-4)';
+    foot.innerHTML = '<span>' + V2.esc(opts.note || '') + '</span><span>Fonte: dashboard Open Finance Brasil · dados até ' +
+      V2.fmtDate(V2.meta && V2.meta.data_through) + '</span>';
+    frame.append(head, body, foot);
+    return { frame, body };
+  }
+
+  /** Transforma o quadro em PNG e baixa; o quadro sai da página no fim. */
+  async function downloadFrame(frame, filename) {
+    try {
+      await loadHtmlToImage();
+      // O quadro fica fora da tela; no clone que vira imagem ele volta para a origem.
+      const base = { width: FRAME_W, height: FRAME_H, pixelRatio: 1, style: { position: 'static', left: '0', top: '0' } };
+      let url;
+      try { url = await window.htmlToImage.toPng(frame, base); }
+      catch (e) { url = await window.htmlToImage.toPng(frame, Object.assign({ skipFonts: true }, base)); }
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename || 'opf-bloco.png';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    } finally {
+      frame.remove();
+    }
+  }
+
+  /** Clona o bloco num quadro 1600×900 com título (com filtro), subtítulo,
+   *  conteúdo ajustado ao espaço e rodapé de fonte, e baixa um PNG. */
+  V2.exportImage = async function (card, opts) {
+    const W = FRAME_W, PAD = FRAME_PAD;
+    const { frame, body } = newFrame(opts);
     const inner = card.cloneNode(true);
     inner.querySelectorAll('.v2-card-head, .v2-card-actions, .v2-row-menu, button, .v2-card-foot, .v2-noexport').forEach(n => n.remove());
     inner.style.cssText = 'border:0;padding:0;background:transparent;box-shadow:none;';
@@ -400,12 +435,6 @@
       c.replaceWith(img);
     });
     body.appendChild(inner);
-    const foot = document.createElement('div');
-    foot.style.cssText = 'font-size:var(--text-body);color:' + css.getPropertyValue('--text-2') + ';border-top:1px solid ' +
-      css.getPropertyValue('--border') + ';padding-top:var(--sp-3);display:flex;justify-content:space-between;gap:var(--sp-4)';
-    foot.innerHTML = '<span>' + V2.esc(opts.note || '') + '</span><span>Fonte: dashboard Open Finance Brasil · dados até ' +
-      V2.fmtDate(V2.meta && V2.meta.data_through) + '</span>';
-    frame.append(head, body, foot);
     document.body.appendChild(frame);
 
     // Conteúdo maior que o espaço: reduz por escala, preenchendo a largura.
@@ -417,21 +446,95 @@
       inner.style.transform = 'scale(' + s + ')';
       inner.style.transformOrigin = 'top left';
     }
+    await downloadFrame(frame, opts.filename);
+  };
+
+  /** Slide 16:9 de uma página: blocos no quadro das imagens exportadas.
+   *  opts = { title, subtitle, note, filename, rows: [{ weight, cells: [cell] }] }, cell = { el, weight, title, more, chart }
+   *  ou { weight, stack: [cell, …] } (células empilhadas numa coluna; weight = altura relativa dentro dela).
+   *  - rows[].weight: altura relativa da linha (0 = a do conteúdo); cell.weight: largura relativa.
+   *  - cell.el: bloco da página (clonado, sem cabeçalho, ações, seletores nem rodapé).
+   *  - cell.title: true = título e subtítulo do bloco no alto da célula.
+   *  - cell.chart: (largura, altura) => URL do PNG; o gráfico é redesenhado no tamanho da célula.
+   *  - cell.more: nome dos itens ("transmissores"); o que não cabe sai da lista (do fim para o início) e a
+   *    célula diz "+N transmissores" — o texto nunca é reduzido. Sem `more`, o bloco sai completo: se não
+   *    couber, a exportação falha em vez de cortar. */
+  V2.exportSlide = async function (opts) {
+    const { frame, body } = newFrame(opts);
+    frame.classList.add('v2-slide');
+    body.style.cssText += ';display:flex;flex-direction:column;gap:var(--sp-4);';
+    const cells = [];
+    const makeCell = def => {
+      const c = def.el.cloneNode(true);
+      c.querySelectorAll('.v2-card-head, .v2-card-actions, .v2-row-menu, button, .v2-card-foot, .v2-noexport, .v2-noslide, .v2-field, .v2-seg, select').forEach(n => n.remove());
+      c.querySelectorAll(':scope > div:empty').forEach(n => n.remove());
+      c.removeAttribute('id');
+      c.classList.remove('loading');
+      c.style.cssText = 'box-sizing:border-box;min-width:0;min-height:0;overflow:hidden;';
+      if (def.title) {
+        const h = document.createElement('div');
+        h.className = 'v2-card-head';
+        h.innerHTML = '<div><h2></h2><span class="v2-sub" style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden"></span></div>';
+        h.querySelector('h2').textContent = def.el.querySelector('h2').textContent;
+        h.querySelector('.v2-sub').textContent = def.el.querySelector('.v2-sub').textContent;
+        c.prepend(h);
+      }
+      cells.push({ def, c });
+      return c;
+    };
+    opts.rows.forEach(row => {
+      const r = document.createElement('div');
+      // Grade com minmax(0, Nfr): larguras proporcionais ao peso mesmo com borda e padding nas células.
+      const fr = list => list.map(x => 'minmax(0,' + (x.weight || 1) + 'fr)').join(' ');
+      r.style.cssText = 'display:grid;grid-template-columns:' + fr(row.cells) + ';gap:var(--sp-4);min-height:0;' + (row.weight ? 'flex:' + row.weight + ' 1 0;' : 'flex:0 0 auto;');
+      row.cells.forEach(def => {
+        if (!def.stack) return r.appendChild(makeCell(def));
+        const col = document.createElement('div');
+        col.style.cssText = 'display:grid;grid-template-rows:' + fr(def.stack) + ';gap:var(--sp-4);min-width:0;min-height:0;';
+        def.stack.forEach(s => col.appendChild(makeCell(s)));
+        r.appendChild(col);
+      });
+      body.appendChild(r);
+    });
+    document.body.appendChild(frame);
+
     try {
-      await loadHtmlToImage();
-      // O quadro fica fora da tela; no clone que vira imagem ele volta para a origem.
-      const base = { width: W, height: H, pixelRatio: 1, style: { position: 'static', left: '0', top: '0' } };
-      let url;
-      try { url = await window.htmlToImage.toPng(frame, base); }
-      catch (e) { url = await window.htmlToImage.toPng(frame, Object.assign({ skipFonts: true }, base)); }
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = opts.filename || 'opf-bloco.png';
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-    } finally {
+      for (const { def, c } of cells) {
+        if (def.chart) {
+          const host = c.querySelector('.in-chart');
+          const canvas = host.querySelector('canvas');
+          host.style.cssText = 'flex:1 1 0;min-height:0;height:auto;position:relative;';
+          canvas.remove();
+          const w = host.clientWidth, h = host.clientHeight;
+          const img = document.createElement('img');
+          img.src = await def.chart(w, h);
+          img.style.cssText = 'display:block;width:' + w + 'px;height:' + h + 'px;';
+          host.appendChild(img);
+        }
+        const over = () => c.scrollHeight > c.clientHeight;
+        const lists = c.querySelectorAll('ul.in-list');
+        const list = lists[lists.length - 1];
+        if (list && def.more) {
+          const note = document.createElement('div');
+          note.className = 'v2-small v2-muted';
+          note.style.display = 'none';
+          list.after(note);
+          let hidden = 0;
+          while (over() && list.lastElementChild) {
+            list.lastElementChild.remove();
+            hidden++;
+            note.textContent = '+' + hidden + ' ' + def.more;
+            note.style.display = '';
+          }
+        } else if (!def.chart && over()) {
+          const h2 = def.el.querySelector('h2');
+          throw new Error('O bloco "' + (h2 ? h2.textContent : 'sem título') + '" não cabe no slide.');
+        }
+      }
+      await downloadFrame(frame, opts.filename);
+    } catch (e) {
       frame.remove();
+      throw e;
     }
   };
 
