@@ -12,26 +12,23 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script src="/static/v2/shell.js"></script>
 <style>
-  .ev-head-value { font-size: 30px; font-weight: 700; line-height: 1.1; }
   .ev-chart { position: relative; height: 380px; }
-  .ev-lines { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
-  .ev-cols { display: grid; gap: 4px; height: 200px; align-items: stretch; }
-  .ev-cols > div { display: flex; flex-direction: column; border-radius: 3px; overflow: hidden; }
-  .ev-cols-labels { display: flex; justify-content: space-between; font-size: 12px; color: var(--text-2); }
-  .ev-grp { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; font-size: 13px; }
-  ul.ev-list { list-style: none; margin: 0; padding: 0; }
-  .ev-div li { display: grid; grid-template-columns: 130px minmax(0, 1fr) minmax(0, 1fr) 170px; gap: 8px; align-items: center; padding: 4px 0; font-size: 13px; }
-  .ev-div li.ev-sep { border-top: 1px solid var(--control-border); padding-top: 8px; margin-top: 4px; }
+  .ev-lines { display: flex; gap: var(--sp-1h); flex-wrap: wrap; align-items: center; }
+  .ev-cols { display: grid; gap: var(--sp-1); height: 200px; align-items: stretch; }
+  .ev-cols > div { display: flex; flex-direction: column; border-radius: var(--r-xs); overflow: hidden; }
+  .ev-cols-labels { display: flex; justify-content: space-between; font-size: var(--text-caption); color: var(--text-2); }
+  .ev-grp { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--sp-2); font-size: var(--text-small); }
+  .ev-div li { grid-template-columns: 130px minmax(0, 1fr) minmax(0, 1fr) 170px; gap: var(--sp-2); padding: var(--sp-1) 0; font-size: var(--text-small); }
+  .ev-div li.ev-sep { border-top: 1px solid var(--control-border); padding-top: var(--sp-2); margin-top: var(--sp-1); }
   .ev-div .bar { height: 14px; }
-  .ev-pace li, .ev-pace .ev-pace-head { display: grid; grid-template-columns: minmax(120px, 200px) 130px 130px minmax(0, 1fr) 160px; gap: 16px; align-items: center; }
-  .ev-pace li { padding: 9px 0; border-top: 1px solid var(--divider); font-size: 14px; }
-  .ev-pace .ev-pace-head { font-size: 12px; font-weight: 600; color: var(--text-2); padding: 8px 0 4px; }
+  .ev-pace li, .ev-pace .ev-pace-head { grid-template-columns: minmax(120px, 200px) 130px 130px 160px; gap: var(--sp-4); justify-content: start; }
+  .ev-pace li { font-size: var(--text-body); }
+  .ev-pace .ev-pace-head { font-size: var(--text-caption); font-weight: 600; color: var(--text-2); padding: var(--sp-2) 0 var(--sp-1); }
   .ev-name { font-weight: 600; color: inherit; text-decoration: none; }
   a.ev-name:hover { text-decoration: underline; }
   @media (max-width: 720px) {
-    .ev-div li { grid-template-columns: 100px minmax(0, 1fr) minmax(0, 1fr) 110px; }
-    .ev-div li { grid-template-columns: 88px minmax(0, 1fr) minmax(0, 1fr) 96px; gap: 6px; font-size: 12px; }
-    .ev-pace li, .ev-pace .ev-pace-head { grid-template-columns: minmax(0, 1fr) 52px 60px 0 100px; gap: 6px; font-size: 13px; }
+    .ev-div li { grid-template-columns: 88px minmax(0, 1fr) minmax(0, 1fr) 96px; gap: var(--sp-1h); font-size: var(--text-caption); }
+    .ev-pace li, .ev-pace .ev-pace-head { grid-template-columns: minmax(0, 1fr) 52px 60px 100px; gap: var(--sp-1h); font-size: var(--text-small); }
     .ev-chart { height: 320px; }
     .ev-grp { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   }
@@ -54,8 +51,14 @@
 <script>
 (function () {
   'use strict';
-  const PERIODS = { '12m': ['Últimos 12 meses', 364, '12 meses'], '6m': ['Últimos 6 meses', 182, '6 meses'],
-                    '3m': ['Últimos 3 meses', 91, '3 meses'], 'all': ['Desde o início', null, 'no período'] };
+  const css = V2.cssVar;
+  const pct1 = V2.fmtShare;
+  const pp = V2.fmtPp;
+  const axis = V2.fmtAxis;
+  const seg = V2.seg;
+  const allGroups = V2.allGroups;
+  const activeGroups = () => V2.activeGroups(st.groups);
+  const PERIODS = V2.PERIODS;
   const METRICS = { unique_pf: 'Únicos PF', unique_pj: 'Únicos PJ', active: 'Ativos', api: 'Chamadas de API' };
   const NOUN = { unique_pf: 'consentimentos únicos PF', unique_pj: 'consentimentos únicos PJ', active: 'consentimentos ativos', api: 'chamadas de API em 30 dias' };
   const SHORT = { unique_pf: 'PF', unique_pj: 'PJ', active: 'ativos', api: 'API' };
@@ -71,6 +74,7 @@
     period: PERIODS[f0.period] ? f0.period : '12m',
     gran: f0.evo_gran === 'week' ? 'week' : 'month',
     view: f0.evo_view === 'share' ? 'share' : 'values',
+    scale: f0.evo_scale === 'total' ? 'total' : 'per_consent',   // só vale com a métrica de API
     groups: Array.isArray(f0.groups) ? f0.groups : [],
     institutions: Array.isArray(f0.institutions) ? f0.institutions.slice(0, MAX_LINES) : [],
     transmitters: Array.isArray(f0.evo_tx) ? f0.evo_tx.slice(0, MAX_LINES) : [],
@@ -79,34 +83,23 @@
   if (st.add) V2.setFilters({ evo_add: null });
   let d = null, chart = null;
 
-  const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
   const nf = dd => new Intl.NumberFormat('pt-BR', { minimumFractionDigits: dd, maximumFractionDigits: dd });
-  const pct1 = v => v == null ? '—' : nf(1).format(v * 100) + '%';
-  const pp = v => v == null ? '—' : (v > 0 ? '+' : v < 0 ? '−' : '') + nf(1).format(Math.abs(v)) + ' pp';
   const byTx = () => st.metric === 'active' && st.by === 'transmitter';
+  const isPc = () => st.metric === 'api' && st.scale === 'per_consent';
+  const noun = () => isPc() ? 'chamadas de API por consentimento (PF + PJ) por mês' : NOUN[st.metric];
+  const fmtVal = v => isPc() ? V2.fmtInt(v) : V2.fmtCompact(v);
+  const NO_SHARE = 'Participação não se aplica a chamadas por consentimento';
   const ids = () => byTx() ? st.transmitters : st.institutions;
   const setIds = list => { if (byTx()) st.transmitters = list; else st.institutions = list; };
   const fmtPoint = p => p.length === 7 ? V2.fmtMonth(p) : V2.fmtDate(p).slice(0, 5) + '/' + p.slice(2, 4);
-  function allGroups() { return V2.meta.groups.map(g => g.slug); }
-  function activeGroups() { return st.groups.length ? st.groups : allGroups(); }
-  function periodStart() {
-    const days = PERIODS[st.period][1];
-    if (days == null) return '2000-01-01';
-    const dt = new Date(V2.meta.data_through + 'T00:00:00Z');
-    dt.setUTCDate(dt.getUTCDate() - days);
-    return dt.toISOString().slice(0, 10);
-  }
   function save() {
     V2.setFilters({ evo_metric: st.metric, metric: TAB1[st.metric], evo_by: st.by, period: st.period, evo_gran: st.gran,
-                    evo_view: st.view, groups: st.groups, institutions: st.institutions, evo_tx: st.transmitters });
-  }
-  function seg(name, options, current) {
-    return '<div class="v2-seg" data-seg="' + name + '">' + Object.entries(options).map(([k, l]) =>
-      '<button type="button" data-v="' + k + '" aria-pressed="' + (k === current) + '">' + l + '</button>').join('') + '</div>';
+                    evo_view: st.view, evo_scale: st.scale, groups: st.groups, institutions: st.institutions, evo_tx: st.transmitters });
   }
   function head(title, sub, key) {
     return '<div class="v2-card-head"><div><h2>' + title + '</h2><span class="v2-sub">' + sub + '</span></div>' +
-      '<div class="v2-card-actions">' + (key === 'lines' ? seg('view', { values: 'Valores', share: 'Participação %' }, st.view) : '') +
+      '<div class="v2-card-actions">' + (key !== 'lines' ? '' : !d || d.share_available ? seg('view', { values: 'Valores', share: 'Participação %' }, st.view)
+        : '<span class="v2-muted" style="font-size:var(--text-small)">' + NO_SHARE + '</span>') +
       '<button type="button" class="v2-icon-btn" data-img="' + key + '" aria-label="Copiar como imagem">' + V2.icon('image') + '</button></div></div>';
   }
   function nameLink(r) {
@@ -128,6 +121,8 @@
     document.getElementById('filterbar').innerHTML =
       '<div class="v2-fb-row"><div class="v2-fb-group">' +
         '<fieldset class="v2-field"><legend>Métrica</legend>' + seg('metric', METRICS, st.metric) + '</fieldset>' +
+        (st.metric === 'api' ? '<fieldset class="v2-field v2-accent"><legend>Escala</legend>' +
+          seg('scale', { per_consent: 'Por consentimento/mês', total: 'Volume (30 dias)' }, st.scale) + '</fieldset>' : '') +
         (st.metric === 'active' ? '<fieldset class="v2-field v2-accent"><legend>Evolução por</legend>' +
           seg('by', { receptor: 'Receptor', transmitter: 'Transmissor' }, st.by) + '</fieldset>' : '') +
         '<label class="v2-field"><span class="v2-label">Período</span><select class="v2-select" id="f-period">' +
@@ -135,7 +130,7 @@
         '</select></label>' +
         '<fieldset class="v2-field"><legend>Granularidade</legend>' + seg('gran', { week: 'Semanal', month: 'Mensal' }, st.gran) + '</fieldset>' +
         '<fieldset class="v2-field"><legend>Grupos</legend><div class="v2-chips">' + groups + '</div></fieldset>' +
-      '</div><button type="button" class="v2-btn" id="f-export">Exportar dados (CSV)</button></div>' +
+      '</div><button type="button" class="v2-btn v2-fb-export" id="f-export" title="Exportar os dados da evolução em CSV">Exportar CSV</button></div>' +
       '<div class="v2-fb-row"><fieldset class="v2-field" style="flex:1"><legend>' + (byTx() ? 'Transmissores' : 'Instituições') + ' no gráfico</legend>' +
         '<div class="ev-lines">' + chips +
           (series.length < MAX_LINES ? '<button type="button" class="v2-chip-add" id="f-add">+ Adicionar (até ' + MAX_LINES + ')</button>' : '') +
@@ -180,8 +175,9 @@
 
   // ── Dados ────────────────────────────────────────────────────────────────
   function url() {
-    const q = new URLSearchParams({ metric: st.metric, granularity: st.gran, start: periodStart() });
+    const q = new URLSearchParams({ metric: st.metric, granularity: st.gran, start: V2.periodStart(st.period) });
     if (st.metric === 'active') q.set('by', st.by);
+    if (st.metric === 'api') q.set('scale', st.scale);
     if (st.groups.length) q.set('groups', st.groups.join(','));
     if (ids().length) q.set('institutions', ids().join(','));
     return '/api/v2/evolution?' + q.toString();
@@ -223,7 +219,7 @@
     const scope = byTx() ? ' por transmissor' : '';
     const filt = d.filters_label ? ' · ' + d.filters_label : '';
     document.getElementById('title').innerHTML = '<h1>Como evolui o ecossistema ' + SHORT[st.metric] + scope + '</h1>' +
-      '<p>' + V2.esc(NOUN[st.metric][0].toUpperCase() + NOUN[st.metric].slice(1)) + ' · ' +
+      '<p>' + V2.esc(noun()[0].toUpperCase() + noun().slice(1)) + ' · ' +
       (st.gran === 'month' ? 'última semana de cada mês' : 'semana a semana') + ' · ' + periodText() + V2.esc(filt) + '</p>';
     if (!d.series.length) {
       document.getElementById('answers').innerHTML = '';
@@ -235,8 +231,8 @@
 
   function renderAnswers() {
     const h = d.headline, eg = h.ecosystem_growth;
-    const card = (label, value, sub) => '<div class="v2-card" style="gap:6px"><span class="v2-kpi-label">' + label + '</span>' +
-      '<span class="ev-head-value">' + value + '</span><span class="v2-muted" style="font-size:13px">' + sub + '</span></div>';
+    const card = (label, value, sub) => '<div class="v2-card" style="gap:var(--sp-1h)"><span class="v2-kpi-label">' + label + '</span>' +
+      '<span class="v2-kpi-value">' + value + '</span><span class="v2-muted" style="font-size:var(--text-small)">' + sub + '</span></div>';
     const among = d.filters_label ? ' (' + V2.esc(d.filters_label) + ')' : '';
     const g = h.top_gainer, l = h.top_loser;
     const gainSub = !g ? '' : g.debut_month
@@ -250,27 +246,22 @@
       else loseSub = 'Cresceu ' + V2.fmtGrowth(l.growth) + ', abaixo do ecossistema (' + V2.fmtGrowth(eg) + ')';
     }
     document.getElementById('answers').innerHTML =
-      card('Ecossistema em ' + PERIODS[st.period][2], V2.fmtGrowth(eg), V2.fmtCompact(eg.from) + ' → ' + V2.fmtCompact(eg.to) + ' ' + NOUN[st.metric]) +
-      card('Quem mais ganhou espaço' + among, g ? V2.esc(g.name) + ' ' + pp(g.pp) : '—', gainSub) +
-      card('Quem mais perdeu espaço' + among, l ? V2.esc(l.name) + ' ' + pp(l.pp) : '—', loseSub);
+      card('Ecossistema em ' + V2.periodShort(st.period), V2.fmtGrowth(eg), fmtVal(eg.from) + ' → ' + fmtVal(eg.to) + ' ' + noun()) +
+      (d.share_available
+        ? card('Quem mais ganhou espaço' + among, g ? V2.esc(g.name) + ' ' + pp(g.pp) : '—', gainSub) +
+          card('Quem mais perdeu espaço' + among, l ? V2.esc(l.name) + ' ' + pp(l.pp) : '—', loseSub)
+        : card('Quem mais ganhou ou perdeu espaço', '—', NO_SHARE + ' (as razões das instituições não somam um total)'));
   }
 
   /** Eixo: 25 mi · 2,5 mi · 800 mil */
-  function axis(v) {
-    const f = dd => new Intl.NumberFormat('pt-BR', { maximumFractionDigits: dd });
-    if (Math.abs(v) >= 1e9) return f(1).format(v / 1e9) + ' bi';
-    if (Math.abs(v) >= 1e6) return f(1).format(v / 1e6) + ' mi';
-    if (Math.abs(v) >= 1e3) return f(0).format(v / 1e3) + ' mil';
-    return f(0).format(v);
-  }
   function endText(s, narrow) {
-    if (st.view === 'share') {
+    if (st.view === 'share' && d.share_available) {
       const sh = s.shares.filter(v => v != null);
       if (!sh.length) return '';
       const delta = pp((sh[sh.length - 1] - sh[0]) * 100);
       return narrow ? delta : pct1(sh[sh.length - 1]) + ' · ' + delta;
     }
-    return narrow ? V2.fmtGrowth(s.growth) : V2.fmtCompact(s.last) + ' · ' + V2.fmtGrowth(s.growth);
+    return narrow ? V2.fmtGrowth(s.growth) : fmtVal(s.last) + ' · ' + V2.fmtGrowth(s.growth);
   }
   // Valor e crescimento no fim de cada linha, afastando rótulos sobrepostos.
   const endLabels = {
@@ -304,15 +295,18 @@
   };
   function renderLines() {
     const el = document.getElementById('card-lines');
-    const n = d.series.length, share = st.view === 'share';
+    const n = d.series.length, share = st.view === 'share' && d.share_available;
     const title = ids().length ? 'Evolução das instituições escolhidas' : 'Evolução das ' + n + ' maiores';
     el.innerHTML = head(byTx() ? title.replace('instituições', 'transmissores') : title,
       'Cor = grupo · mesmo grupo diferenciado pelo traço · valor e crescimento no fim da linha', 'lines') +
-      '<div class="ev-chart"><canvas id="lines-chart" aria-label="' + V2.esc(NOUN[st.metric]) + ' de ' + periodText() + ': ' +
+      (d.points.length < 3 ? '<p class="v2-muted" style="margin:var(--sp-1) 0 var(--sp-2);font-size:var(--text-small)">Poucos dados neste período: ' +
+        d.points.length + (d.points.length === 1 ? ' ponto' : ' pontos') + ' para mostrar a evolução.</p>' : '') +
+      '<div class="ev-chart"><canvas id="lines-chart" aria-label="' + V2.esc(noun()) + ' de ' + periodText() + ': ' +
         V2.esc(d.series.map(s => s.name + ' ' + endText(s)).join('; ')) + '"></canvas></div>' +
       '<div class="v2-card-foot"><span>' + (st.gran === 'week' ? 'Semana sem coleta interrompe a linha em vez de cair a zero'
         : 'Valor da última semana com dado de cada instituição no mês · na visão semanal, semana sem coleta interrompe a linha') +
-        (st.metric === 'api' ? ' · chamadas das últimas 4 semanas normalizadas para 30 dias' : '') + '</span>' +
+        (isPc() ? ' · chamadas das últimas 4 semanas normalizadas para 30 dias ÷ média dos consentimentos únicos (PF + PJ) das mesmas semanas · o ecossistema conta só quem teve chamadas na semana'
+          : st.metric === 'api' ? ' · chamadas das últimas 4 semanas normalizadas para 30 dias' : '') + '</span>' +
         '<span>Fonte: dashboard Open Finance Brasil</span></div>';
     // Tela estreita: no fim da linha só nome e crescimento (o valor fica no tooltip).
     const narrow = el.clientWidth < 720;
@@ -324,25 +318,35 @@
                borderColor: color, backgroundColor: color, borderDash: DASHES[k % DASHES.length], borderWidth: 3,
                pointRadius: 0, pointHoverRadius: 4, tension: 0.2, spanGaps: false };
     });
+    if (d.ecosystem_series) {
+      const ev = d.ecosystem_series.values, lastEco = ev.filter(v => v != null).pop();
+      datasets.push({ label: 'Ecossistema', endText: narrow ? V2.fmtGrowth(d.headline.ecosystem_growth) : fmtVal(lastEco) + ' · ' + V2.fmtGrowth(d.headline.ecosystem_growth),
+                      data: ev, borderColor: css('--text-2'), backgroundColor: css('--text-2'), borderDash: [6, 4], borderWidth: 2,
+                      pointRadius: 0, pointHoverRadius: 3, tension: 0.2, spanGaps: false });
+    }
     if (chart) chart.destroy();
     chart = new Chart(document.getElementById('lines-chart'), {
       type: 'line', data: { labels: d.points.map(fmtPoint), datasets }, plugins: [endLabels],
       options: { maintainAspectRatio: false, animation: false, layout: { padding: { right: narrow ? 155 : 250 } },
         interaction: { mode: 'index', intersect: false },
         plugins: { legend: { display: false },
-          tooltip: { callbacks: { label: c => c.dataset.label + ': ' + (share ? nf(1).format(c.parsed.y) + '%' : V2.fmtCompact(c.parsed.y)) +
-            (!share && d.series[c.datasetIndex].shares[c.dataIndex] != null ? ' · ' + pct1(d.series[c.datasetIndex].shares[c.dataIndex]) : '') } } },
+          tooltip: { callbacks: { label: c => {
+            const sh = d.series[c.datasetIndex] && d.series[c.datasetIndex].shares;
+            return c.dataset.label + ': ' + (share ? nf(1).format(c.parsed.y) + '%' : fmtVal(c.parsed.y)) +
+              (!share && sh && sh[c.dataIndex] != null ? ' · ' + pct1(sh[c.dataIndex]) : '');
+          } } } },
         scales: { x: { ticks: { color: css('--text-2'), maxRotation: 0, autoSkip: true, maxTicksLimit: 13 }, grid: { display: false } },
-                  y: { beginAtZero: true, ticks: { color: css('--text-2'), callback: share ? (v => nf(0).format(v) + '%') : axis }, grid: { color: css('--divider') } } } },
+                  y: { beginAtZero: true, ticks: { color: css('--text-2'), callback: share ? (v => nf(0).format(v) + '%') : isPc() ? (v => nf(0).format(v)) : axis }, grid: { color: css('--divider') } } } },
     });
   }
 
   function renderGroups() {
     const el = document.getElementById('card-groups');
     const rows = d.group_share, slugs = V2.meta.groups.map(g => g.slug);
+    if (!d.share_available) { el.innerHTML = head('Participação por grupo, mês a mês', NO_SHARE, 'groups') + '<div class="v2-placeholder">' + NO_SHARE + '. Escolha "Volume (30 dias)" para ver a participação.</div>'; return; }
     if (!rows.length) { el.innerHTML = head('Participação por grupo, mês a mês', 'Sem dados', 'groups'); return; }
     const mid = rows[Math.floor((rows.length - 1) / 2)].point;
-    el.innerHTML = head('Participação por grupo, mês a mês', '% dos ' + NOUN[st.metric] + (byTx() ? ' · grupo do transmissor' : ''), 'groups') +
+    el.innerHTML = head('Participação por grupo, mês a mês', '% dos ' + noun() + (byTx() ? ' · grupo do transmissor' : ''), 'groups') +
       '<div class="ev-cols" style="grid-template-columns:repeat(' + rows.length + ',minmax(0,1fr))" role="img" aria-label="Participação mensal por grupo de ' + periodText() + '">' +
         rows.map(r => '<div title="' + V2.fmtMonth(r.point) + ': ' + slugs.map(g => V2.groupLabel(g) + ' ' + pct1(r[g])).join(' · ') + '">' +
           slugs.map(g => '<div style="flex:' + ((r[g] || 0) * 100).toFixed(2) + ';background:' + V2.groupColor(g) + '"></div>').join('') + '</div>').join('') +
@@ -350,7 +354,7 @@
       '<div class="ev-cols-labels"><span>' + V2.fmtMonth(rows[0].point) + '</span>' + (rows.length > 2 ? '<span>' + V2.fmtMonth(mid) + '</span>' : '') +
         '<span>' + V2.fmtMonth(rows[rows.length - 1].point) + '</span></div>' +
       '<div class="ev-grp">' + d.group_share_change.map(g =>
-        '<div style="display:flex;flex-direction:column;gap:2px"><span style="display:flex;align-items:center;gap:6px;color:var(--text-2)">' +
+        '<div style="display:flex;flex-direction:column;gap:2px"><span style="display:flex;align-items:center;gap:var(--sp-1h);color:var(--text-2)">' +
         '<span class="v2-dot" style="background:' + V2.groupColor(g.group) + '"></span>' + V2.groupLabel(g.group) + '</span>' +
         '<span><b>' + pct1(g.share) + '</b> · ' + pp(g.pp) + '</span></div>').join('') + '</div>';
   }
@@ -358,6 +362,7 @@
   function renderChanges() {
     const el = document.getElementById('card-changes');
     const rows = d.share_changes;
+    if (!d.share_available) { el.innerHTML = head('Quem ganhou e quem perdeu espaço', NO_SHARE, 'changes') + '<div class="v2-placeholder">' + NO_SHARE + '. Escolha "Volume (30 dias)" para ver ganhos e perdas de participação.</div>'; return; }
     const max = Math.max.apply(null, rows.map(r => Math.abs(r.pp)).concat([1e-9]));
     const losers = rows.filter(r => r.pp < 0);
     const allGrew = losers.length && losers.every(r => r.growth && (r.growth.kind === 'multiplier' || (r.growth.kind === 'pct' && r.growth.value > 0)));
@@ -366,11 +371,11 @@
       const w = (100 * Math.abs(r.pp) / max).toFixed(0) + '%', c = V2.groupColor(r.group);
       const cls = !sep && r.pp < 0 ? (sep = true, ' class="ev-sep"') : '';
       return '<li' + cls + '>' + nameLink(r) +
-        (r.pp < 0 ? '<div class="bar" style="display:flex;justify-content:flex-end"><div style="width:' + w + ';height:14px;border-radius:3px 0 0 3px;background:' + c + '"></div></div><span></span>'
-                  : '<span></span><div class="bar"><div style="width:' + w + ';height:14px;border-radius:0 3px 3px 0;background:' + c + '"></div></div>') +
+        (r.pp < 0 ? '<div class="bar" style="display:flex;justify-content:flex-end"><div style="width:' + w + ';height:14px;border-radius:var(--r-xs) 0 0 var(--r-xs);background:' + c + '"></div></div><span></span>'
+                  : '<span></span><div class="bar"><div style="width:' + w + ';height:14px;border-radius:0 var(--r-xs) var(--r-xs) 0;background:' + c + '"></div></div>') +
         '<span>' + pp(r.pp) + (r.debut_month ? ' · estreou ' + V2.fmtMonth(r.debut_month) : '') + '</span></li>';
     };
-    el.innerHTML = head('Quem ganhou e quem perdeu espaço', 'Variação da participação ' + (st.period === 'all' ? 'desde o início' : 'em ' + PERIODS[st.period][2]) + ', em pontos percentuais', 'changes') +
+    el.innerHTML = head('Quem ganhou e quem perdeu espaço', 'Variação da participação ' + (st.period === 'all' ? 'desde o início' : 'em ' + V2.periodShort(st.period)) + ', em pontos percentuais', 'changes') +
       (rows.length ? '<ul class="ev-list ev-div">' + rows.map(li).join('') + '</ul>' : '<div class="v2-placeholder">Sem variações no período.</div>') +
       (allGrew ? '<div class="v2-card-foot"><span>Perder espaço não é encolher: todas as que perderam cresceram em números absolutos</span></div>' : '');
   }
@@ -383,11 +388,11 @@
     const sub = m ? 'Crescimento nos últimos 3 meses (' + mon(m[1]) + '→' + mon(m[2]) + ') contra os 3 anteriores (' + mon(m[0]) + '→' + mon(m[1]) + ')' +
       (eco ? ' · ecossistema: ' + V2.fmtPct(eco.last_quarter, 1) + ' contra ' + V2.fmtPct(eco.prev_quarter, 1) : '') : 'Sem 6 meses de dados';
     const badge = s => s === 'accelerating' ? '<span class="v2-badge increase">Acelerando</span>'
-      : s === 'decelerating' ? '<span class="v2-badge oscillation">Desacelerando</span>' : '<span class="v2-muted" style="font-size:13px">Estável</span>';
+      : s === 'decelerating' ? '<span class="v2-badge oscillation">Desacelerando</span>' : '<span class="v2-muted" style="font-size:var(--text-small)">Estável</span>';
     el.innerHTML = head('Ritmo: acelerando ou desacelerando?', sub, 'pace') +
-      (rows.length ? '<div class="ev-pace"><div class="ev-pace-head"><span>' + (byTx() ? 'Transmissor' : 'Instituição') + '</span><span class="v2-r">3 meses antes</span><span class="v2-r">Últimos 3 meses</span><span></span><span>Ritmo</span></div>' +
+      (rows.length ? '<div class="ev-pace"><div class="ev-pace-head"><span>' + (byTx() ? 'Transmissor' : 'Instituição') + '</span><span class="v2-r">3 meses antes</span><span class="v2-r">Últimos 3 meses</span><span>Ritmo</span></div>' +
         '<ul class="ev-list">' + rows.map(r => '<li>' + nameLink(r) + '<span class="v2-r v2-muted">' + V2.fmtPct(r.prev_quarter) + '</span>' +
-          '<span class="v2-r" style="font-weight:600">' + V2.fmtPct(r.last_quarter) + '</span><span></span><span>' + badge(r.status) + '</span></li>').join('') + '</ul></div>'
+          '<span class="v2-r" style="font-weight:600">' + V2.fmtPct(r.last_quarter) + '</span><span>' + badge(r.status) + '</span></li>').join('') + '</ul></div>'
         : '<div class="v2-placeholder">Sem instituições com 6 meses de dados.</div>') +
       '<div class="v2-card-foot"><span>Estável = diferença de até 3 pontos entre os dois trimestres · ' + rows.length + ' maiores' +
         (d.filters_label ? ' (' + V2.esc(d.filters_label) + ')' : '') + ' com 6 meses de dados · valor de fim de mês</span></div>';
@@ -402,23 +407,24 @@
     const card = img.closest('.v2-card');
     V2.exportImage(card, {
       title: card.querySelector('h2').textContent + (d.filters_label ? ' · ' + d.filters_label : ''),
-      subtitle: METRICS[st.metric] + ' · ' + periodText(),
+      subtitle: METRICS[st.metric] + (isPc() ? ' · por consentimento/mês' : '') + ' · ' + periodText(),
       note: card.querySelector('.v2-sub').textContent,
-      filename: 'opf-evolucao-' + st.metric + '-' + img.dataset.img + '-' + d.week + '.png',
+      filename: 'opf-evolucao-' + st.metric + (isPc() ? '-por-consentimento' : '') + '-' + img.dataset.img + '-' + d.week + '.png',
     }).catch(e => alert(e.message));
   });
   function exportCsv() {
     if (!d) return;
     const rows = [];
-    d.series.forEach(s => d.points.forEach((p, i) => rows.push({ s: 'Evolução', i: s.name, p: p, v: s.values[i], sh: s.shares[i] })));
+    d.series.forEach(s => d.points.forEach((p, i) => rows.push({ s: 'Evolução', i: s.name, p: p, v: s.values[i], sh: s.shares ? s.shares[i] : null })));
+    if (d.ecosystem_series) d.points.forEach((p, i) => rows.push({ s: 'Evolução', i: 'Ecossistema', p: p, v: d.ecosystem_series.values[i] }));
     d.group_share.forEach(r => V2.meta.groups.forEach(g => rows.push({ s: 'Participação por grupo', i: V2.groupLabel(g.slug), p: r.point, sh: r[g.slug] })));
     d.share_changes.forEach(r => rows.push({ s: 'Ganho/perda de participação (pp)', i: r.name, sh: r.share, pp: r.pp, g: V2.fmtGrowth(r.growth) }));
     d.quarterly_pace.forEach(r => rows.push({ s: 'Ritmo trimestral', i: r.name, prev: r.prev_quarter, last: r.last_quarter,
                                               g: { accelerating: 'Acelerando', decelerating: 'Desacelerando', stable: 'Estável' }[r.status] }));
     const p = x => x == null ? null : Math.round(x * 10000) / 100;
-    V2.exportCSV('opf-evolucao-' + st.metric + (byTx() ? '-transmissores' : '') + '-' + d.week + '.csv', [
+    V2.exportCSV('opf-evolucao-' + st.metric + (isPc() ? '-por-consentimento' : '') + (byTx() ? '-transmissores' : '') + '-' + d.week + '.csv', [
       { label: 'Seção', value: r => r.s }, { label: 'Item', value: r => r.i }, { label: 'Ponto', value: r => r.p },
-      { label: 'Valor', value: r => r.v }, { label: 'Participação (%)', value: r => p(r.sh) },
+      { label: isPc() ? 'Valor (chamadas por consentimento/mês)' : 'Valor', value: r => r.v }, { label: 'Participação (%)', value: r => p(r.sh) },
       { label: 'Variação (pp)', value: r => r.pp == null ? null : Math.round(r.pp * 100) / 100 },
       { label: '3 meses antes (%)', value: r => p(r.prev) }, { label: 'Últimos 3 meses (%)', value: r => p(r.last) },
       { label: 'Crescimento / ritmo', value: r => r.g },
@@ -426,6 +432,7 @@
   }
 
   // ── Boot ─────────────────────────────────────────────────────────────────
+  V2.onThemeChange(() => { if (d) { renderFilterbar(); render(); } });
   V2.initShell('evolucao').then(() => {
     const known = new Set(V2.meta.institutions.map(i => i.uuid));
     st.institutions = st.institutions.filter(u => known.has(u));

@@ -417,14 +417,15 @@ def run_collection(
 
     # Mantém as pré-agregações de API em sincronia para o dashboard (só quando fase 2 rodou).
     if run_2:
-        log.info("Atualizando api_group_weekly e api_status_weekly...")
+        log.info("Atualizando api_group_weekly, api_status_weekly e api_endpoint_weekly...")
         _agw_con = sqlite3.connect(str(config.DB_PATH))
         try:
             scrapers.refresh_api_group_weekly(_agw_con)
             scrapers.refresh_api_status_weekly(_agw_con)
+            scrapers.refresh_api_endpoint_weekly(_agw_con)
         finally:
             _agw_con.close()
-        log.info("api_group_weekly e api_status_weekly atualizados.")
+        log.info("api_group_weekly, api_status_weekly e api_endpoint_weekly atualizados.")
 
     return {
         "phase":                     phase_label,

@@ -12,37 +12,36 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script src="/static/v2/shell.js"></script>
 <style>
-  .mc-bars { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 10px; align-items: end; }
-  .mc-bar { height: 170px; border: 0; background: transparent; padding: 0 4px; border-radius: 6px; display: flex; flex-direction: column;
+  .mc-bars { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: var(--sp-2h); align-items: end; }
+  .mc-bar { height: 170px; border: 0; background: transparent; padding: 0 var(--sp-1); border-radius: var(--r-sm); display: flex; flex-direction: column;
             justify-content: flex-end; align-items: stretch; cursor: pointer; color: var(--text-2); }
   .mc-bar[aria-pressed="true"] { background: var(--surface-2); outline: 2px solid var(--text); color: var(--text); font-weight: 700; }
-  .mc-bar span.n { font-size: 12px; margin-bottom: 4px; }
-  .mc-bar span.seg:first-of-type { border-radius: 3px 3px 0 0; }
-  .mc-months { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 10px; font-size: 12px; color: var(--text-2); text-align: center; }
-  .mc-layout { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 16px; align-items: start; }
+  .mc-bar span.n { font-size: var(--text-caption); margin-bottom: var(--sp-1); }
+  .mc-bar span.seg:first-of-type { border-radius: var(--r-xs) var(--r-xs) 0 0; }
+  .mc-months { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: var(--sp-2h); font-size: var(--text-caption); color: var(--text-2); text-align: center; }
+  .mc-layout { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: var(--sp-4); align-items: start; }
   @media (max-width: 1100px) { .mc-layout { grid-template-columns: 1fr; } }
-  @media (max-width: 720px) { .mc-bars, .mc-months { gap: 4px; } }
-  .mc-event { padding: 16px 0; border-top: 1px solid var(--divider); display: flex; flex-direction: column; gap: 10px; }
+  /* 12 meses de 44 px (alvo de toque) não cabem em 390 px: o gráfico rola dentro do card. */
+  .mc-scroll { display: flex; flex-direction: column; gap: var(--sp-2); overflow-x: auto; padding: 3px; margin: -3px; }   /* folga para o contorno do mês selecionado */
+  @media (max-width: 720px) { .mc-bars, .mc-months { gap: var(--sp-1); min-width: 580px; } }
+  .mc-event { padding: var(--sp-4) 0; border-top: 1px solid var(--divider); display: flex; flex-direction: column; gap: var(--sp-2h); }
   .mc-event:first-child { border-top: 0; }
-  .mc-event-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
-  .mc-event-title { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-  .mc-event-title a.name { font-size: 16px; font-weight: 700; color: var(--text); text-decoration: none; }
+  .mc-event-head { display: flex; justify-content: space-between; align-items: flex-start; gap: var(--sp-3); flex-wrap: wrap; }
+  .mc-event-title { display: flex; align-items: center; gap: var(--sp-2h); flex-wrap: wrap; }
+  .mc-event-title a.name { font-size: var(--text-emph); font-weight: 700; color: var(--text); text-decoration: none; }
   .mc-event-title a.name:hover { color: var(--link); text-decoration: underline; }
-  .mc-streak { padding: 3px 8px; border-radius: 999px; border: 1px solid var(--control-border); font-size: 12px; font-weight: 600; }
-  .mc-items { display: grid; grid-template-columns: 70px 170px minmax(0, 1fr) 72px; column-gap: 16px; row-gap: 6px; font-size: 13px; }
-  @media (max-width: 720px) { .mc-items { grid-template-columns: 44px minmax(0, 1fr) minmax(0, 1fr) 52px; column-gap: 8px; font-size: 12px; } }
-  .mc-items .h { color: var(--text-2); font-size: 12px; font-weight: 600; }
+  .mc-items { display: grid; grid-template-columns: 70px 170px minmax(0, 1fr) 72px; column-gap: var(--sp-4); row-gap: var(--sp-1h); font-size: var(--text-small); }
+  @media (max-width: 720px) { .mc-items { grid-template-columns: 44px minmax(0, 1fr) minmax(0, 1fr) 52px; column-gap: var(--sp-2); font-size: var(--text-caption); } }
+  .mc-items .h { color: var(--text-2); font-size: var(--text-caption); font-weight: 600; }
   .mc-neg { color: var(--down); font-weight: 700; }
   .mc-pos { color: var(--up); font-weight: 700; }
-  .mc-side { display: flex; flex-direction: column; gap: 16px; }
-  .mc-side .v2-card h2 { margin: 0; font-size: 15px; font-weight: 700; }
+  .mc-side { display: flex; flex-direction: column; gap: var(--sp-4); }
+  .mc-side .v2-card h2 { margin: 0; font-size: var(--text-body-lg); font-weight: 700; }
   .mc-watch { border-style: dashed; border-color: var(--text-2); }
-  .mc-kv { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; }
-  .mc-rules dt { font-weight: 600; font-size: 13px; }
-  .mc-rules dd { margin: 2px 0 8px; color: var(--text-2); font-size: 13px; }
-  .mc-legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 13px; color: var(--text-2); }
-  .mc-legend span { display: inline-flex; align-items: center; gap: 6px; }
-  .mc-search { min-height: 44px; width: 180px; border-radius: 8px; border: 1px solid var(--control-border); background: var(--surface); padding: 0 12px; }
+  .mc-kv { display: flex; justify-content: space-between; gap: var(--sp-2); font-size: var(--text-small); }
+  .mc-rules dt { font-weight: 600; font-size: var(--text-small); }
+  .mc-rules dd { margin: 2px 0 var(--sp-2); color: var(--text-2); font-size: var(--text-small); }
+  .mc-search { min-height: 44px; width: 180px; border-radius: var(--r-md); border: 1px solid var(--control-border); background: var(--surface); padding: 0 var(--sp-3); }
 </style>
 </head>
 <body>
@@ -60,6 +59,8 @@
 <script>
 (function () {
   'use strict';
+  const allGroups = V2.allGroups;
+  const activeGroups = () => V2.activeGroups(st.groups);
   const MONTHS_FULL = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
   const TYPES = { decrease: 'Quedas', increase: 'Altas', oscillation: 'Oscilações', new_entrant: 'Novos entrantes' };
   const SIGNALS = { all: 'Todos', consents: 'Consentimentos', api: 'Uso de API' };
@@ -85,8 +86,6 @@
     const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
     return '01/' + String(m).padStart(2, '0') + ' a ' + last + '/' + String(m).padStart(2, '0') + '/' + y;
   }
-  function allGroups() { return V2.meta.groups.map(g => g.slug); }
-  function activeGroups() { return st.groups.length ? st.groups : allGroups(); }
 
   // ── Barra de filtros ─────────────────────────────────────────────────────
   function renderFilterbar() {
@@ -107,7 +106,7 @@
         '<fieldset class="v2-field"><legend>Sinal</legend><div class="v2-seg" data-seg="signal">' +
           Object.entries(SIGNALS).map(([k, l]) => '<button type="button" data-v="' + k + '" aria-pressed="' + (k === st.signal) + '">' + l + '</button>').join('') +
         '</div></fieldset>' +
-      '</div><button type="button" class="v2-btn" id="f-export">Exportar alertas (CSV)</button></div>' +
+      '</div><button type="button" class="v2-btn v2-fb-export" id="f-export" title="Exportar os alertas em CSV">Exportar CSV</button></div>' +
       '<div class="v2-fb-row"><div class="v2-fb-group">' +
         '<label class="v2-field"><span class="v2-label">Instituição</span><input type="search" class="mc-search" id="f-q" placeholder="Buscar…" value="' + V2.esc(st.q) + '"></label>' +
         '<fieldset class="v2-field"><legend>Grupos</legend><div class="v2-chips">' + groups + '</div></fieldset>' +
@@ -216,11 +215,11 @@
       '<div class="v2-card-head"><div><h2>Alertas por mês' + (filterLabel() ? ' · ' + V2.esc(filterLabel()) : '') + '</h2>' +
         '<span class="v2-sub">Clique num mês para ver os alertas dele · ' + monthName(data.month) + ' ficou ' + vsAvg +
         ' dos últimos 12 meses (' + new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 0 }).format(avg) + ')</span></div>' +
-        '<div class="v2-card-actions"><div class="mc-legend"><span><span class="v2-dot" style="background:var(--down)"></span>Quedas</span>' +
+        '<div class="v2-card-actions"><div class="v2-legend lg"><span><span class="v2-dot" style="background:var(--down)"></span>Quedas</span>' +
         '<span><span class="v2-dot" style="background:var(--up)"></span>Altas</span>' +
         '<span><span class="v2-dot" style="background:var(--new)"></span>Novos entrantes</span></div>' +
         '<button type="button" class="v2-icon-btn" data-img="months" aria-label="Copiar como imagem">' + V2.icon('image') + '</button></div></div>' +
-      '<div class="mc-bars">' + bars + '</div><div class="mc-months">' + labels + '</div>' +
+      '<div class="mc-scroll"><div class="mc-bars">' + bars + '</div><div class="mc-months">' + labels + '</div></div>' +
       '<div class="v2-card-foot"><span>Contagem bruta de alertas (oscilação conta 2) · Fonte: dashboard Open Finance Brasil</span></div>';
   }
 
@@ -262,8 +261,8 @@
             '<span class="v2-badge ' + V2.KIND_CLASS[e.kind] + '">' + badge + '</span>' +
             '<a class="name" href="/v2/instituicao?uuid=' + encodeURIComponent(e.uuid) + '">' + V2.esc(e.name) + '</a>' +
             '<span class="v2-legend"><span><span class="v2-dot" style="background:' + V2.groupColor(e.group) + '"></span>' + V2.groupLabel(e.group) + '</span></span>' +
-            (e.streak_months >= 2 ? '<span class="mc-streak">' + V2.ordinalStreak(e.streak_months) + '</span>' : '') +
-          '</div><a class="v2-noexport" href="/v2/instituicao?uuid=' + encodeURIComponent(e.uuid) + '" style="font-size:13px;font-weight:600;text-decoration:none;min-height:32px;display:inline-flex;align-items:center">Abrir perfil →</a></div>' +
+            (e.streak_months >= 2 ? '<span class="v2-badge outline">' + V2.ordinalStreak(e.streak_months) + '</span>' : '') +
+          '</div><a class="v2-noexport v2-link-action" href="/v2/instituicao?uuid=' + encodeURIComponent(e.uuid) + '" style="font-size:var(--text-small)">Abrir perfil →</a></div>' +
           '<div class="mc-items">' + itemRows(e.items, apiOnly ? 'Grupo de API' : 'Métrica') + '</div>' +
           (note ? '<span class="v2-small v2-muted">' + V2.esc(note) + '</span>' : '') +
         '</li>';
@@ -274,10 +273,10 @@
     const w = data.watching;
     const watch = '<section class="v2-card mc-watch"><h2>Em observação</h2>' +
       '<span class="v2-small v2-muted">Condição de API vista em 1 semana; vira alerta se a próxima confirmar.</span>' +
-      (w.length ? w.map(x => '<div style="display:flex;flex-direction:column;gap:2px;padding-top:8px">' +
+      (w.length ? w.map(x => '<div style="display:flex;flex-direction:column;gap:2px;padding-top:var(--sp-2)">' +
         '<div class="mc-kv"><span><b>' + V2.esc(x.name) + '</b> · ' + V2.esc(x.api_group_label) + '</span><b>' + V2.fmtPct(x.change_pct) + '</b></div>' +
         '<span class="v2-small v2-muted">' + V2.fmtCompact(x.value_prev) + ' → ' + V2.fmtCompact(x.value_curr) + ' · decide com a semana de ' + V2.fmtDate(x.confirm_week).slice(0, 5) + '</span></div>').join('')
-        : '<span class="v2-small" style="padding-top:6px">Nada em observação na semana mais recente.</span>') + '</section>';
+        : '<span class="v2-small" style="padding-top:var(--sp-1h)">Nada em observação na semana mais recente.</span>') + '</section>';
     const groups = '<section class="v2-card"><h2>Por grupo de instituição</h2>' +
       (data.by_group.length ? data.by_group.map(g => '<div class="mc-kv"><span class="v2-legend" style="color:var(--text)"><span><span class="v2-dot" style="background:' +
         V2.groupColor(g.group) + '"></span>' + V2.groupLabel(g.group) + '</span></span><span>' + g.alerts + (g.alerts === 1 ? ' alerta' : ' alertas') +
@@ -326,6 +325,7 @@
     ], rows);
   }
 
+  V2.onThemeChange(() => { if (data) { renderFilterbar(); render(); } });
   V2.initShell('mudancas').then(() => { renderFilterbar(); load(); })
     .catch(e => { document.getElementById('card-events').innerHTML = V2.errorBox(e.message); });
 })();

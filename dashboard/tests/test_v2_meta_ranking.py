@@ -157,6 +157,10 @@ async def test_meta_returns_v2_palette_institutions_and_dates(client):
     assert [g["slug"] for g in d["groups"]] == ["neo_banks", "itps", "incumbentes", "outros"]
     from services.constants import GROUP_COLORS_V2
     assert {g["slug"]: g["color"] for g in d["groups"]} == GROUP_COLORS_V2
+    # Tema escuro: só o roxo muda (2,0:1 contra a superfície escura vira 5,2:1).
+    dark = {g["slug"]: g["color_dark"] for g in d["groups"]}
+    assert dark["neo_banks"] == "#9B7BFF" and {k: v for k, v in dark.items() if k != "neo_banks"} == {
+        k: v for k, v in GROUP_COLORS_V2.items() if k != "neo_banks"}
     brad = next(i for i in d["institutions"] if i["uuid"] == "rec-brad")
     assert brad["short"] == "Bradesco" and brad["group"] == "incumbentes"
 
@@ -292,3 +296,13 @@ async def test_ranking_invalid_params_are_422_with_readable_message(client, para
     r = await client.get("/api/v2/ranking", params=params)
     assert r.status_code == 422
     assert r.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_static_assets_are_revalidated_not_cached(client):
+    """shell.js e v2.css mudam com as páginas; sem no-cache o navegador mistura versões."""
+    r = await client.get("/static/v2/shell.js")
+    assert r.status_code == 200 and r.headers["cache-control"] == "no-cache" and r.headers.get("etag")
+    # Revalidação: com o ETag atual, o servidor responde 304 em vez de reenviar o arquivo.
+    again = await client.get("/static/v2/shell.js", headers={"if-none-match": r.headers["etag"]})
+    assert again.status_code == 304

@@ -1,6 +1,26 @@
 <!--
 SYNC IMPACT REPORT
 ==================
+Version change: 1.2.0 → 1.3.0
+Bump type: MINOR — material change to two Shell v2 rules (Principle VI §6.8).
+
+Modified principles:
+  Principle VI §6.8:
+    - "Cards": the "Copiar como imagem" action belongs to every content block (a
+      `.v2-card` with an `h2`); indicator cards (KPIs, top answers, group summaries)
+      carry no actions. "Baixar CSV" is no longer required on every card.
+    - "Export": CSV is one "Exportar CSV" button per page, in the filter bar, right-aligned
+      and with the same label on every tab; blocks that already export their own CSV
+      (rankings, monthly alerts) keep that icon.
+    Why: only 3 of ~20 blocks had both actions, and each page's global CSV already
+    covers the data; implementing ~15 more block exporters would be redundant.
+    Decided by the product owner on 2026-10-30.
+
+Templates reviewed: no template change (plan/spec/tasks templates do not mention card actions).
+Follow-up TODOs: none.
+
+Previous report (1.1.0 → 1.2.0)
+-------------------------------
 Version change: 1.1.0 → 1.2.0
 Bump type: MINOR — new section added (Principle VI §6.8 "Shell v2") and Stack
 table expanded. The existing shell contract (§6.1–6.7) is unchanged and now
@@ -341,11 +361,14 @@ Canonical reference: `specs/011-dashboard-v2/contracts/v2-ui-shell.md`.
 - **Shared code**: header, filter state, formatting and export MUST live in
   `dashboard/gui/v2/shell.js` and `dashboard/gui/v2/v2.css`; pages contain
   only their own blocks.
-- **Cards**: every `.v2-card` has title, subtitle (metric + week), footer with
-  rule and source, and "Copiar como imagem" + "Baixar CSV" actions. Active
+- **Cards**: every content block (a `.v2-card` with an `h2`) has title, subtitle
+  (metric + week), footer with rule and source, and a "Copiar como imagem" action.
+  Indicator cards (KPIs, top answers, group summaries) carry no actions. Active
   filters appear in the card title.
-- **Export**: CSV (`;`, decimal comma, UTF-8 BOM) and PNG 1600×900 with
-  title, metric, data date, active filter and source.
+- **Export**: PNG 1600×900 per block with title, metric, data date, active filter
+  and source. CSV (`;`, decimal comma, UTF-8 BOM) is one "Exportar CSV" button per
+  page, in the filter bar, right-aligned and with the same label on every tab;
+  blocks that already export their own CSV (rankings, monthly alerts) keep that icon.
 - **Loading/errors**: visible loading state per card and human-readable error
   messages, as in Principle III.
 
@@ -419,4 +442,4 @@ optional even for "small" changes.
 **Runtime guidance**: See `CLAUDE.md` at the repository root for agent-specific
 development guidance (commands, architecture diagrams, SQL schema reference).
 
-**Version**: 1.2.0 | **Ratified**: 2026-05-18 | **Last Amended**: 2026-10-05
+**Version**: 1.3.0 | **Ratified**: 2026-05-18 | **Last Amended**: 2026-10-30

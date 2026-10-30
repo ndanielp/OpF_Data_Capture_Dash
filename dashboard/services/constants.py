@@ -136,6 +136,10 @@ GROUP_COLORS_V2: dict[str, str] = {
     "outros":      "#A3ABBA",
 }
 
+# Variante para o tema escuro. Só o roxo muda: sobre a superfície escura (#1B1F2E) o
+# #5B2BC4 dá 2,0:1, abaixo dos 3:1 que um elemento gráfico precisa; o #9B7BFF dá 5,2:1.
+GROUP_COLORS_V2_DARK: dict[str, str] = {**GROUP_COLORS_V2, "neo_banks": "#9B7BFF"}
+
 # Ordem de exibição no 2.0 (barras empilhadas, chips, legendas).
 GROUP_LABELS_V2: dict[str, str] = {
     "neo_banks":   "Neobancos",

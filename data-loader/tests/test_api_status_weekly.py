@@ -29,7 +29,7 @@ def con(tmp_path):
     c.close()
 
 
-def add_calls(con, week, receptor_uuid, receptor, transmitter_uuid, api, status, total, endpoint_id=1):
+def add_calls(con, week, receptor_uuid, receptor, transmitter_uuid, api, status, total, endpoint_id=0):
     con.execute(
         "INSERT OR REPLACE INTO api_requests "
         "(date, receptor, receptor_uuid, transmitter, transmitter_uuid, api, endpoint, "
@@ -55,7 +55,7 @@ def status_rows(con):
 
 def test_refresh_aggregates_by_week_receptor_transmitter_status(con):
     add_calls(con, W2, "rec-a", "Alfa", "txm-1", "accounts", 200, 100)
-    add_calls(con, W2, "rec-a", "Alfa", "txm-1", "loans", 200, 50, endpoint_id=2)
+    add_calls(con, W2, "rec-a", "Alfa", "txm-1", "loans", 200, 50)
     add_calls(con, W2, "rec-a", "Alfa", "txm-1", "accounts", 500, 7)
     add_calls(con, W2, "rec-a", "Alfa", "txm-2", "accounts", 200, 30)
     add_calls(con, W1, "rec-b", "Beta", "txm-1", "resources", 200, 9)
@@ -72,7 +72,7 @@ def test_refresh_aggregates_by_week_receptor_transmitter_status(con):
 
 def test_refresh_excludes_consents_api(con):
     add_calls(con, W2, "rec-a", "Alfa", "txm-1", "consents", 200, 1_000)
-    add_calls(con, W2, "rec-a", "Alfa", "txm-1", "accounts", 200, 10, endpoint_id=2)
+    add_calls(con, W2, "rec-a", "Alfa", "txm-1", "accounts", 200, 10)
     scrapers.refresh_api_status_weekly(con)
     assert status_rows(con) == [(W2, "rec-a", "txm-1", 200, 10)]
 
@@ -94,8 +94,8 @@ def test_success_total_matches_api_group_weekly(con):
     mapeadas, a soma com status 200 é a mesma de api_group_weekly."""
     add_unique(con, W2, "rec-a", "Alfa", 50_000)
     add_calls(con, W2, "rec-a", "Alfa", "txm-1", "accounts", 200, 120)
-    add_calls(con, W2, "rec-a", "Alfa", "txm-2", "loans", 200, 80, endpoint_id=2)
-    add_calls(con, W2, "rec-a", "Alfa", "txm-2", "resources", 200, 15, endpoint_id=3)
+    add_calls(con, W2, "rec-a", "Alfa", "txm-2", "loans", 200, 80)
+    add_calls(con, W2, "rec-a", "Alfa", "txm-2", "resources", 200, 15)
     add_calls(con, W2, "rec-a", "Alfa", "txm-1", "accounts", 500, 40)
 
     scrapers.refresh_api_group_weekly(con)
@@ -114,3 +114,20 @@ def test_compute_signals_rebuilds_api_status_weekly(con):
     summary = compute_signals.compute(con)
     assert status_rows(con) == [(W2, "rec-a", "txm-1", 500, 3)]
     assert summary["api_status_secs"] >= 0
+
+
+def test_endpoint_rows_are_not_counted_on_top_of_the_api_total(con):
+    """api_requests traz o total da API (endpoint_id = 0) e os endpoints que o repartem:
+    somar os dois níveis contava cada chamada duas vezes (feature 012)."""
+    add_unique(con, W2, "rec-a", "Alfa", 50_000)
+    add_calls(con, W2, "rec-a", "Alfa", "txm-1", "accounts", 200, 100)                  # total da API
+    add_calls(con, W2, "rec-a", "Alfa", "txm-1", "accounts", 200, 60, endpoint_id=1)    # repartem o total
+    add_calls(con, W2, "rec-a", "Alfa", "txm-1", "accounts", 200, 40, endpoint_id=2)
+    add_calls(con, W2, "rec-a", "Alfa", "txm-1", "accounts", 500, 8)
+    add_calls(con, W2, "rec-a", "Alfa", "txm-1", "accounts", 500, 8, endpoint_id=1)
+
+    scrapers.refresh_api_group_weekly(con)
+    scrapers.refresh_api_status_weekly(con)
+
+    assert con.execute("SELECT req_week FROM api_group_weekly WHERE date=? AND grp='Conta'", (W2,)).fetchone()[0] == 100
+    assert status_rows(con) == [(W2, "rec-a", "txm-1", 200, 100), (W2, "rec-a", "txm-1", 500, 8)]

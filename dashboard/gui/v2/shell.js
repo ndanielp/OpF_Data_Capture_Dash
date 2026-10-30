@@ -29,6 +29,31 @@
     writeJSON('sessionStorage', KEY_FILTERS, Object.assign({}, V2.getFilters(), partial));
   };
 
+  /** Períodos do filtro, comuns às abas que o têm: [rótulo, dias, rótulo curto]. Dias nulo =
+      toda a base; 'ytd' = desde 1º de janeiro do ano da semana mais recente com dados. */
+  V2.PERIODS = {
+    '12m': ['Últimos 12 meses', 364, '12 meses'],
+    '6m': ['Últimos 6 meses', 182, '6 meses'],
+    '3m': ['Últimos 3 meses', 91, '3 meses'],
+    'ytd': ['Desde o começo do ano', 'ytd', null],
+    'all': ['Desde o início', null, 'no período'],
+  };
+  /** Data inicial (AAAA-MM-DD) do período. O ano de 'ytd' vem do dado, não do relógio: com a
+      base ainda em dezembro, "começo do ano" continua sendo o do ano anterior. */
+  V2.periodStart = function (key) {
+    const days = V2.PERIODS[key][1];
+    if (days == null) return '2000-01-01';
+    if (!V2.meta || !V2.meta.data_through) return null;
+    if (days === 'ytd') return V2.meta.data_through.slice(0, 4) + '-01-01';
+    const d = new Date(V2.meta.data_through + 'T00:00:00Z');
+    d.setUTCDate(d.getUTCDate() - days);
+    return d.toISOString().slice(0, 10);
+  };
+  /** Rótulo curto para frases como "crescimento em …" (o ano, no período anual). */
+  V2.periodShort = function (key) {
+    return key === 'ytd' ? ((V2.meta && V2.meta.data_through) || '').slice(0, 4) : V2.PERIODS[key][2];
+  };
+
   /** Preferências do ranking. Primeiro acesso: Bradesco em "Sempre mostrar". */
   V2.getPrefs = function () {
     const p = readJSON('localStorage', KEY_PREFS);
@@ -59,10 +84,14 @@
   V2.getTheme = function () {
     try { return localStorage.getItem(KEY_THEME) || 'light'; } catch (e) { return 'light'; }
   };
+  const themeListeners = [];
+  /** As páginas redesenham o que foi pintado por JS (gráficos, cores de grupo) quando o tema muda. */
+  V2.onThemeChange = function (fn) { themeListeners.push(fn); };
   V2.toggleTheme = function () {
     const next = V2.getTheme() === 'dark' ? 'light' : 'dark';
     try { localStorage.setItem(KEY_THEME, next); } catch (e) { /* ok */ }
     document.documentElement.dataset.theme = next;
+    themeListeners.forEach(fn => { try { fn(); } catch (e) { console.error(e); } });
   };
 
   // ── Rede e estados ───────────────────────────────────────────────────────
@@ -97,6 +126,27 @@
     return nf(0).format(Math.round(v));
   };
   V2.fmtShare = function (s) { return s == null ? '—' : nf(1).format(s * 100) + '%'; };
+  /** Número com `digits` casas decimais (vírgula decimal, separador de milhar). */
+  V2.fmtDec = function (v, digits) { return v == null || isNaN(v) ? '—' : nf(digits).format(v); };
+  /** Variação em pontos percentuais; `v` já vem em pp (para fração, use fmtPp(v * 100)). */
+  V2.fmtPp = function (v) { return v == null ? '—' : (v > 0 ? '+' : v < 0 ? '−' : '') + nf(1).format(Math.abs(v)) + ' pp'; };
+  /** Eixo de gráfico: 25 mi · 2,5 mi · 800 mil — sem casas decimais sobrando. */
+  V2.fmtAxis = function (v) {
+    const f = dd => new Intl.NumberFormat('pt-BR', { maximumFractionDigits: dd });
+    if (Math.abs(v) >= 1e9) return f(1).format(v / 1e9) + ' bi';
+    if (Math.abs(v) >= 1e6) return f(1).format(v / 1e6) + ' mi';
+    if (Math.abs(v) >= 1e3) return f(0).format(v / 1e3) + ' mil';
+    return f(0).format(v);
+  };
+  V2.cssVar = function (name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); };
+  /** Controle segmentado (escolha única): `options` = { valor: rótulo }. */
+  V2.seg = function (name, options, current) {
+    return '<div class="v2-seg" data-seg="' + name + '">' + Object.entries(options).map(([k, l]) =>
+      '<button type="button" data-v="' + k + '" aria-pressed="' + (k === current) + '">' + l + '</button>').join('') + '</div>';
+  };
+  V2.allGroups = function () { return V2.meta.groups.map(g => g.slug); };
+  /** Grupos em uso: os escolhidos, ou todos quando nenhum foi escolhido. */
+  V2.activeGroups = function (selected) { return selected.length ? selected : V2.allGroups(); };
   V2.fmtPct = function (p, digits) {
     if (p == null) return '—';
     const sign = p > 0 ? '+' : p < 0 ? '−' : '';
@@ -146,7 +196,8 @@
   // ── Header ───────────────────────────────────────────────────────────────
   V2.groupColor = function (slug) {
     const g = (V2.meta && V2.meta.groups || []).find(x => x.slug === slug);
-    return g ? g.color : 'var(--text-2)';
+    if (!g) return 'var(--text-2)';
+    return document.documentElement.dataset.theme === 'dark' && g.color_dark ? g.color_dark : g.color;
   };
   V2.groupLabel = function (slug) {
     const g = (V2.meta && V2.meta.groups || []).find(x => x.slug === slug);
@@ -333,9 +384,9 @@
       'background:' + css.getPropertyValue('--surface') + ';color:' + css.getPropertyValue('--text') + ';' +
       "font-family:'IBM Plex Sans','Segoe UI',system-ui,sans-serif;font-variant-numeric:tabular-nums;";
     const head = document.createElement('div');
-    head.innerHTML = '<div style="font-size:15px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:' +
+    head.innerHTML = '<div style="font-size:var(--text-body-lg);font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:' +
       css.getPropertyValue('--text-2') + '">' + V2.esc(opts.subtitle || '') + '</div>' +
-      '<div style="font-size:34px;font-weight:700;letter-spacing:-.01em;margin-top:6px">' + V2.esc(opts.title || '') + '</div>';
+      '<div style="font-size:var(--text-kpi-lg);font-weight:700;letter-spacing:-.01em;margin-top:var(--sp-1h)">' + V2.esc(opts.title || '') + '</div>';
     const body = document.createElement('div');
     body.style.cssText = 'flex:1;min-height:0;position:relative;';
     const inner = card.cloneNode(true);
@@ -350,8 +401,8 @@
     });
     body.appendChild(inner);
     const foot = document.createElement('div');
-    foot.style.cssText = 'font-size:14px;color:' + css.getPropertyValue('--text-2') + ';border-top:1px solid ' +
-      css.getPropertyValue('--border') + ';padding-top:12px;display:flex;justify-content:space-between;gap:16px';
+    foot.style.cssText = 'font-size:var(--text-body);color:' + css.getPropertyValue('--text-2') + ';border-top:1px solid ' +
+      css.getPropertyValue('--border') + ';padding-top:var(--sp-3);display:flex;justify-content:space-between;gap:var(--sp-4)';
     foot.innerHTML = '<span>' + V2.esc(opts.note || '') + '</span><span>Fonte: dashboard Open Finance Brasil · dados até ' +
       V2.fmtDate(V2.meta && V2.meta.data_through) + '</span>';
     frame.append(head, body, foot);

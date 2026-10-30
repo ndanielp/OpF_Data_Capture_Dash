@@ -19,7 +19,9 @@ from services import v2_metrics as M
 import re
 import unicodedata
 
-from services.constants import API_GROUPS, GROUP_COLORS_V2, GROUP_LABELS_V2, INSTITUTION_GROUP_SLUGS
+from services.constants import (
+    API_GROUPS, API_LABELS, GROUP_COLORS_V2, GROUP_COLORS_V2_DARK, GROUP_LABELS_V2, INSTITUTION_GROUP_SLUGS,
+)
 from services.of_analytics import resolve_institution_group as resolve_group
 
 router = APIRouter()
@@ -82,8 +84,8 @@ def meta() -> dict:
     return _clean({
         "data_through": data_through,
         "updated_at": M.collected_at(),
-        "groups": [{"slug": g, "label": GROUP_LABELS_V2[g], "color": GROUP_COLORS_V2[g]}
-                   for g in GROUP_LABELS_V2],
+        "groups": [{"slug": g, "label": GROUP_LABELS_V2[g], "color": GROUP_COLORS_V2[g],
+                    "color_dark": GROUP_COLORS_V2_DARK[g]} for g in GROUP_LABELS_V2],
         "api_groups": [{"slug": k, "label": v["display"], "color": v["color"]} for k, v in API_GROUPS.items()],
         "institutions": inst.sort_values("short").to_dict(orient="records"),
     })
@@ -637,6 +639,115 @@ def institution(
     })
 
 
+# ── /institution/{uuid}/endpoints ─────────────────────────────────────────────
+# "Para que usa os dados" por endpoint (feature 012): todos os endpoints do catálogo de uma
+# API, na mesma janela (4 semanas normalizadas para 30 dias) e unidades do mix por grupo.
+# Contrato: specs/012-periodo-ano-api-endpoint/contracts/v2-api-delta.md
+
+_NO_ENDPOINT = "Sem endpoint identificado"
+
+
+@router.get("/institution/{uuid}/endpoints")
+def institution_endpoints(
+    uuid:    str,
+    compare: str = Query("ecosystem"),
+    api:     Optional[str] = Query(None),
+    end:     Optional[str] = Query(None),
+) -> dict:
+    inst = M.institutions().set_index("uuid")
+    if uuid not in inst.index:
+        raise HTTPException(404, detail="Instituição não encontrada nesta base.")
+    if compare not in ("ecosystem", "group") and (compare not in inst.index or compare == uuid):
+        raise HTTPException(422, detail="'compare' deve ser ecosystem, group ou o identificador de outra instituição.")
+    group_of, short_of = inst["group"].to_dict(), inst["short"].to_dict()
+    me_group = group_of.get(uuid, "outros")
+    end_ts = _date(end, "end")
+
+    uniq, calls = M.load_metric("unique_total"), M.load_metric("api")
+    week = _last_le(uniq.index, end_ts) if end_ts is not None else uniq.index.max()
+    if week is None:
+        raise HTTPException(404, detail="Sem dados para o período escolhido.")
+    members = M.ref_members(compare, uuid, group_of, inst.index)
+    is_other = compare not in ("ecosystem", "group")
+    ref_label = {"ecosystem": "Ecossistema", "group": GROUP_LABELS_V2.get(me_group, me_group) + " (grupo)"}.get(
+        compare, short_of.get(compare, compare))
+    out = {
+        "week": week.strftime("%Y-%m-%d"),
+        "institution": {"uuid": uuid, "name": short_of.get(uuid, uuid), "group": me_group},
+        "compare": {"kind": "institution" if is_other else compare, "uuid": compare if is_other else None,
+                    "label": ref_label},
+        "apis": [], "api": None, "total": None, "endpoints": [],
+        "footnote": "Sem o grupo Resource.", "unavailable": [],
+    }
+
+    try:
+        ew = M.load_endpoint_weekly()
+    except M.TableMissing:
+        return _clean({**out, "unavailable": ["endpoints"]})
+    api_group = {a: slug for slug, meta in API_GROUPS.items() if slug != "Resource" for a in meta["apis"]}
+    ew = ew[ew["api"].isin(api_group)]
+
+    cal = calls.index[calls.index <= week]
+
+    def calls_30d(df: pd.DataFrame) -> pd.Series:
+        """Chamadas em 30 dias na semana (4 semanas ÷ 28 × 30), por (api, endpoint_id)."""
+        if df.empty:
+            return pd.Series(dtype=float)
+        pv = df.pivot_table(index="date", columns=["api", "endpoint_id"], values="value", aggfunc="sum").reindex(cal)
+        return (pv.rolling(4, min_periods=1).mean() * 30 / 7).loc[week].dropna()
+
+    me30 = calls_30d(ew[ew["uuid"] == uuid])
+    ref30 = calls_30d(ew if members is None else ew[ew["uuid"].isin(members)])
+
+    # Por consentimento: mesma base do mix por grupo (a referência só conta quem teve chamadas).
+    avg_at = lambda s: s.reindex(cal).rolling(4, min_periods=1).mean().get(week)         # noqa: E731
+    u_me = avg_at(uniq[uuid]) if uuid in uniq.columns else None
+    u_ref = avg_at(M.paired_sums(calls, uniq, members)[1])
+
+    by_api = me30.groupby(level="api").sum() if len(me30) else pd.Series(dtype=float)
+    by_api = by_api[by_api > 0].sort_values(ascending=False)
+    out["apis"] = [{"api": a, "label": API_LABELS.get(a, a), "group": api_group[a],
+                    "color": API_GROUPS[api_group[a]]["color"], "calls_30d": float(v)} for a, v in by_api.items()]
+    if api is not None and api not in by_api.index:
+        raise HTTPException(422, detail="'api' deve ser uma das APIs listadas em 'apis'.")
+    api = api or (by_api.index[0] if len(by_api) else None)
+    if api is None:
+        return _clean(out)
+
+    me_api = me30.xs(api, level="api") if api in me30.index.get_level_values("api") else pd.Series(dtype=float)
+    ref_api = ref30.xs(api, level="api") if len(ref30) and api in ref30.index.get_level_values("api") else pd.Series(dtype=float)
+    tot_me, tot_ref = float(me_api.sum()), float(ref_api.sum())
+
+    # Todos os endpoints do catálogo da API (mais os vistos nos dados), com zero para os sem uso.
+    cat = M.load_endpoint_catalog()
+    label_of = {(r.api, int(r.endpoint_id)): r.endpoint for r in cat.itertuples() if r.endpoint}
+    seen = ew[(ew["api"] == api) & (ew["endpoint"] != "")].drop_duplicates(["api", "endpoint_id"], keep="last")
+    for r in seen.itertuples():
+        label_of.setdefault((r.api, int(r.endpoint_id)), r.endpoint)
+    ids = {int(e) for e in cat.loc[cat["api"] == api, "endpoint_id"]} | {int(e) for e in ew.loc[ew["api"] == api, "endpoint_id"]}
+    ids.discard(0)
+    if me_api.get(0, 0.0) > 0 or ref_api.get(0, 0.0) > 0:
+        ids.add(0)
+
+    div = lambda a, b: float(a) / float(b) if b else None                                    # noqa: E731
+    rows = []
+    for eid in ids:
+        c_me, c_ref = float(me_api.get(eid, 0.0)), float(ref_api.get(eid, 0.0))
+        rows.append({
+            "endpoint_id": eid, "name": _NO_ENDPOINT if eid == 0 else label_of.get((api, eid), f"Endpoint {eid}"),
+            "calls_30d": c_me, "share": div(c_me, tot_me), "per_consent": div(c_me, u_me),
+            "ref_calls_30d": c_ref, "ref_share": div(c_ref, tot_ref), "ref_per_consent": div(c_ref, u_ref),
+            "used": c_me > 0 or c_ref > 0,
+        })
+    rows.sort(key=lambda r: (-r["calls_30d"], -r["ref_calls_30d"], r["endpoint_id"]))
+    out.update({
+        "api": api, "endpoints": rows,
+        "total": {"calls_30d": tot_me, "ref_calls_30d": tot_ref,
+                  "per_consent": div(tot_me, u_me), "ref_per_consent": div(tot_ref, u_ref)},
+    })
+    return _clean(out)
+
+
 # ── /evolution ────────────────────────────────────────────────────────────────
 # Aba "Como evolui?": tendência do período (research.md, Decisão 8). Fluxos de API
 # em 30 dias pelas últimas 4 semanas, como na aba 4; contagens como estão.
@@ -650,9 +761,10 @@ _PACE_TOP = 10
 
 
 def _empty_evolution(metric: str, granularity: str, by: str, unavailable: list[str]) -> dict:
-    return {"metric": metric, "granularity": granularity, "by": by, "week": None, "period": None,
+    return {"metric": metric, "granularity": granularity, "by": by, "scale": "total", "share_available": True,
+            "week": None, "period": None,
             "points": [], "headline": None, "series": [], "group_share": [], "group_share_change": [],
-            "share_changes": [], "quarterly_pace": [], "ecosystem_quarterly_pace": None,
+            "share_changes": [], "quarterly_pace": [], "ecosystem_quarterly_pace": None, "ecosystem_series": None,
             "filters_label": "", "unavailable": unavailable}
 
 
@@ -665,10 +777,14 @@ def evolution(
     start:        Optional[str] = Query(None),
     end:          Optional[str] = Query(None),
     groups:       Optional[str] = Query(None),
+    scale:        str = Query("total"),
 ) -> dict:
     metric = _choice(metric, M.METRICS, "metric")
     granularity = _choice(granularity, _GRANULARITIES, "granularity")
     by = _choice(by, _BY, "by")
+    scale = _choice(scale, _SCALES, "scale")
+    if scale == "per_consent" and metric != "api":
+        raise HTTPException(422, detail="'scale=per_consent' só vale para metric=api.")
     if by == "transmitter" and metric != "active":
         raise HTTPException(422, detail="'by=transmitter' só vale para metric=active.")
     ids = list(dict.fromkeys(_list(institutions)))
@@ -695,25 +811,51 @@ def evolution(
     in_groups = lambda u: grp is None or group_of.get(u, "outros") in grp   # noqa: E731
 
     is_flow = metric == "api"
-    vals = M.flow_30d(raw) if is_flow else raw
-    growth_fn = M.growth_flow if is_flow else M.growth_stock
-    growth_of = lambda u: growth_fn(raw[u], start_ts, week)                 # noqa: E731
+    per_consent = scale == "per_consent"          # só chega aqui com metric=api
+    volume = M.flow_30d(raw) if is_flow else raw
+    if per_consent:
+        # Mesma regra de "Quem lidera?" e da aba da instituição: chamadas em 30 dias ÷ média
+        # de únicos (PF + PJ) das mesmas 4 semanas. Semana sem coleta continua lacuna.
+        uniq = M.load_metric("unique_total")
+        u_avg = uniq.reindex(index=raw.index, columns=raw.columns).rolling(4, min_periods=1).mean()
+        vals = (volume / u_avg).where(u_avg > 0)
+        growth_of = lambda u: M.growth_stock(vals[u], start_ts, week)       # noqa: E731
+    else:
+        vals = volume
+        growth_fn = M.growth_flow if is_flow else M.growth_stock
+        growth_of = lambda u: growth_fn(raw[u], start_ts, week)             # noqa: E731
 
     # ── Respostas do topo e ganhos/perdas de participação (sempre sobre o total) ──
     eco_raw = raw.sum(axis=1, min_count=1)
-    eco_growth = growth_fn(eco_raw, start_ts, week)
-    if is_flow:
+    if per_consent:
+        # O ecossistema só conta, em cada semana, os únicos de quem teve chamadas.
+        calls_sum, uniq_sum = M.paired_sums(raw, uniq, None)
+        eco_pc = M.per_consent_30d(calls_sum, uniq_sum)
+        eco_growth = M.growth_stock(eco_pc, start_ts, week)
+        first = eco_pc[eco_pc.index >= M._period_start(eco_pc, start_ts)].dropna()
+        eco_from = float(first.iloc[0]) if len(first) else None
+        eco_to = float(eco_pc[week]) if pd.notna(eco_pc.get(week)) else None
+    elif is_flow:
+        eco_growth = M.growth_flow(eco_raw, start_ts, week)
         head, tail = M.flow_means(eco_raw, start_ts, week)
         eco_from = head * 30 / 7 if head is not None else None
         eco_to = tail * 30 / 7 if tail is not None else None
     else:
+        eco_growth = M.growth_stock(eco_raw, start_ts, week)
         first = eco_raw[eco_raw.index >= M._period_start(eco_raw, start_ts)].dropna()
         eco_from = float(first.iloc[0]) if len(first) else None
         eco_to = float(eco_raw[week]) if pd.notna(eco_raw.get(week)) else None
 
-    sc = M.share_changes(vals, start_ts, week)
-    sc = sc[sc["pp"].notna() & np.array([in_groups(u) for u in sc.index], dtype=bool)]
     end_snap = M.snapshot(vals, week)
+    # "Maiores" = maior volume, mesmo na escala por consentimento (senão uma base minúscula
+    # com razão alta ocuparia o gráfico).
+    size_snap = M.snapshot(volume, week) if per_consent else end_snap
+    if per_consent:
+        # Participação de uma razão não é aditiva: os blocos de participação não se aplicam.
+        sc = pd.DataFrame(columns=["pp", "share_end", "share_start", "debut_month"])
+    else:
+        sc = M.share_changes(vals, start_ts, week)
+        sc = sc[sc["pp"].notna() & np.array([in_groups(u) for u in sc.index], dtype=bool)]
 
     def change_row(u: str) -> dict:
         r = sc.loc[u]
@@ -736,7 +878,7 @@ def evolution(
     total = matrix.sum(axis=1, min_count=1)
     ids = [u for u in ids if u in matrix.columns]
     if not ids:
-        ranked = end_snap.dropna().sort_values(ascending=False)
+        ranked = size_snap.dropna().sort_values(ascending=False)
         ids = [u for u in ranked.index if in_groups(u)][:_DEFAULT_LINES]
     series = []
     for u in ids:
@@ -744,19 +886,20 @@ def evolution(
         last = col.dropna()
         series.append({
             "uuid": u, "name": short_of.get(u, u), "group": group_of.get(u, "outros"),
-            "values": col.tolist(), "shares": (col / total).tolist(),
+            "values": col.tolist(), "shares": None if per_consent else (col / total).tolist(),
             "last": float(last.iloc[-1]) if len(last) else None,
             "growth": growth_of(u),
         })
 
     # ── Participação por grupo, mês a mês ────────────────────────────────────
-    monthly = matrix if granularity == "month" else M.by_point(vals, start_ts, week, "month")
-    m_total = monthly.sum(axis=1, min_count=1)
-    by_grp = {g: monthly[[u for u in monthly.columns if group_of.get(u, "outros") == g]].sum(axis=1)
-              for g in GROUP_LABELS_V2}
-    group_share = [{"point": p, **{g: (float(by_grp[g][p]) / float(m_total[p]) if m_total[p] else None)
-                                   for g in GROUP_LABELS_V2}} for p in monthly.index]
-    group_share_change = []
+    group_share, group_share_change = [], []
+    if not per_consent:
+        monthly = matrix if granularity == "month" else M.by_point(vals, start_ts, week, "month")
+        m_total = monthly.sum(axis=1, min_count=1)
+        by_grp = {g: monthly[[u for u in monthly.columns if group_of.get(u, "outros") == g]].sum(axis=1)
+                  for g in GROUP_LABELS_V2}
+        group_share = [{"point": p, **{g: (float(by_grp[g][p]) / float(m_total[p]) if m_total[p] else None)
+                                       for g in GROUP_LABELS_V2}} for p in monthly.index]
     if group_share:
         a_row, b_row = group_share[0], group_share[-1]
         for g in GROUP_LABELS_V2:
@@ -767,18 +910,22 @@ def evolution(
     # ── Ritmo trimestral: 10 maiores no fim (nos grupos escolhidos) e ecossistema ──
     end_month = week.strftime("%Y-%m")
     full_monthly = M.by_point(vals, vals.index.min(), week, "month")
-    top = [u for u in end_snap.dropna().sort_values(ascending=False).index if in_groups(u)][:_PACE_TOP]
+    top = [u for u in size_snap.dropna().sort_values(ascending=False).index if in_groups(u)][:_PACE_TOP]
     pace_rows = []
     for u in top:
         qp = M.quarterly_pace(full_monthly[u], end_month)
         if qp:
             pace_rows.append({"uuid": u, "name": short_of.get(u, u), "group": group_of.get(u, "outros"), **qp})
     pace_rows.sort(key=lambda r: -(r["last_quarter"] - r["prev_quarter"]))
-    eco_vals = M.flow_30d(eco_raw.to_frame("eco")) if is_flow else eco_raw.to_frame("eco")
+    if per_consent:
+        eco_vals = eco_pc.to_frame("eco")
+    else:
+        eco_vals = M.flow_30d(eco_raw.to_frame("eco")) if is_flow else eco_raw.to_frame("eco")
     eco_pace = M.quarterly_pace(M.by_point(eco_vals, eco_vals.index.min(), week, "month")["eco"], end_month)
 
     return _clean({
         "metric": metric, "granularity": granularity, "by": by,
+        "scale": scale, "share_available": not per_consent,
         "week": week.strftime("%Y-%m-%d"),
         "period": {"start": start_ts.strftime("%Y-%m-%d"), "end": week.strftime("%Y-%m-%d")},
         "points": matrix.index.tolist(),
@@ -789,6 +936,9 @@ def evolution(
         "share_changes": share_changes,
         "quarterly_pace": pace_rows,
         "ecosystem_quarterly_pace": eco_pace,
+        # Linha de referência do gráfico por consentimento (mesmos pontos de `points`).
+        "ecosystem_series": ({"values": M.by_point(eco_vals, start_ts, week, granularity)["eco"].tolist()}
+                             if per_consent else None),
         "filters_label": M.filters_label(grp, []),
         # Busca de transmissores no "+ Adicionar" (o /meta só lista receptores).
         "catalog": (ents.reset_index()[["uuid", "name", "short", "group"]].sort_values("short").to_dict(orient="records")

@@ -59,9 +59,9 @@ def add_active(con, uuid, name, values, start=0):
 
 
 def add_api(con, uuid, name, api, values, start=0):
-    """Chamadas status 200. api_group_weekly faz JOIN com unique_consents na mesma
+    """Chamadas status 200 (o total da API, endpoint_id = 0). api_group_weekly faz JOIN com unique_consents na mesma
     semana, então o receptor precisa ter consentimentos nessas semanas."""
-    rows = [(WEEKS[start + i], name, uuid, "Transmissor", "txm-1", api, "ep", 1, 200, int(v), FETCHED_AT)
+    rows = [(WEEKS[start + i], name, uuid, "Transmissor", "txm-1", api, "", 0, 200, int(v), FETCHED_AT)
             for i, v in enumerate(values) if v is not None]
     con.executemany(
         "INSERT OR REPLACE INTO api_requests "

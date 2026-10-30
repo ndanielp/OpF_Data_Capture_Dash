@@ -100,6 +100,9 @@ def compute(con: sqlite3.Connection) -> dict:
     t0 = time.perf_counter()
     scrapers.refresh_api_status_weekly(con)
     status_secs = time.perf_counter() - t0
+    t0 = time.perf_counter()
+    scrapers.refresh_api_endpoint_weekly(con)
+    endpoint_secs = time.perf_counter() - t0
     found, watch, meta = _detect_all(con)
     _write(con, found, watch, meta)
     by_type = Counter(s.signal_type for s in found)
@@ -110,6 +113,7 @@ def compute(con: sqlite3.Connection) -> dict:
         "by_type": dict(by_type),
         "latest_week_count": sum(1 for s in found if s.week == latest),
         "api_status_secs": status_secs,
+        "api_endpoint_secs": endpoint_secs,
         "watch": len(watch),
         "by_metric": dict(Counter(s.metric for s in found)),
     }
@@ -131,6 +135,7 @@ def main() -> int:
 
     log.info("api_group_weekly atualizado até %s", summary["api_through"])
     log.info("api_status_weekly reconstruída em %.1fs", summary["api_status_secs"])
+    log.info("api_endpoint_weekly reconstruída em %.1fs", summary["api_endpoint_secs"])
     log.info("Trava de cobertura de API: %d semanas bloqueadas %s",
              len(summary["api_skipped_weeks"]), summary["api_skipped_weeks"] or "")
     t = summary["by_type"]

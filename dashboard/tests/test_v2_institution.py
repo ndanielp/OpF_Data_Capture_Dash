@@ -41,6 +41,11 @@ def db_old(tmp_path_factory) -> Path:
 
 
 @pytest.fixture(scope="module")
+def db_no_endpoints(tmp_path_factory) -> Path:
+    return F.build_db(tmp_path_factory.mktemp("v2i") / "no_endpoints.db", with_endpoint_table=False)
+
+
+@pytest.fixture(scope="module")
 def monkeypatch_module():
     from _pytest.monkeypatch import MonkeyPatch
     mp = MonkeyPatch()
@@ -190,3 +195,94 @@ async def test_unknown_institution_is_404(client):
 async def test_invalid_params_are_422(client, params):
     r = await client.get("/api/v2/institution/rec-nu", params=params)
     assert r.status_code == 422 and r.json()["detail"]
+
+
+# ── Visão por endpoint (feature 012): GET /api/v2/institution/{uuid}/endpoints ─
+
+def calls_30d(rows_fn) -> float:
+    """Soma das últimas 4 semanas ÷ 4 × 30/7 de uma série semanal (mesma regra do mix por grupo)."""
+    return sum(rows_fn(i) for i in LAST4) / 4 * 30 / 7
+
+
+def endpoint_week(uuid: str, api: str, eid: int, i: int) -> int:
+    return next((t for a, e, _l, t in F.endpoint_rows(uuid, i) if a == api and e == eid), 0)
+
+
+async def _endpoints(client, uuid="rec-nu", **params):
+    r = await client.get(f"/api/v2/institution/{uuid}/endpoints", params=params)
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+@pytest.mark.asyncio
+async def test_endpoints_default_api_lists_all_endpoints_and_closes_the_total(client):
+    d = await _endpoints(client)
+    assert d["week"] == F.WEEKS[LAST] and d["institution"]["uuid"] == "rec-nu" and d["unavailable"] == []
+    # Seletor: só APIs com chamadas, sem o grupo Resource, da maior para a menor.
+    assert [a["api"] for a in d["apis"]] == ["accounts", "loans"]
+    assert d["apis"][0]["group"] == "Conta" and d["apis"][0]["color"] and d["apis"][0]["label"] == "Contas"
+    assert d["api"] == "accounts"
+    # Todos os endpoints do catálogo, ordenados por volume; o que ninguém usou fica no fim com zero.
+    assert [e["endpoint_id"] for e in d["endpoints"]] == [1, 2, 0, 3]
+    assert [e["name"] for e in d["endpoints"]] == ["Saldos da conta", "Extrato da conta", "Sem endpoint identificado", "Limites da conta"]
+    assert [e["used"] for e in d["endpoints"]] == [True, True, True, False]
+    ep1 = d["endpoints"][0]
+    assert ep1["calls_30d"] == pytest.approx(calls_30d(lambda i: endpoint_week("rec-nu", "accounts", 1, i)))
+    assert d["endpoints"][-1]["calls_30d"] == 0 and d["endpoints"][-1]["share"] == 0
+    # SC-003: a soma dos endpoints (com a parcela sem endpoint) fecha com o total da API.
+    total = calls_30d(lambda i: F.calls_ok("rec-nu", i))
+    assert d["total"]["calls_30d"] == pytest.approx(total)
+    assert sum(e["calls_30d"] for e in d["endpoints"]) == pytest.approx(total)
+    assert sum(e["share"] for e in d["endpoints"]) == pytest.approx(1.0)
+    assert d["total"]["per_consent"] == pytest.approx(per_consent_30d("rec-nu"))
+    assert ep1["per_consent"] == pytest.approx(ep1["calls_30d"] / (d["total"]["calls_30d"] / d["total"]["per_consent"]))
+
+
+@pytest.mark.asyncio
+async def test_endpoints_compare_with_another_institution_and_with_the_ecosystem(client):
+    d = await _endpoints(client, compare="rec-brad", api="accounts")
+    assert d["compare"]["kind"] == "institution" and d["compare"]["label"] == "Bradesco"
+    ep1 = next(e for e in d["endpoints"] if e["endpoint_id"] == 1)
+    assert ep1["ref_calls_30d"] == pytest.approx(calls_30d(lambda i: endpoint_week("rec-brad", "accounts", 1, i)))
+    assert ep1["ref_share"] == pytest.approx(0.6, abs=1e-3)
+
+    eco = await _endpoints(client, compare="ecosystem", api="accounts")
+    assert eco["compare"] == {"kind": "ecosystem", "uuid": None, "label": "Ecossistema"}
+    ep2 = next(e for e in eco["endpoints"] if e["endpoint_id"] == 2)
+    every = sum(endpoint_week(u, "accounts", 2, i) for u in F.INSTITUTIONS for i in LAST4) / 4 * 30 / 7
+    assert ep2["ref_calls_30d"] == pytest.approx(every)
+    assert (await _endpoints(client, compare="group", api="accounts"))["compare"]["label"].endswith("(grupo)")
+
+
+@pytest.mark.asyncio
+async def test_endpoints_other_api_and_institution_without_it(client):
+    d = await _endpoints(client, api="loans")
+    assert [e["endpoint_id"] for e in d["endpoints"]] == [10, 11]          # sem parcela sem endpoint nem zero extra
+    assert sum(e["calls_30d"] for e in d["endpoints"]) == pytest.approx(d["total"]["calls_30d"])
+    # Bradesco não usa empréstimos: a API nem é oferecida e pedi-la é erro.
+    brad = await _endpoints(client, uuid="rec-brad")
+    assert [a["api"] for a in brad["apis"]] == ["accounts"]
+    r = await client.get("/api/v2/institution/rec-brad/endpoints", params={"api": "loans"})
+    assert r.status_code == 422 and "api" in r.json()["detail"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("uuid,params,status", [
+    ("nao-existe", {}, 404),
+    ("rec-nu", {"compare": "nao-existe"}, 422),
+    ("rec-nu", {"compare": "rec-nu"}, 422),
+    ("rec-nu", {"api": "resources"}, 422),                              # grupo Resource não é oferecido
+    ("rec-nu", {"end": "28/08/2026"}, 422),
+])
+async def test_endpoints_errors(client, uuid, params, status):
+    r = await client.get(f"/api/v2/institution/{uuid}/endpoints", params=params)
+    assert r.status_code == status and isinstance(r.json()["detail"], str)
+
+
+@pytest.mark.asyncio
+async def test_endpoints_without_the_table_is_marked_unavailable(client, use_db, db_no_endpoints):
+    use_db(db_no_endpoints)
+    d = await _endpoints(client)
+    assert d["unavailable"] == ["endpoints"] and d["apis"] == [] and d["endpoints"] == [] and d["api"] is None
+    # A visão por grupo da mesma base continua funcionando.
+    assert (await _get(client))["api_mix"]

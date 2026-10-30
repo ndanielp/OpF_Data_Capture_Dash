@@ -187,3 +187,76 @@ async def test_validation_errors(client):
     assert r.status_code == 422
     r = await client.get("/api/v2/evolution", params={"start": "2026-09-01"})
     assert r.status_code == 422
+
+
+# ── Período "Desde o começo do ano" (feature 012) ─────────────────────────────
+# O período é só do frontend (V2.periodStart manda start=AAAA-01-01); o backend precisa
+# tomar a primeira semana a partir daí como base e aceitar períodos de 1 ponto.
+
+@pytest.mark.asyncio
+async def test_year_to_date_start_uses_first_week_of_the_year(client):
+    first = next(i for i, w in enumerate(F.WEEKS) if w >= "2026-01-01")
+    d = await _get(client, start="2026-01-01")
+    tot = lambda i: sum((F.cpf(u, i) or 0) for u in F.INSTITUTIONS)   # noqa: E731
+    eg = d["headline"]["ecosystem_growth"]
+    assert d["period"]["start"] == "2026-01-01" and d["period"]["end"] == F.WEEKS[LAST]
+    assert eg["from"] == tot(first) and eg["to"] == tot(LAST)
+    assert eg["value"] == pytest.approx(tot(LAST) / tot(first) - 1)
+    assert d["points"][0] == "2026-01"
+
+
+@pytest.mark.asyncio
+async def test_year_to_date_with_a_single_week_is_not_an_error(client):
+    first = next(i for i, w in enumerate(F.WEEKS) if w >= "2026-01-01")
+    d = await _get(client, start="2026-01-01", end=F.WEEKS[first])
+    assert d["points"] == ["2026-01"] and d["week"] == F.WEEKS[first]
+    assert d["headline"]["ecosystem_growth"]["value"] == pytest.approx(0.0)
+
+
+# ── Escala "por consentimento/mês" (feature 012) ──────────────────────────────
+
+@pytest.mark.asyncio
+async def test_api_per_consent_matches_ranking_and_hides_shares(client):
+    d = await _get(client, metric="api", scale="per_consent", granularity="week")
+    assert d["scale"] == "per_consent" and d["share_available"] is False
+    # As 5 maiores continuam sendo as de maior volume, não as de maior razão.
+    assert [s["uuid"] for s in d["series"]] == ["rec-nu", "rec-belvo", "rec-sant", "rec-shop", "rec-brad"]
+    assert all(s["shares"] is None for s in d["series"])
+    assert d["group_share"] == [] and d["group_share_change"] == [] and d["share_changes"] == []
+    assert d["headline"]["top_gainer"] is None and d["headline"]["top_loser"] is None
+
+    # SC-002: mesma conta de "Quem lidera?" (ranking com escala por consentimento).
+    rk = (await client.get("/api/v2/ranking", params={"metric": "api", "scale": "per_consent"})).json()
+    by = {r["uuid"]: r["per_consent_month"] for r in rk["rows"]}
+    for s in d["series"]:
+        assert s["values"][-1] == pytest.approx(by[s["uuid"]]) and s["last"] == pytest.approx(by[s["uuid"]])
+    eco = d["ecosystem_series"]["values"]
+    assert len(eco) == len(d["points"]) and eco[-1] == pytest.approx(rk["ecosystem"]["per_consent_month"])
+    assert d["headline"]["ecosystem_growth"]["to"] == pytest.approx(eco[-1])
+
+
+@pytest.mark.asyncio
+async def test_api_per_consent_gap_week_is_null_and_growth_uses_the_ratio(client):
+    d = await _get(client, metric="api", scale="per_consent", granularity="week", institutions="rec-belvo")
+    s = d["series"][0]
+    assert s["values"][d["points"].index(F.GAP_WEEK)] is None and s["values"][-1] > 0
+    first = next(i for i, w in enumerate(F.WEEKS) if w >= d["period"]["start"])
+    assert s["growth"]["kind"] == "pct" and s["growth"]["value"] == pytest.approx(s["values"][-1] / s["values"][d["points"].index(F.WEEKS[first])] - 1)
+
+
+@pytest.mark.asyncio
+async def test_api_total_scale_is_unchanged(client):
+    default = await _get(client, metric="api")
+    explicit = await _get(client, metric="api", scale="total")
+    assert default["scale"] == "total" and default["share_available"] is True
+    assert default["ecosystem_series"] is None
+    assert default["series"] == explicit["series"] and default["share_changes"] == explicit["share_changes"]
+    assert all(s["shares"] is not None for s in default["series"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("params", [{"metric": "unique_pf", "scale": "per_consent"},
+                                    {"metric": "api", "scale": "xyz"}])
+async def test_scale_errors_are_422(client, params):
+    r = await client.get("/api/v2/evolution", params=params)
+    assert r.status_code == 422 and isinstance(r.json()["detail"], str)

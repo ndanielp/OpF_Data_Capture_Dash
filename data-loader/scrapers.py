@@ -400,6 +400,22 @@ def open_db(path: Path) -> sqlite3.Connection:
             PRIMARY KEY (date, receptor_uuid, transmitter_uuid, status)
         )
     """)
+    # Chamadas bem-sucedidas por endpoint (feature 012, Dashboard 2.0) — visão "Por endpoint"
+    # da aba da instituição sem agregar api_requests (milhões de linhas) no caminho quente.
+    # endpoint_id = 0 guarda a parcela da API que a base não atribui a nenhum endpoint.
+    # Reconstruída por refresh_api_endpoint_weekly, como api_status_weekly.
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS api_endpoint_weekly (
+            date           TEXT    NOT NULL,
+            receptor_uuid  TEXT    NOT NULL,
+            receptor       TEXT    NOT NULL DEFAULT '',
+            api            TEXT    NOT NULL,
+            endpoint_id    INTEGER NOT NULL,
+            endpoint       TEXT    NOT NULL DEFAULT '',
+            total          INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (date, receptor_uuid, api, endpoint_id)
+        )
+    """)
     # Condições de API "em observação" (feature 011): vistas na semana mais recente,
     # aguardando a semana de confirmação. Reconstruída junto com behavior_signals.
     con.execute("""
@@ -457,6 +473,10 @@ def open_db(path: Path) -> sqlite3.Connection:
         CREATE INDEX IF NOT EXISTS idx_asw_date     ON api_status_weekly(date);
         CREATE INDEX IF NOT EXISTS idx_asw_receptor ON api_status_weekly(receptor_uuid, date);
 
+        -- api_endpoint_weekly: Dashboard 2.0 lê por semana e por receptor.
+        CREATE INDEX IF NOT EXISTS idx_aew_date     ON api_endpoint_weekly(date);
+        CREATE INDEX IF NOT EXISTS idx_aew_receptor ON api_endpoint_weekly(receptor_uuid, date);
+
         -- behavior_signals: o dashboard lê sempre por semana.
         CREATE INDEX IF NOT EXISTS idx_behavior_signals_week ON behavior_signals(week);
 
@@ -483,6 +503,10 @@ def refresh_api_group_weekly(con: sqlite3.Connection) -> None:
 
     Deve ser chamado após cada run de coleta para manter a tabela em sincronia.
     executescript() auto-comita, portanto não requer commit() adicional.
+
+    Soma só a chamada sem filtro de endpoint (endpoint_id = 0), que é o total da API: as
+    linhas por endpoint (endpoint_id > 0) repartem esse mesmo total, então somar os dois
+    níveis contava cada chamada duas vezes.
     """
     con.executescript("""
         DELETE FROM api_group_weekly;
@@ -505,6 +529,7 @@ def refresh_api_group_weekly(con: sqlite3.Connection) -> None:
         JOIN unique_consents c ON r.date = c.date AND r.receptor_uuid = c.receptor_uuid
         WHERE r.api <> 'consents'
           AND r.status = 200
+          AND r.endpoint_id = 0
         GROUP BY r.date, r.receptor_uuid, grp
         HAVING grp IS NOT NULL;
     """)
@@ -516,7 +541,7 @@ def refresh_api_status_weekly(con: sqlite3.Connection) -> None:
 
     Alimenta erros e taxa de erro do Dashboard 2.0. Chamada junto com
     refresh_api_group_weekly (fim da coleta e compute_signals.py). executescript()
-    auto-comita.
+    auto-comita. Soma só endpoint_id = 0 (o total da API), como api_group_weekly.
     """
     con.executescript("""
         DELETE FROM api_status_weekly;
@@ -525,8 +550,43 @@ def refresh_api_status_weekly(con: sqlite3.Connection) -> None:
         SELECT date, receptor_uuid, MAX(receptor), transmitter_uuid, MAX(transmitter),
                status, SUM(total)
         FROM api_requests
-        WHERE api <> 'consents'
+        WHERE api <> 'consents' AND endpoint_id = 0
         GROUP BY date, receptor_uuid, transmitter_uuid, status;
+    """)
+
+
+def refresh_api_endpoint_weekly(con: sqlite3.Connection) -> None:
+    """Recalcula api_endpoint_weekly inteira: chamadas com status 200 por semana × receptor ×
+    API × endpoint, sem a API de consentimentos (mesma base de api_group_weekly).
+
+    As linhas de endpoint (endpoint_id > 0) somam os transmissores. A chamada sem filtro de
+    endpoint (endpoint_id = 0 em api_requests) é o total da API: o que ela tem a mais que a
+    soma dos endpoints entra como endpoint_id = 0, para a soma da tabela fechar com o total.
+    Chamada junto com refresh_api_status_weekly (fim da coleta e compute_signals.py).
+    executescript() auto-comita.
+    """
+    con.executescript("""
+        DELETE FROM api_endpoint_weekly;
+        INSERT INTO api_endpoint_weekly
+            (date, receptor_uuid, receptor, api, endpoint_id, endpoint, total)
+        SELECT date, receptor_uuid, MAX(receptor), api, endpoint_id, MAX(endpoint), SUM(total)
+        FROM api_requests
+        WHERE status = 200 AND api <> 'consents' AND endpoint_id > 0
+        GROUP BY date, receptor_uuid, api, endpoint_id;
+
+        INSERT INTO api_endpoint_weekly
+            (date, receptor_uuid, receptor, api, endpoint_id, endpoint, total)
+        SELECT a.date, a.receptor_uuid, a.receptor, a.api, 0, '', a.total - COALESCE(e.total, 0)
+        FROM (SELECT date, receptor_uuid, MAX(receptor) AS receptor, api, SUM(total) AS total
+              FROM api_requests
+              WHERE status = 200 AND api <> 'consents' AND endpoint_id = 0
+              GROUP BY date, receptor_uuid, api) a
+        LEFT JOIN (SELECT date, receptor_uuid, api, SUM(total) AS total
+                   FROM api_requests
+                   WHERE status = 200 AND api <> 'consents' AND endpoint_id > 0
+                   GROUP BY date, receptor_uuid, api) e
+               ON e.date = a.date AND e.receptor_uuid = a.receptor_uuid AND e.api = a.api
+        WHERE a.total - COALESCE(e.total, 0) > 0;
     """)
 
 
