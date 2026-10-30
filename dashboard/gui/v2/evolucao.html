@@ -12,26 +12,26 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script src="/static/v2/shell.js"></script>
 <style>
-  .ev-head-value { font-size: 30px; font-weight: 700; line-height: 1.1; }
+  .ev-head-value { font-size: var(--text-kpi); font-weight: 700; line-height: 1.1; }
   .ev-chart { position: relative; height: 380px; }
-  .ev-lines { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
-  .ev-cols { display: grid; gap: 4px; height: 200px; align-items: stretch; }
-  .ev-cols > div { display: flex; flex-direction: column; border-radius: 3px; overflow: hidden; }
-  .ev-cols-labels { display: flex; justify-content: space-between; font-size: 12px; color: var(--text-2); }
-  .ev-grp { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; font-size: 13px; }
+  .ev-lines { display: flex; gap: var(--sp-1h); flex-wrap: wrap; align-items: center; }
+  .ev-cols { display: grid; gap: var(--sp-1); height: 200px; align-items: stretch; }
+  .ev-cols > div { display: flex; flex-direction: column; border-radius: var(--r-xs); overflow: hidden; }
+  .ev-cols-labels { display: flex; justify-content: space-between; font-size: var(--text-caption); color: var(--text-2); }
+  .ev-grp { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--sp-2); font-size: var(--text-small); }
   ul.ev-list { list-style: none; margin: 0; padding: 0; }
-  .ev-div li { display: grid; grid-template-columns: 130px minmax(0, 1fr) minmax(0, 1fr) 170px; gap: 8px; align-items: center; padding: 4px 0; font-size: 13px; }
-  .ev-div li.ev-sep { border-top: 1px solid var(--control-border); padding-top: 8px; margin-top: 4px; }
+  .ev-div li { display: grid; grid-template-columns: 130px minmax(0, 1fr) minmax(0, 1fr) 170px; gap: var(--sp-2); align-items: center; padding: var(--sp-1) 0; font-size: var(--text-small); }
+  .ev-div li.ev-sep { border-top: 1px solid var(--control-border); padding-top: var(--sp-2); margin-top: var(--sp-1); }
   .ev-div .bar { height: 14px; }
-  .ev-pace li, .ev-pace .ev-pace-head { display: grid; grid-template-columns: minmax(120px, 200px) 130px 130px 160px; gap: 16px; align-items: center; justify-content: start; }
-  .ev-pace li { padding: 9px 0; border-top: 1px solid var(--divider); font-size: 14px; }
-  .ev-pace .ev-pace-head { font-size: 12px; font-weight: 600; color: var(--text-2); padding: 8px 0 4px; }
+  .ev-pace li, .ev-pace .ev-pace-head { display: grid; grid-template-columns: minmax(120px, 200px) 130px 130px 160px; gap: var(--sp-4); align-items: center; justify-content: start; }
+  .ev-pace li { padding: 9px 0; border-top: 1px solid var(--divider); font-size: var(--text-body); }
+  .ev-pace .ev-pace-head { font-size: var(--text-caption); font-weight: 600; color: var(--text-2); padding: var(--sp-2) 0 var(--sp-1); }
   .ev-name { font-weight: 600; color: inherit; text-decoration: none; }
   a.ev-name:hover { text-decoration: underline; }
   @media (max-width: 720px) {
     .ev-div li { grid-template-columns: 100px minmax(0, 1fr) minmax(0, 1fr) 110px; }
-    .ev-div li { grid-template-columns: 88px minmax(0, 1fr) minmax(0, 1fr) 96px; gap: 6px; font-size: 12px; }
-    .ev-pace li, .ev-pace .ev-pace-head { grid-template-columns: minmax(0, 1fr) 52px 60px 100px; gap: 6px; font-size: 13px; }
+    .ev-div li { grid-template-columns: 88px minmax(0, 1fr) minmax(0, 1fr) 96px; gap: var(--sp-1h); font-size: var(--text-caption); }
+    .ev-pace li, .ev-pace .ev-pace-head { grid-template-columns: minmax(0, 1fr) 52px 60px 100px; gap: var(--sp-1h); font-size: var(--text-small); }
     .ev-chart { height: 320px; }
     .ev-grp { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   }
@@ -104,7 +104,7 @@
   function head(title, sub, key) {
     return '<div class="v2-card-head"><div><h2>' + title + '</h2><span class="v2-sub">' + sub + '</span></div>' +
       '<div class="v2-card-actions">' + (key !== 'lines' ? '' : !d || d.share_available ? seg('view', { values: 'Valores', share: 'Participação %' }, st.view)
-        : '<span class="v2-muted" style="font-size:13px">' + NO_SHARE + '</span>') +
+        : '<span class="v2-muted" style="font-size:var(--text-small)">' + NO_SHARE + '</span>') +
       '<button type="button" class="v2-icon-btn" data-img="' + key + '" aria-label="Copiar como imagem">' + V2.icon('image') + '</button></div></div>';
   }
   function nameLink(r) {
@@ -236,8 +236,8 @@
 
   function renderAnswers() {
     const h = d.headline, eg = h.ecosystem_growth;
-    const card = (label, value, sub) => '<div class="v2-card" style="gap:6px"><span class="v2-kpi-label">' + label + '</span>' +
-      '<span class="ev-head-value">' + value + '</span><span class="v2-muted" style="font-size:13px">' + sub + '</span></div>';
+    const card = (label, value, sub) => '<div class="v2-card" style="gap:var(--sp-1h)"><span class="v2-kpi-label">' + label + '</span>' +
+      '<span class="ev-head-value">' + value + '</span><span class="v2-muted" style="font-size:var(--text-small)">' + sub + '</span></div>';
     const among = d.filters_label ? ' (' + V2.esc(d.filters_label) + ')' : '';
     const g = h.top_gainer, l = h.top_loser;
     const gainSub = !g ? '' : g.debut_month
@@ -311,7 +311,7 @@
     const title = ids().length ? 'Evolução das instituições escolhidas' : 'Evolução das ' + n + ' maiores';
     el.innerHTML = head(byTx() ? title.replace('instituições', 'transmissores') : title,
       'Cor = grupo · mesmo grupo diferenciado pelo traço · valor e crescimento no fim da linha', 'lines') +
-      (d.points.length < 3 ? '<p class="v2-muted" style="margin:4px 0 8px;font-size:13px">Poucos dados neste período: ' +
+      (d.points.length < 3 ? '<p class="v2-muted" style="margin:var(--sp-1) 0 var(--sp-2);font-size:var(--text-small)">Poucos dados neste período: ' +
         d.points.length + (d.points.length === 1 ? ' ponto' : ' pontos') + ' para mostrar a evolução.</p>' : '') +
       '<div class="ev-chart"><canvas id="lines-chart" aria-label="' + V2.esc(noun()) + ' de ' + periodText() + ': ' +
         V2.esc(d.series.map(s => s.name + ' ' + endText(s)).join('; ')) + '"></canvas></div>' +
@@ -366,7 +366,7 @@
       '<div class="ev-cols-labels"><span>' + V2.fmtMonth(rows[0].point) + '</span>' + (rows.length > 2 ? '<span>' + V2.fmtMonth(mid) + '</span>' : '') +
         '<span>' + V2.fmtMonth(rows[rows.length - 1].point) + '</span></div>' +
       '<div class="ev-grp">' + d.group_share_change.map(g =>
-        '<div style="display:flex;flex-direction:column;gap:2px"><span style="display:flex;align-items:center;gap:6px;color:var(--text-2)">' +
+        '<div style="display:flex;flex-direction:column;gap:2px"><span style="display:flex;align-items:center;gap:var(--sp-1h);color:var(--text-2)">' +
         '<span class="v2-dot" style="background:' + V2.groupColor(g.group) + '"></span>' + V2.groupLabel(g.group) + '</span>' +
         '<span><b>' + pct1(g.share) + '</b> · ' + pp(g.pp) + '</span></div>').join('') + '</div>';
   }
@@ -383,8 +383,8 @@
       const w = (100 * Math.abs(r.pp) / max).toFixed(0) + '%', c = V2.groupColor(r.group);
       const cls = !sep && r.pp < 0 ? (sep = true, ' class="ev-sep"') : '';
       return '<li' + cls + '>' + nameLink(r) +
-        (r.pp < 0 ? '<div class="bar" style="display:flex;justify-content:flex-end"><div style="width:' + w + ';height:14px;border-radius:3px 0 0 3px;background:' + c + '"></div></div><span></span>'
-                  : '<span></span><div class="bar"><div style="width:' + w + ';height:14px;border-radius:0 3px 3px 0;background:' + c + '"></div></div>') +
+        (r.pp < 0 ? '<div class="bar" style="display:flex;justify-content:flex-end"><div style="width:' + w + ';height:14px;border-radius:var(--r-xs) 0 0 var(--r-xs);background:' + c + '"></div></div><span></span>'
+                  : '<span></span><div class="bar"><div style="width:' + w + ';height:14px;border-radius:0 var(--r-xs) var(--r-xs) 0;background:' + c + '"></div></div>') +
         '<span>' + pp(r.pp) + (r.debut_month ? ' · estreou ' + V2.fmtMonth(r.debut_month) : '') + '</span></li>';
     };
     el.innerHTML = head('Quem ganhou e quem perdeu espaço', 'Variação da participação ' + (st.period === 'all' ? 'desde o início' : 'em ' + V2.periodShort(st.period)) + ', em pontos percentuais', 'changes') +
@@ -400,7 +400,7 @@
     const sub = m ? 'Crescimento nos últimos 3 meses (' + mon(m[1]) + '→' + mon(m[2]) + ') contra os 3 anteriores (' + mon(m[0]) + '→' + mon(m[1]) + ')' +
       (eco ? ' · ecossistema: ' + V2.fmtPct(eco.last_quarter, 1) + ' contra ' + V2.fmtPct(eco.prev_quarter, 1) : '') : 'Sem 6 meses de dados';
     const badge = s => s === 'accelerating' ? '<span class="v2-badge increase">Acelerando</span>'
-      : s === 'decelerating' ? '<span class="v2-badge oscillation">Desacelerando</span>' : '<span class="v2-muted" style="font-size:13px">Estável</span>';
+      : s === 'decelerating' ? '<span class="v2-badge oscillation">Desacelerando</span>' : '<span class="v2-muted" style="font-size:var(--text-small)">Estável</span>';
     el.innerHTML = head('Ritmo: acelerando ou desacelerando?', sub, 'pace') +
       (rows.length ? '<div class="ev-pace"><div class="ev-pace-head"><span>' + (byTx() ? 'Transmissor' : 'Instituição') + '</span><span class="v2-r">3 meses antes</span><span class="v2-r">Últimos 3 meses</span><span>Ritmo</span></div>' +
         '<ul class="ev-list">' + rows.map(r => '<li>' + nameLink(r) + '<span class="v2-r v2-muted">' + V2.fmtPct(r.prev_quarter) + '</span>' +

@@ -205,7 +205,7 @@
     const e = d.ecosystem;
     return '<div class="v2-card">' +
       '<div class="v2-kpi-row" style="justify-content:space-between"><span style="font-weight:600">' + title + '</span>' +
-        '<span class="v2-muted" style="font-size:13px">' + e.receptors + ' receptores</span></div>' +
+        '<span class="v2-muted" style="font-size:var(--text-small)">' + e.receptors + ' receptores</span></div>' +
       '<div class="v2-kpi-row"><span class="v2-kpi-big">' + V2.fmtCompact(e.total) + '</span>' + paceLine(e.pace, false) + '</div>' +
       stack(e.by_group, title) + '</div>';
   }
@@ -214,15 +214,15 @@
     const errMode = d.status !== '200';
     const p = e.pace || {};
     const card = (label, value, sub) => '<div class="v2-card"><span class="v2-kpi-label">' + label + '</span>' +
-      '<span class="v2-kpi-value">' + value + '</span><span class="v2-muted" style="font-size:13px">' + sub + '</span></div>';
+      '<span class="v2-kpi-value">' + value + '</span><span class="v2-muted" style="font-size:var(--text-small)">' + sub + '</span></div>';
     const what = d.status === '500' ? 'erros' : 'chamadas';
     // Mesma barra de grupos das outras métricas, sobre a soma das últimas 4 semanas.
     const groups = '<div class="v2-card">' +
       '<div class="v2-kpi-row" style="justify-content:space-between"><span style="font-weight:600">' +
         (d.status === '500' ? 'Erros' : 'Chamadas') + ' por grupo de instituição · ' + V2.fmtCompact(e.total_4w) + ' nas últimas 4 semanas</span>' +
-        '<span class="v2-muted" style="font-size:13px">% das ' + what + ' das últimas 4 semanas · grupo do receptor</span></div>' +
+        '<span class="v2-muted" style="font-size:var(--text-small)">% das ' + what + ' das últimas 4 semanas · grupo do receptor</span></div>' +
       stack(e.by_group_4w || e.by_group, 'das ' + what + ' de API nas últimas 4 semanas') + '</div>';
-    return '<div style="display:flex;flex-direction:column;gap:16px"><div class="v2-grid v2-grid-4">' +
+    return '<div style="display:flex;flex-direction:column;gap:var(--sp-4)"><div class="v2-grid v2-grid-4">' +
       card(errMode ? (d.status === '500' ? 'Erros na semana' : 'Chamadas na semana (todas)') : 'Chamadas na semana',
            V2.fmtCompact(e.total), e.receptors + ' receptores · ' + V2.fmtGrowth(e.growth) + ' em ' + periodShort(st.period)) +
       card('Ritmo por dia · 4 semanas', V2.fmtCompact(p.per_day) + ' ' + V2.trendArrow(p.trend, errMode),
@@ -240,9 +240,9 @@
     } else if (st.metric === 'active') {
       const d = last[0][1], e = d.ecosystem;
       el.innerHTML = '<div class="v2-card v2-split">' +
-        '<div style="display:flex;flex-direction:column;gap:6px"><span style="font-weight:600">Total do ecossistema · ' + e.receptors + ' receptores</span>' +
+        '<div style="display:flex;flex-direction:column;gap:var(--sp-1h)"><span style="font-weight:600">Total do ecossistema · ' + e.receptors + ' receptores</span>' +
         '<span class="v2-kpi-big">' + V2.fmtCompact(e.total) + '</span>' + paceLine(e.pace, false) + '</div>' +
-        '<div style="display:flex;flex-direction:column;gap:10px">' + stack(e.by_group, 'ativos') + '</div></div>';
+        '<div style="display:flex;flex-direction:column;gap:var(--sp-2h)">' + stack(e.by_group, 'ativos') + '</div></div>';
     } else {
       el.innerHTML = apiCards(last[0][1]);
     }
@@ -306,7 +306,7 @@
               (d.status === '200' ? V2.fmtInt(r.per_consent_month) : V2.fmtShare(r.error_rate)) + '</span>'
           : '';
         cells = '<span class="v2-muted">' + r.rank + '</span><div class="v2-rank-name">' + nameLink(r) + '</div>' +
-          '<span class="v2-muted" style="font-size:13px">' + V2.groupLabel(r.group) + '</span>' + bar +
+          '<span class="v2-muted" style="font-size:var(--text-small)">' + V2.groupLabel(r.group) + '</span>' + bar +
           '<span class="v2-r" style="font-weight:600">' + V2.fmtShare(r.share) + '</span>' +
           '<span class="v2-r">' + V2.fmtCompact(r.value) + '</span>' + paceCell(r.pace, mode, isApi && d.status !== '200') + third + growth + menu;
       }

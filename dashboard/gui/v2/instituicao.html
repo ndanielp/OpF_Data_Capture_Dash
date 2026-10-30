@@ -12,28 +12,28 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script src="/static/v2/shell.js"></script>
 <style>
-  .in-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; flex-wrap: wrap; }
-  .in-head h1 { margin: 0; font-size: 26px; font-weight: 700; letter-spacing: -0.01em; }
-  .in-pill { padding: 6px 12px; border-radius: 999px; background: var(--surface-2); font-size: 13px; font-weight: 600; }
-  .in-pick { min-height: 44px; min-width: 240px; border-radius: 8px; border: 1px solid var(--control-border); background: var(--surface);
-             padding: 0 12px; text-align: left; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; }
-  .in-bars li { display: grid; grid-template-columns: 130px minmax(0, 1fr) 60px 76px; gap: 12px; align-items: center; padding: 7px 0; border-top: 1px solid var(--divider); font-size: 14px; }
-  .in-pair li { display: grid; grid-template-columns: 120px minmax(0, 1fr) 150px; gap: 12px; align-items: center; padding: 6px 0; font-size: 13px; }
+  .in-head { display: flex; justify-content: space-between; align-items: flex-end; gap: var(--sp-4); flex-wrap: wrap; }
+  .in-head h1 { margin: 0; font-size: var(--text-h1); font-weight: 700; letter-spacing: -0.01em; }
+  .in-pill { padding: var(--sp-1h) var(--sp-3); border-radius: var(--r-pill); background: var(--surface-2); font-size: var(--text-small); font-weight: 600; }
+  .in-pick { min-height: 44px; min-width: 240px; border-radius: var(--r-md); border: 1px solid var(--control-border); background: var(--surface);
+             padding: 0 var(--sp-3); text-align: left; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: var(--sp-2); }
+  .in-bars li { display: grid; grid-template-columns: 130px minmax(0, 1fr) 60px 76px; gap: var(--sp-3); align-items: center; padding: 7px 0; border-top: 1px solid var(--divider); font-size: var(--text-body); }
+  .in-pair li { display: grid; grid-template-columns: 120px minmax(0, 1fr) 150px; gap: var(--sp-3); align-items: center; padding: var(--sp-1h) 0; font-size: var(--text-small); }
   .in-pair .tr { display: flex; flex-direction: column; gap: 3px; }
-  .in-pair .tr div { height: 10px; border-radius: 2px; }
-  .in-spark li { display: grid; grid-template-columns: 130px 130px minmax(0, 1fr) 72px; gap: 12px; align-items: center; padding: 9px 0; border-top: 1px solid var(--divider); font-size: 14px; }
-  .in-err-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 32px; }
+  .in-pair .tr div { height: 10px; border-radius: var(--r-xxs); }
+  .in-spark li { display: grid; grid-template-columns: 130px 130px minmax(0, 1fr) 72px; gap: var(--sp-3); align-items: center; padding: 9px 0; border-top: 1px solid var(--divider); font-size: var(--text-body); }
+  .in-err-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--sp-8); }
   @media (max-width: 1000px) { .in-err-grid { grid-template-columns: 1fr; } }
   @media (max-width: 720px) {   /* listas com colunas fixas: cabem na tela do celular sem rolagem lateral */
-    .in-bars li { grid-template-columns: 96px minmax(0, 1fr) 48px 60px 56px !important; gap: 6px; font-size: 12px; }
-    .in-spark li { grid-template-columns: 84px 72px minmax(0, 1fr) 56px; gap: 6px; font-size: 12px; }
+    .in-bars li { grid-template-columns: 96px minmax(0, 1fr) 48px 60px 56px !important; gap: var(--sp-1h); font-size: var(--text-caption); }
+    .in-spark li { grid-template-columns: 84px 72px minmax(0, 1fr) 56px; gap: var(--sp-1h); font-size: var(--text-caption); }
     .in-spark svg { width: 72px; }
-    .in-pair li { grid-template-columns: 84px minmax(0, 1fr) 110px; gap: 6px; font-size: 12px; }
+    .in-pair li { grid-template-columns: 84px minmax(0, 1fr) 110px; gap: var(--sp-1h); font-size: var(--text-caption); }
   }
-  .in-cols { display: grid; gap: 10px; align-items: end; height: 150px; border-bottom: 1px solid var(--control-border); }
+  .in-cols { display: grid; gap: var(--sp-2h); align-items: end; height: 150px; border-bottom: 1px solid var(--control-border); }
   .in-col { display: flex; gap: 3px; align-items: flex-end; justify-content: center; height: 100%; }
-  .in-col div { width: 12px; border-radius: 3px 3px 0 0; }
-  .in-col-labels { display: grid; gap: 10px; font-size: 12px; color: var(--text-2); text-align: center; }
+  .in-col div { width: 12px; border-radius: var(--r-xs) var(--r-xs) 0 0; }
+  .in-col-labels { display: grid; gap: var(--sp-2h); font-size: var(--text-caption); color: var(--text-2); text-align: center; }
   .in-chart { position: relative; height: 240px; }
   ul.in-list { list-style: none; margin: 0; padding: 0; }
 </style>
@@ -169,24 +169,24 @@
     const n12 = d.alerts.events.reduce((a, e) => a + e.items.length, 0);
     const pill = (d.unavailable || []).includes('signals') ? '' :
       '<span class="in-pill">' + (n12 ? n12 + (n12 === 1 ? ' alerta' : ' alertas') + ' nos últimos 12 meses' : 'Sem alertas nos últimos 12 meses') + '</span>';
-    document.getElementById('head').innerHTML = '<div class="in-head"><div style="display:flex;flex-direction:column;gap:6px">' +
-      '<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap"><h1>' + V2.esc(me.name) + '</h1>' +
+    document.getElementById('head').innerHTML = '<div class="in-head"><div style="display:flex;flex-direction:column;gap:var(--sp-1h)">' +
+      '<div style="display:flex;align-items:center;gap:var(--sp-3);flex-wrap:wrap"><h1>' + V2.esc(me.name) + '</h1>' +
       '<span class="v2-legend"><span><span class="v2-dot" style="background:' + V2.groupColor(me.group) + '"></span>' + V2.groupLabel(me.group) + '</span></span></div>' +
-      '<p style="margin:0;font-size:15px">' + rankSentence() + '</p>' +
-      '<p class="v2-muted" style="margin:0;font-size:13px">Semana de ' + V2.fmtDate(d.week) + ' · crescimento: ' + PERIODS[st.period][0].toLowerCase() + ' · comparado com ' + V2.esc(ref) + '</p></div>' + pill + '</div>';
+      '<p style="margin:0;font-size:var(--text-body-lg)">' + rankSentence() + '</p>' +
+      '<p class="v2-muted" style="margin:0;font-size:var(--text-small)">Semana de ' + V2.fmtDate(d.week) + ' · crescimento: ' + PERIODS[st.period][0].toLowerCase() + ' · comparado com ' + V2.esc(ref) + '</p></div>' + pill + '</div>';
 
     const paceLine = (p, flow) => {
       if (!p) return '';
       const v = flow ? V2.fmtCompact(p.per_day) : V2.fmtSigned(p.per_day);
       const prev = p.prev_per_day == null ? '' : ' <span class="v2-muted v2-small">(antes ' + (flow ? V2.fmtCompact(p.prev_per_day) : V2.fmtSigned(p.prev_per_day)) + ')</span>';
-      return '<span style="font-size:13px">Ritmo: <b' + (p.per_day < 0 ? ' class="v2-neg"' : '') + '>' + v + '/dia</b> ' + V2.trendArrow(p.trend) + prev + '</span>';
+      return '<span style="font-size:var(--text-small)">Ritmo: <b' + (p.per_day < 0 ? ' class="v2-neg"' : '') + '>' + v + '/dia</b> ' + V2.trendArrow(p.trend) + prev + '</span>';
     };
     const card = (label, k, flow, extra) => {
       if (!k) return '<div class="v2-card"><span class="v2-kpi-label">' + label + '</span><span class="v2-kpi-value">—</span></div>';
       return '<div class="v2-card"><span class="v2-kpi-label">' + label + '</span>' +
         '<span class="v2-kpi-value">' + V2.fmtCompact(k.value) + '</span>' +
         paceLine(k.pace, flow) +
-        '<span class="v2-muted" style="font-size:13px">' + V2.fmtShare(k.share) + ' do total · ' + k.rank + 'º · ' + V2.fmtGrowth(k.growth) + ' em ' + V2.periodShort(st.period) + '</span>' +
+        '<span class="v2-muted" style="font-size:var(--text-small)">' + V2.fmtShare(k.share) + ' do total · ' + k.rank + 'º · ' + V2.fmtGrowth(k.growth) + ' em ' + V2.periodShort(st.period) + '</span>' +
         '<span class="v2-muted v2-small">' + V2.esc(ref) + ': ' + V2.fmtGrowth(k.ref_growth) + (extra || '') + '</span></div>';
     };
     const api = d.kpis.api;
@@ -223,7 +223,7 @@
     const el = document.getElementById('card-evo');
     const ev = d.evolution[st.evo];
     const ratio = st.evo === 'api_per_consent';
-    const sel = '<div style="margin:4px 0 8px">' + segButtons('evo', EVO, st.evo) + '</div>';
+    const sel = '<div style="margin:var(--sp-1) 0 var(--sp-2)">' + segButtons('evo', EVO, st.evo) + '</div>';
     if (!ev || !ev.points.length) {
       el.innerHTML = head('Evolução', EVO_SUB[st.evo] + ' · sem dados no período', 'evo') + sel;
       return;
@@ -274,7 +274,7 @@
                   per_consent: 'Chamadas por consentimento (PF + PJ) em 30 dias, por grupo de dados' }[st.mix];
     const view = segButtons('mixview', MIXVIEW, st.mixview);
     if (st.mixview === 'endpoint') return renderEndpoints(el, view);
-    const sel = '<div style="margin:4px 0 8px;display:flex;gap:12px;flex-wrap:wrap">' + view + segButtons('mix', MIX, st.mix) + '</div>';
+    const sel = '<div style="margin:var(--sp-1) 0 var(--sp-2);display:flex;gap:var(--sp-3);flex-wrap:wrap">' + view + segButtons('mix', MIX, st.mix) + '</div>';
     if (!m.length) { el.innerHTML = head('Para que usa os dados', 'Sem chamadas de API nas últimas 4 semanas', 'mix') + sel; return; }
     const [fm, fr] = MIX_FIELD[st.mix];
     // Em "API total", instituição e ecossistema/grupo têm escalas muito diferentes: a barra
@@ -325,7 +325,7 @@
     const sub = { share: '% das chamadas da API por endpoint', total: 'Chamadas por endpoint em 30 dias',
                   per_consent: 'Chamadas por consentimento (PF + PJ) em 30 dias, por endpoint' }[st.mix];
     const top = (extra) => head('Para que usa os dados', 'Por endpoint · ' + extra, 'mix') +
-      '<div style="margin:4px 0 8px;display:flex;gap:12px;flex-wrap:wrap">' + view + segButtons('mix', MIX, st.mix) + '</div>';
+      '<div style="margin:var(--sp-1) 0 var(--sp-2);display:flex;gap:var(--sp-3);flex-wrap:wrap">' + view + segButtons('mix', MIX, st.mix) + '</div>';
     if (!ep) { el.innerHTML = top('carregando…'); return; }
     if (ep.error) { el.innerHTML = top('indisponível') + V2.errorBox(ep.error); return; }
     if ((ep.unavailable || []).includes('endpoints')) {
@@ -337,7 +337,7 @@
     const groupLabel = slug => ((V2.meta.api_groups || []).find(g => g.slug === slug) || {}).label || slug;
     const byGroup = {};
     ep.apis.forEach(a => (byGroup[a.group] = byGroup[a.group] || []).push(a));
-    const picker = '<label class="v2-field"><span class="v2-label"><span class="v2-dot" style="background:' + apiMeta.color + ';margin-right:6px"></span>API</span>' +
+    const picker = '<label class="v2-field"><span class="v2-label"><span class="v2-dot" style="background:' + apiMeta.color + ';margin-right:var(--sp-1h)"></span>API</span>' +
       '<select class="v2-select" id="ep-api">' + Object.entries(byGroup).map(([g, list]) =>
         '<optgroup label="' + V2.esc(groupLabel(g)) + '">' + list.map(a => '<option value="' + a.api + '"' + (a.api === ep.api ? ' selected' : '') + '>' + V2.esc(a.label) + '</option>').join('') + '</optgroup>').join('') +
       '</select></label>';
@@ -352,7 +352,7 @@
     const refTotal = { share: '100%', total: V2.fmtCompact(tot.ref_calls_30d), per_consent: V2.fmtInt(tot.ref_per_consent) }[st.mix];
     const unused = rows.filter(x => !x.used).length;
     el.innerHTML = head('Para que usa os dados', sub + ' · ' + V2.esc(apiMeta.label) + ' · ' + V2.esc(d.institution.name) + ' contra ' + V2.esc(d.compare.label), 'mix') +
-      '<div style="margin:4px 0 8px;display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">' + view + segButtons('mix', MIX, st.mix) + picker + '</div>' +
+      '<div style="margin:var(--sp-1) 0 var(--sp-2);display:flex;gap:var(--sp-3);flex-wrap:wrap;align-items:flex-end">' + view + segButtons('mix', MIX, st.mix) + picker + '</div>' +
       '<div class="v2-legend"><span><span class="v2-dot" style="background:' + color + '"></span>' + V2.esc(d.institution.name) + '</span>' +
       '<span><span class="v2-dot" style="background:' + refc + '"></span>' + V2.esc(d.compare.label) + '</span></div>' +
       '<ul class="in-list in-pair">' + rows.map(x => '<li' + (x.used ? '' : ' style="opacity:.55"') + '><span style="font-weight:600' + (x.endpoint_id === 0 ? ';font-style:italic' : '') + '">' + V2.esc(x.name) + '</span>' +
@@ -417,17 +417,17 @@
     const ratio = e.ref_current ? e.current / e.ref_current : null;
     const verdict = ratio == null ? '' : ratio < 0.8 ? 'Erra menos que ' + d.compare.label : ratio > 1.2 ? 'Erra mais que ' + d.compare.label : 'Erra no mesmo nível de ' + d.compare.label;
     el.innerHTML = head('Taxa de erro de API', '% das chamadas que voltaram com erro (status 500) · ' + V2.esc(d.institution.name) + ' contra ' + V2.esc(d.compare.label), 'err') +
-      '<div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap"><span class="v2-kpi-value">' + pct1(e.current) + '</span>' +
+      '<div style="display:flex;align-items:baseline;gap:var(--sp-2h);flex-wrap:wrap"><span class="v2-kpi-value">' + pct1(e.current) + '</span>' +
       '<span class="v2-muted">' + V2.esc(d.compare.label) + ' ' + pct1(e.ref_current) + ' · últimas 4 semanas até ' + V2.fmtDate(e.week) + '</span></div>' +
-      '<div class="in-err-grid"><div style="display:flex;flex-direction:column;gap:8px"><span style="font-weight:600;font-size:13px">Mês a mês (soma das semanas do mês)</span>' +
-        '<div class="in-cols" style="' + cols + ';gap:4px" role="img" aria-label="Taxa de erro mensal">' + ser.map(s =>
+      '<div class="in-err-grid"><div style="display:flex;flex-direction:column;gap:var(--sp-2)"><span style="font-weight:600;font-size:var(--text-small)">Mês a mês (soma das semanas do mês)</span>' +
+        '<div class="in-cols" style="' + cols + ';gap:var(--sp-1)" role="img" aria-label="Taxa de erro mensal">' + ser.map(s =>
           '<div class="in-col" title="' + MONTHS[+s.point.slice(5) - 1] + '/' + s.point.slice(2, 4) + ': ' + pct1(s.value) + ' · ' + V2.esc(d.compare.label) + ' ' + pct1(s.ref) + '">' +
           '<div style="width:9px;height:' + (130 * (s.value || 0) / max).toFixed(0) + 'px;background:' + color + '"></div>' +
           '<div style="width:9px;height:' + (130 * (s.ref || 0) / max).toFixed(0) + 'px;background:' + refc + '"></div></div>').join('') + '</div>' +
-        '<div class="in-col-labels" style="' + cols + ';gap:4px">' + ser.map(s => '<span>' + MONTHS[+s.point.slice(5) - 1] + '</span>').join('') + '</div>' +
+        '<div class="in-col-labels" style="' + cols + ';gap:var(--sp-1)">' + ser.map(s => '<span>' + MONTHS[+s.point.slice(5) - 1] + '</span>').join('') + '</div>' +
         '<div class="v2-legend"><span><span class="v2-dot" style="background:' + color + '"></span>' + V2.esc(d.institution.name) + ' ' + pct1(ser.length ? ser[ser.length - 1].value : null) + ' no último mês</span>' +
         '<span><span class="v2-dot" style="background:' + refc + '"></span>' + V2.esc(d.compare.label) + '</span></div></div>' +
-      '<div style="display:flex;flex-direction:column;gap:8px"><span style="font-weight:600;font-size:13px">Por transmissor · últimas 4 semanas (onde o erro acontece)</span>' +
+      '<div style="display:flex;flex-direction:column;gap:var(--sp-2)"><span style="font-weight:600;font-size:var(--text-small)">Por transmissor · últimas 4 semanas (onde o erro acontece)</span>' +
         '<ul class="in-list in-bars">' + tx.map((x, i) => '<li style="grid-template-columns:130px minmax(0,1fr) 60px"><span style="font-weight:600">' + V2.esc(x.name) + '</span>' +
           '<div class="v2-track" style="height:10px"><div style="width:' + (100 * (x.value || 0) / txMax).toFixed(1) + '%;background:' + (i === 0 ? 'var(--down)' : css('--text-2')) + '"></div></div>' +
           '<span class="v2-r"' + (i === 0 ? ' style="font-weight:700"' : '') + '>' + pct1(x.value) + '</span></li>').join('') + '</ul></div></div>' +
@@ -447,19 +447,19 @@
       body = '<span class="v2-muted">Alertas ainda não calculados nesta base.</span>';
     } else {
       if (a.watching.length) {
-        body += '<div style="border:1px dashed var(--text-2);border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;gap:4px">' +
-          '<b style="font-size:14px">Em observação</b>' + a.watching.map(w => '<span style="font-size:13px">' + V2.esc(w.api_group_label) + ': ' +
+        body += '<div style="border:1px dashed var(--text-2);border-radius:var(--r-lg);padding:var(--sp-3) var(--sp-3h);display:flex;flex-direction:column;gap:var(--sp-1)">' +
+          '<b style="font-size:var(--text-body)">Em observação</b>' + a.watching.map(w => '<span style="font-size:var(--text-small)">' + V2.esc(w.api_group_label) + ': ' +
             V2.fmtCompact(w.value_prev) + ' → ' + V2.fmtCompact(w.value_curr) + ' (<b>' + V2.fmtPct(w.change_pct) + '</b>) · decide com a semana de ' + V2.fmtDate(w.confirm_week).slice(0, 5) + '</span>').join('') + '</div>';
       }
       if (a.events.length) {
         body += '<ul class="in-list">' + a.events.map(e => {
           const n = e.items.length;
           const badge = V2.KIND_LABEL[e.kind] + (n > 1 && e.kind !== 'oscillation' ? ' · ' + n : '');
-          return '<li style="padding:12px 0;border-top:1px solid var(--divider);display:flex;flex-direction:column;gap:8px">' +
-            '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><span class="v2-badge ' + V2.KIND_CLASS[e.kind] + '">' + badge + '</span>' +
+          return '<li style="padding:var(--sp-3) 0;border-top:1px solid var(--divider);display:flex;flex-direction:column;gap:var(--sp-2)">' +
+            '<div style="display:flex;align-items:center;gap:var(--sp-2h);flex-wrap:wrap"><span class="v2-badge ' + V2.KIND_CLASS[e.kind] + '">' + badge + '</span>' +
             '<b>' + MONTHS_FULL[+e.month.slice(5) - 1] + '/' + e.month.slice(0, 4) + '</b>' +
             (e.streak_months >= 2 ? '<span class="v2-small v2-muted">' + V2.ordinalStreak(e.streak_months) + '</span>' : '') + '</div>' +
-            '<div class="mc-items" style="display:grid;grid-template-columns:60px 170px minmax(0,1fr) 72px;column-gap:16px;row-gap:4px;font-size:13px">' + e.items.map(item).join('') + '</div>' +
+            '<div class="mc-items" style="display:grid;grid-template-columns:60px 170px minmax(0,1fr) 72px;column-gap:var(--sp-4);row-gap:var(--sp-1);font-size:var(--text-small)">' + e.items.map(item).join('') + '</div>' +
             (e.kind === 'oscillation' ? '<span class="v2-small v2-muted">Voltou ao nível anterior em uma semana · 2 alertas, 1 evento</span>' : '') + '</li>';
         }).join('') + '</ul>';
       } else {

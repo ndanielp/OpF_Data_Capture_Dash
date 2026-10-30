@@ -363,9 +363,9 @@
       'background:' + css.getPropertyValue('--surface') + ';color:' + css.getPropertyValue('--text') + ';' +
       "font-family:'IBM Plex Sans','Segoe UI',system-ui,sans-serif;font-variant-numeric:tabular-nums;";
     const head = document.createElement('div');
-    head.innerHTML = '<div style="font-size:15px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:' +
+    head.innerHTML = '<div style="font-size:var(--text-body-lg);font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:' +
       css.getPropertyValue('--text-2') + '">' + V2.esc(opts.subtitle || '') + '</div>' +
-      '<div style="font-size:34px;font-weight:700;letter-spacing:-.01em;margin-top:6px">' + V2.esc(opts.title || '') + '</div>';
+      '<div style="font-size:var(--text-kpi-lg);font-weight:700;letter-spacing:-.01em;margin-top:var(--sp-1h)">' + V2.esc(opts.title || '') + '</div>';
     const body = document.createElement('div');
     body.style.cssText = 'flex:1;min-height:0;position:relative;';
     const inner = card.cloneNode(true);
@@ -380,8 +380,8 @@
     });
     body.appendChild(inner);
     const foot = document.createElement('div');
-    foot.style.cssText = 'font-size:14px;color:' + css.getPropertyValue('--text-2') + ';border-top:1px solid ' +
-      css.getPropertyValue('--border') + ';padding-top:12px;display:flex;justify-content:space-between;gap:16px';
+    foot.style.cssText = 'font-size:var(--text-body);color:' + css.getPropertyValue('--text-2') + ';border-top:1px solid ' +
+      css.getPropertyValue('--border') + ';padding-top:var(--sp-3);display:flex;justify-content:space-between;gap:var(--sp-4)';
     foot.innerHTML = '<span>' + V2.esc(opts.note || '') + '</span><span>Fonte: dashboard Open Finance Brasil · dados até ' +
       V2.fmtDate(V2.meta && V2.meta.data_through) + '</span>';
     frame.append(head, body, foot);
