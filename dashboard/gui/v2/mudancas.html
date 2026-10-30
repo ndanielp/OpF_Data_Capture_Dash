@@ -21,7 +21,9 @@
   .mc-months { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 10px; font-size: 12px; color: var(--text-2); text-align: center; }
   .mc-layout { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 16px; align-items: start; }
   @media (max-width: 1100px) { .mc-layout { grid-template-columns: 1fr; } }
-  @media (max-width: 720px) { .mc-bars, .mc-months { gap: 4px; } }
+  /* 12 meses de 44 px (alvo de toque) não cabem em 390 px: o gráfico rola dentro do card. */
+  .mc-scroll { display: flex; flex-direction: column; gap: 8px; overflow-x: auto; padding: 3px; margin: -3px; }   /* folga para o contorno do mês selecionado */
+  @media (max-width: 720px) { .mc-bars, .mc-months { gap: 4px; min-width: 580px; } }
   .mc-event { padding: 16px 0; border-top: 1px solid var(--divider); display: flex; flex-direction: column; gap: 10px; }
   .mc-event:first-child { border-top: 0; }
   .mc-event-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
@@ -220,7 +222,7 @@
         '<span><span class="v2-dot" style="background:var(--up)"></span>Altas</span>' +
         '<span><span class="v2-dot" style="background:var(--new)"></span>Novos entrantes</span></div>' +
         '<button type="button" class="v2-icon-btn" data-img="months" aria-label="Copiar como imagem">' + V2.icon('image') + '</button></div></div>' +
-      '<div class="mc-bars">' + bars + '</div><div class="mc-months">' + labels + '</div>' +
+      '<div class="mc-scroll"><div class="mc-bars">' + bars + '</div><div class="mc-months">' + labels + '</div></div>' +
       '<div class="v2-card-foot"><span>Contagem bruta de alertas (oscilação conta 2) · Fonte: dashboard Open Finance Brasil</span></div>';
   }
 
@@ -263,7 +265,7 @@
             '<a class="name" href="/v2/instituicao?uuid=' + encodeURIComponent(e.uuid) + '">' + V2.esc(e.name) + '</a>' +
             '<span class="v2-legend"><span><span class="v2-dot" style="background:' + V2.groupColor(e.group) + '"></span>' + V2.groupLabel(e.group) + '</span></span>' +
             (e.streak_months >= 2 ? '<span class="mc-streak">' + V2.ordinalStreak(e.streak_months) + '</span>' : '') +
-          '</div><a class="v2-noexport" href="/v2/instituicao?uuid=' + encodeURIComponent(e.uuid) + '" style="font-size:13px;font-weight:600;text-decoration:none;min-height:32px;display:inline-flex;align-items:center">Abrir perfil →</a></div>' +
+          '</div><a class="v2-noexport v2-link-action" href="/v2/instituicao?uuid=' + encodeURIComponent(e.uuid) + '" style="font-size:13px">Abrir perfil →</a></div>' +
           '<div class="mc-items">' + itemRows(e.items, apiOnly ? 'Grupo de API' : 'Métrica') + '</div>' +
           (note ? '<span class="v2-small v2-muted">' + V2.esc(note) + '</span>' : '') +
         '</li>';
@@ -326,6 +328,7 @@
     ], rows);
   }
 
+  V2.onThemeChange(() => { if (data) { renderFilterbar(); render(); } });
   V2.initShell('mudancas').then(() => { renderFilterbar(); load(); })
     .catch(e => { document.getElementById('card-events').innerHTML = V2.errorBox(e.message); });
 })();

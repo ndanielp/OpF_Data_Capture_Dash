@@ -19,7 +19,9 @@ from services import v2_metrics as M
 import re
 import unicodedata
 
-from services.constants import API_GROUPS, API_LABELS, GROUP_COLORS_V2, GROUP_LABELS_V2, INSTITUTION_GROUP_SLUGS
+from services.constants import (
+    API_GROUPS, API_LABELS, GROUP_COLORS_V2, GROUP_COLORS_V2_DARK, GROUP_LABELS_V2, INSTITUTION_GROUP_SLUGS,
+)
 from services.of_analytics import resolve_institution_group as resolve_group
 
 router = APIRouter()
@@ -82,8 +84,8 @@ def meta() -> dict:
     return _clean({
         "data_through": data_through,
         "updated_at": M.collected_at(),
-        "groups": [{"slug": g, "label": GROUP_LABELS_V2[g], "color": GROUP_COLORS_V2[g]}
-                   for g in GROUP_LABELS_V2],
+        "groups": [{"slug": g, "label": GROUP_LABELS_V2[g], "color": GROUP_COLORS_V2[g],
+                    "color_dark": GROUP_COLORS_V2_DARK[g]} for g in GROUP_LABELS_V2],
         "api_groups": [{"slug": k, "label": v["display"], "color": v["color"]} for k, v in API_GROUPS.items()],
         "institutions": inst.sort_values("short").to_dict(orient="records"),
     })

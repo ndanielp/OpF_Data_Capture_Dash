@@ -157,6 +157,10 @@ async def test_meta_returns_v2_palette_institutions_and_dates(client):
     assert [g["slug"] for g in d["groups"]] == ["neo_banks", "itps", "incumbentes", "outros"]
     from services.constants import GROUP_COLORS_V2
     assert {g["slug"]: g["color"] for g in d["groups"]} == GROUP_COLORS_V2
+    # Tema escuro: só o roxo muda (2,0:1 contra a superfície escura vira 5,2:1).
+    dark = {g["slug"]: g["color_dark"] for g in d["groups"]}
+    assert dark["neo_banks"] == "#9B7BFF" and {k: v for k, v in dark.items() if k != "neo_banks"} == {
+        k: v for k, v in GROUP_COLORS_V2.items() if k != "neo_banks"}
     brad = next(i for i in d["institutions"] if i["uuid"] == "rec-brad")
     assert brad["short"] == "Bradesco" and brad["group"] == "incumbentes"
 

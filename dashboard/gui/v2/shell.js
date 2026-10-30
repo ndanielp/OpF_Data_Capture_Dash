@@ -84,10 +84,14 @@
   V2.getTheme = function () {
     try { return localStorage.getItem(KEY_THEME) || 'light'; } catch (e) { return 'light'; }
   };
+  const themeListeners = [];
+  /** As páginas redesenham o que foi pintado por JS (gráficos, cores de grupo) quando o tema muda. */
+  V2.onThemeChange = function (fn) { themeListeners.push(fn); };
   V2.toggleTheme = function () {
     const next = V2.getTheme() === 'dark' ? 'light' : 'dark';
     try { localStorage.setItem(KEY_THEME, next); } catch (e) { /* ok */ }
     document.documentElement.dataset.theme = next;
+    themeListeners.forEach(fn => { try { fn(); } catch (e) { console.error(e); } });
   };
 
   // ── Rede e estados ───────────────────────────────────────────────────────
@@ -171,7 +175,8 @@
   // ── Header ───────────────────────────────────────────────────────────────
   V2.groupColor = function (slug) {
     const g = (V2.meta && V2.meta.groups || []).find(x => x.slug === slug);
-    return g ? g.color : 'var(--text-2)';
+    if (!g) return 'var(--text-2)';
+    return document.documentElement.dataset.theme === 'dark' && g.color_dark ? g.color_dark : g.color;
   };
   V2.groupLabel = function (slug) {
     const g = (V2.meta && V2.meta.groups || []).find(x => x.slug === slug);

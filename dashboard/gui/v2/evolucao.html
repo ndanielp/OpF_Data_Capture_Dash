@@ -444,6 +444,7 @@
   }
 
   // ── Boot ─────────────────────────────────────────────────────────────────
+  V2.onThemeChange(() => { if (d) { renderFilterbar(); render(); } });
   V2.initShell('evolucao').then(() => {
     const known = new Set(V2.meta.institutions.map(i => i.uuid));
     st.institutions = st.institutions.filter(u => known.has(u));

@@ -15,7 +15,7 @@
   .in-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; flex-wrap: wrap; }
   .in-head h1 { margin: 0; font-size: 30px; font-weight: 700; letter-spacing: -0.01em; }
   .in-pill { padding: 6px 12px; border-radius: 999px; background: var(--surface-2); font-size: 13px; font-weight: 600; }
-  .in-pick { min-height: 46px; min-width: 240px; border-radius: 8px; border: 1px solid var(--control-border); background: var(--surface);
+  .in-pick { min-height: 44px; min-width: 240px; border-radius: 8px; border: 1px solid var(--control-border); background: var(--surface);
              padding: 0 12px; text-align: left; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; }
   .in-bars li { display: grid; grid-template-columns: 130px minmax(0, 1fr) 60px 76px; gap: 12px; align-items: center; padding: 7px 0; border-top: 1px solid var(--divider); font-size: 14px; }
   .in-pair li { display: grid; grid-template-columns: 120px minmax(0, 1fr) 150px; gap: 12px; align-items: center; padding: 6px 0; font-size: 13px; }
@@ -525,6 +525,7 @@
   }
 
   // ── Boot ─────────────────────────────────────────────────────────────────
+  V2.onThemeChange(() => { if (d) { renderFilterbar(); render(); } });
   V2.initShell('instituicao').then(async meta => {
     if (!st.uuid || !inst(st.uuid)) {
       const top = await V2.fetchJSON('/api/v2/ranking?metric=unique_pf&limit=1');

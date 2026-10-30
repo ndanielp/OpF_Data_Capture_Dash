@@ -58,7 +58,7 @@ Abas ainda não entregues abrem com um aviso e um link para a página equivalent
 | novo entrante | texto `#0B6B57`, fundo `#E2F3EE` |
 | destaque de fixada | `#FFF4E3` |
 
-Cores de grupo e de grupo de API vêm sempre de `/api/v2/meta` (nunca fixas no HTML/JS). Fonte IBM Plex Sans com fallback do sistema; números tabulares. Alvos de toque ≥ 44 px; textos ≥ 12 px.
+Cores de grupo e de grupo de API vêm sempre de `/api/v2/meta` (nunca fixas no HTML/JS). Os grupos de instituição trazem `color` (tema claro) e `color_dark` (escuro, com ≥ 3:1 contra a superfície): `V2.groupColor` escolhe pelo tema e as páginas redesenham em `V2.onThemeChange`. Texto sobre uma cor de dado usa a cor (escura ou branca) de maior contraste. Em telas de até 720 px, listas de colunas fixas (ranking, meses) rolam dentro do card com largura mínima, em vez de espremer a coluna do nome; colunas de blocos vêm de classes de `v2.css`, nunca de `style` inline, para o media query poder empilhá-las. Fonte IBM Plex Sans com fallback do sistema; números tabulares. Alvos de toque ≥ 44 px; textos ≥ 12 px.
 
 ## Exportação
 

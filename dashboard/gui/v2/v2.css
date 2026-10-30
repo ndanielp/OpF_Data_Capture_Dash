@@ -84,7 +84,7 @@ button, input, select { font: inherit; color: inherit; }
 .v2-header-left { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; }
 .v2-header-right { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 12px; color: var(--text-2); }
 .v2-icon-btn {
-  width: 40px; height: 40px; border-radius: 8px; border: 1px solid var(--border);
+  flex-shrink: 0; width: 44px; height: 44px; border-radius: 8px; border: 1px solid var(--border);
   background: var(--surface); color: var(--text-2); cursor: pointer;
   display: inline-flex; align-items: center; justify-content: center;
 }
@@ -112,7 +112,7 @@ button, input, select { font: inherit; color: inherit; }
 
 .v2-seg { display: flex; background: var(--surface-2); border-radius: 10px; padding: 3px; gap: 2px; flex-wrap: wrap; }
 .v2-seg button {
-  min-height: 40px; padding: 0 14px; border: 0; border-radius: 8px; background: transparent;
+  min-height: 44px; min-width: 44px; padding: 0 14px; border: 0; border-radius: 8px; background: transparent;
   color: var(--text-2); cursor: pointer;
 }
 .v2-seg button[aria-pressed="true"] { background: var(--surface); color: var(--text); font-weight: 600; box-shadow: var(--shadow); }
@@ -126,6 +126,8 @@ button, input, select { font: inherit; color: inherit; }
   background: var(--surface); font-weight: 600; cursor: pointer;
 }
 .v2-btn:hover { border-color: var(--text-2); }
+/* Link que age como botão (ex.: "Abrir perfil →"): mesma altura de toque dos controles. */
+.v2-link-action { display: inline-flex; align-items: center; min-height: 44px; font-weight: 600; text-decoration: none; }
 
 .v2-chips { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 .v2-chip {
@@ -139,14 +141,14 @@ button, input, select { font: inherit; color: inherit; }
 .v2-chip.v2-pick[aria-pressed="true"] { background: var(--text); border-color: var(--text); color: var(--surface); font-weight: 600; }
 .v2-chip .v2-swatch { width: 10px; height: 10px; border-radius: 3px; }
 .v2-chip-tag {
-  display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 4px 0 12px;
+  display: inline-flex; align-items: center; gap: 2px; min-height: 44px; padding: 0 0 0 12px;
   border-radius: 999px; font-size: 13px; font-weight: 600;
 }
 .v2-chip-tag.pinned { background: var(--pinned-chip); }
 .v2-chip-tag.excluded { background: var(--surface-2); color: var(--text-2); font-weight: 500; }
 .v2-chip-tag.excluded .v2-chip-name { text-decoration: line-through; }
 .v2-chip-tag button {
-  width: 32px; height: 32px; border: 0; background: transparent; color: var(--text-2);
+  width: 44px; height: 44px; border: 0; background: transparent; color: var(--text);
   font-size: 16px; cursor: pointer; border-radius: 999px;
 }
 .v2-chip-add {
@@ -164,7 +166,7 @@ button, input, select { font: inherit; color: inherit; }
   background: var(--surface); padding: 0 10px; margin-bottom: 6px;
 }
 .v2-popover button {
-  display: flex; align-items: center; gap: 10px; width: 100%; min-height: 40px; padding: 0 10px;
+  display: flex; align-items: center; gap: 10px; width: 100%; min-height: 44px; padding: 0 10px;
   border: 0; border-radius: 6px; background: transparent; text-align: left; cursor: pointer;
 }
 .v2-popover button:hover, .v2-popover button:focus-visible { background: var(--surface-2); }
@@ -240,10 +242,18 @@ button, input, select { font: inherit; color: inherit; }
 .v2-flat { color: var(--text-2); }
 .v2-neg { color: var(--down); }
 .v2-row-menu {
-  width: 32px; height: 32px; border: 0; border-radius: 6px; background: transparent;
+  width: 44px; height: 44px; border: 0; border-radius: 6px; background: transparent;
   color: var(--text-2); cursor: pointer; font-size: 16px;
 }
 .v2-row-menu:hover { background: var(--surface-2); }
+
+/* Blocos de duas colunas e linhas de evento: as colunas ficam aqui, e não em style inline,
+   para o media query poder empilhá-las no celular. */
+.v2-split { display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: 24px; align-items: center; }
+.v2-change-row {
+  display: grid; grid-template-columns: 150px minmax(0, 1fr) 130px; gap: 16px; align-items: center;
+  padding: 12px 0; border-top: 1px solid var(--divider);
+}
 
 /* Selos de alerta */
 .v2-badge { display: inline-block; padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; white-space: nowrap; }
@@ -255,4 +265,11 @@ button, input, select { font: inherit; color: inherit; }
 @media (max-width: 720px) {
   .v2-grid-rank { grid-template-columns: 1fr; }
   .v2-rank-scroll { overflow-x: auto; }
+  /* Colunas fixas somam ~420 px (estreita) e ~900 px (larga): sem largura mínima a coluna do
+     nome encolhia para 0 e o card rolava sem mostrar os nomes. */
+  .v2-rank-head, .v2-rank-row { min-width: 580px; }
+  .v2-rank-head.wide, .v2-rank-row.wide { min-width: 1000px; }
+  .v2-split { grid-template-columns: 1fr; gap: 16px; }
+  .v2-change-row { grid-template-columns: minmax(0, 1fr) auto; gap: 8px 12px; }
+  .v2-change-row > :nth-child(2) { grid-column: 1 / -1; order: 3; }
 }

@@ -171,11 +171,16 @@
   }
 
   // ── Resumo ───────────────────────────────────────────────────────────────
+  /** Texto escuro ou branco sobre a cor, o que tiver mais contraste (a heurística de luminância
+      dava branco sobre o azul de ITPs, 3,5:1; o escuro dá 5,1:1). */
   function textOn(hex) {
     const m = /^#?([0-9a-f]{6})$/i.exec(hex || '');
     if (!m) return '#14171F';
-    const n = parseInt(m[1], 16), r = n >> 16, g = (n >> 8) & 255, b = n & 255;
-    return (0.299 * r + 0.587 * g + 0.114 * b) > 150 ? '#14171F' : '#FFFFFF';
+    const n = parseInt(m[1], 16);
+    const lin = v => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+    const lum = 0.2126 * lin(n >> 16) + 0.7152 * lin((n >> 8) & 255) + 0.0722 * lin(n & 255);
+    const DARK = '#14171F', DARK_LUM = 0.0087;   // luminância de #14171F
+    return (lum + 0.05) / (DARK_LUM + 0.05) >= 1.05 / (lum + 0.05) ? DARK : '#FFFFFF';
   }
   function stack(byGroup, label) {
     const parts = byGroup.filter(g => g.share).map(g => {
@@ -234,7 +239,7 @@
       el.innerHTML = '<div class="v2-grid v2-grid-2">' + ecoCard('Pessoa física', last[0][1]) + ecoCard('Pessoa jurídica', last[1][1]) + '</div>';
     } else if (st.metric === 'active') {
       const d = last[0][1], e = d.ecosystem;
-      el.innerHTML = '<div class="v2-card" style="display:grid;grid-template-columns:260px minmax(0,1fr);gap:24px;align-items:center">' +
+      el.innerHTML = '<div class="v2-card v2-split">' +
         '<div style="display:flex;flex-direction:column;gap:6px"><span style="font-weight:600">Total do ecossistema · ' + e.receptors + ' receptores</span>' +
         '<span class="v2-kpi-big">' + V2.fmtCompact(e.total) + '</span>' + paceLine(e.pace, false) + '</div>' +
         '<div style="display:flex;flex-direction:column;gap:10px">' + stack(e.by_group, 'ativos') + '</div></div>';
@@ -279,7 +284,7 @@
     else if (mode === 'wide') head = ['#', 'Instituição', 'Grupo', '', 'Part.', 'Total', 'Ritmo/dia · 4 sem.', growthHead, ''];
     else head = ['#', 'Instituição', 'Grupo', '', 'Part.', 'Semana', 'Por dia · 4 sem.', thirdHead, growthHead, ''];
     const right = mode === 'narrow' ? [2, 3, 4, 5] : mode === 'wide' ? [4, 5, 6, 7] : [4, 5, 6, 7, 8];
-    const headHtml = '<div class="v2-rank-head" style="grid-template-columns:' + LAYOUT[mode] + '">' +
+    const headHtml = '<div class="v2-rank-head' + (mode === 'narrow' ? '' : ' wide') + '" style="grid-template-columns:' + LAYOUT[mode] + '">' +
       head.map((h, i) => '<span' + (right.includes(i) ? ' class="v2-r"' : '') + '>' + h + '</span>').join('') + '</div>';
 
     let cutDone = false;
@@ -434,7 +439,7 @@
       const badge = V2.KIND_LABEL[e.kind] + (n > 1 && e.kind !== 'oscillation' ? ' · ' + n : '');
       const big = V2.eventHeadline(e);
       const color = e.kind === 'new_entrant' ? 'var(--new)' : e.kind === 'oscillation' ? 'var(--osc)' : e.kind === 'increase' ? 'var(--up)' : 'var(--down)';
-      return '<li style="display:grid;grid-template-columns:150px minmax(0,1fr) 130px;gap:16px;align-items:center;padding:12px 0;border-top:1px solid var(--divider)">' +
+      return '<li class="v2-change-row">' +
         '<span><span class="v2-badge ' + V2.KIND_CLASS[e.kind] + '">' + badge + '</span></span>' +
         '<span><a href="/v2/instituicao?uuid=' + encodeURIComponent(e.uuid) + '" style="color:var(--text);font-weight:700;text-decoration:none">' + V2.esc(e.name) + '</a>' +
           ' <span class="v2-muted">· ' + V2.esc(V2.describeEvent(e)) + '</span></span>' +
@@ -445,13 +450,14 @@
       '<div class="v2-card-head"><div><h2>O que mudou desde a última atualização</h2>' +
         '<span class="v2-sub">' + period + ' · ' + s.alerts + (s.alerts === 1 ? ' alerta' : ' alertas') + ' em ' + s.institutions +
         (s.institutions === 1 ? ' instituição' : ' instituições') + (s.watching ? ' · ' + s.watching + ' em observação' : '') + '</span></div>' +
-        '<a href="/v2/mudancas" style="font-weight:600;text-decoration:none;min-height:44px;display:inline-flex;align-items:center">Ver tudo em "O que mudou?" →</a></div>' +
+        '<a href="/v2/mudancas" class="v2-link-action">Ver tudo em "O que mudou?" →</a></div>' +
       (shown.length ? '<ul style="list-style:none;margin:0;padding:0">' + rows + '</ul>' + more
                     : '<span class="v2-muted">Nenhum alerta no último mês.</span>') +
       '</section>';
   }
 
   // ── Boot ─────────────────────────────────────────────────────────────────
+  V2.onThemeChange(() => { if (last) { renderFilterbar(); render(); } });
   V2.initShell('lidera')
     .then(() => { refresh(); renderChanges(); })
     .catch(e => { document.getElementById('rankings').innerHTML = V2.errorBox(e.message); });
