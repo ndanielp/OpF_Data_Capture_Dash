@@ -650,9 +650,10 @@ _PACE_TOP = 10
 
 
 def _empty_evolution(metric: str, granularity: str, by: str, unavailable: list[str]) -> dict:
-    return {"metric": metric, "granularity": granularity, "by": by, "week": None, "period": None,
+    return {"metric": metric, "granularity": granularity, "by": by, "scale": "total", "share_available": True,
+            "week": None, "period": None,
             "points": [], "headline": None, "series": [], "group_share": [], "group_share_change": [],
-            "share_changes": [], "quarterly_pace": [], "ecosystem_quarterly_pace": None,
+            "share_changes": [], "quarterly_pace": [], "ecosystem_quarterly_pace": None, "ecosystem_series": None,
             "filters_label": "", "unavailable": unavailable}
 
 
@@ -665,10 +666,14 @@ def evolution(
     start:        Optional[str] = Query(None),
     end:          Optional[str] = Query(None),
     groups:       Optional[str] = Query(None),
+    scale:        str = Query("total"),
 ) -> dict:
     metric = _choice(metric, M.METRICS, "metric")
     granularity = _choice(granularity, _GRANULARITIES, "granularity")
     by = _choice(by, _BY, "by")
+    scale = _choice(scale, _SCALES, "scale")
+    if scale == "per_consent" and metric != "api":
+        raise HTTPException(422, detail="'scale=per_consent' só vale para metric=api.")
     if by == "transmitter" and metric != "active":
         raise HTTPException(422, detail="'by=transmitter' só vale para metric=active.")
     ids = list(dict.fromkeys(_list(institutions)))
@@ -695,25 +700,51 @@ def evolution(
     in_groups = lambda u: grp is None or group_of.get(u, "outros") in grp   # noqa: E731
 
     is_flow = metric == "api"
-    vals = M.flow_30d(raw) if is_flow else raw
-    growth_fn = M.growth_flow if is_flow else M.growth_stock
-    growth_of = lambda u: growth_fn(raw[u], start_ts, week)                 # noqa: E731
+    per_consent = scale == "per_consent"          # só chega aqui com metric=api
+    volume = M.flow_30d(raw) if is_flow else raw
+    if per_consent:
+        # Mesma regra de "Quem lidera?" e da aba da instituição: chamadas em 30 dias ÷ média
+        # de únicos (PF + PJ) das mesmas 4 semanas. Semana sem coleta continua lacuna.
+        uniq = M.load_metric("unique_total")
+        u_avg = uniq.reindex(index=raw.index, columns=raw.columns).rolling(4, min_periods=1).mean()
+        vals = (volume / u_avg).where(u_avg > 0)
+        growth_of = lambda u: M.growth_stock(vals[u], start_ts, week)       # noqa: E731
+    else:
+        vals = volume
+        growth_fn = M.growth_flow if is_flow else M.growth_stock
+        growth_of = lambda u: growth_fn(raw[u], start_ts, week)             # noqa: E731
 
     # ── Respostas do topo e ganhos/perdas de participação (sempre sobre o total) ──
     eco_raw = raw.sum(axis=1, min_count=1)
-    eco_growth = growth_fn(eco_raw, start_ts, week)
-    if is_flow:
+    if per_consent:
+        # O ecossistema só conta, em cada semana, os únicos de quem teve chamadas.
+        calls_sum, uniq_sum = M.paired_sums(raw, uniq, None)
+        eco_pc = M.per_consent_30d(calls_sum, uniq_sum)
+        eco_growth = M.growth_stock(eco_pc, start_ts, week)
+        first = eco_pc[eco_pc.index >= M._period_start(eco_pc, start_ts)].dropna()
+        eco_from = float(first.iloc[0]) if len(first) else None
+        eco_to = float(eco_pc[week]) if pd.notna(eco_pc.get(week)) else None
+    elif is_flow:
+        eco_growth = M.growth_flow(eco_raw, start_ts, week)
         head, tail = M.flow_means(eco_raw, start_ts, week)
         eco_from = head * 30 / 7 if head is not None else None
         eco_to = tail * 30 / 7 if tail is not None else None
     else:
+        eco_growth = M.growth_stock(eco_raw, start_ts, week)
         first = eco_raw[eco_raw.index >= M._period_start(eco_raw, start_ts)].dropna()
         eco_from = float(first.iloc[0]) if len(first) else None
         eco_to = float(eco_raw[week]) if pd.notna(eco_raw.get(week)) else None
 
-    sc = M.share_changes(vals, start_ts, week)
-    sc = sc[sc["pp"].notna() & np.array([in_groups(u) for u in sc.index], dtype=bool)]
     end_snap = M.snapshot(vals, week)
+    # "Maiores" = maior volume, mesmo na escala por consentimento (senão uma base minúscula
+    # com razão alta ocuparia o gráfico).
+    size_snap = M.snapshot(volume, week) if per_consent else end_snap
+    if per_consent:
+        # Participação de uma razão não é aditiva: os blocos de participação não se aplicam.
+        sc = pd.DataFrame(columns=["pp", "share_end", "share_start", "debut_month"])
+    else:
+        sc = M.share_changes(vals, start_ts, week)
+        sc = sc[sc["pp"].notna() & np.array([in_groups(u) for u in sc.index], dtype=bool)]
 
     def change_row(u: str) -> dict:
         r = sc.loc[u]
@@ -736,7 +767,7 @@ def evolution(
     total = matrix.sum(axis=1, min_count=1)
     ids = [u for u in ids if u in matrix.columns]
     if not ids:
-        ranked = end_snap.dropna().sort_values(ascending=False)
+        ranked = size_snap.dropna().sort_values(ascending=False)
         ids = [u for u in ranked.index if in_groups(u)][:_DEFAULT_LINES]
     series = []
     for u in ids:
@@ -744,19 +775,20 @@ def evolution(
         last = col.dropna()
         series.append({
             "uuid": u, "name": short_of.get(u, u), "group": group_of.get(u, "outros"),
-            "values": col.tolist(), "shares": (col / total).tolist(),
+            "values": col.tolist(), "shares": None if per_consent else (col / total).tolist(),
             "last": float(last.iloc[-1]) if len(last) else None,
             "growth": growth_of(u),
         })
 
     # ── Participação por grupo, mês a mês ────────────────────────────────────
-    monthly = matrix if granularity == "month" else M.by_point(vals, start_ts, week, "month")
-    m_total = monthly.sum(axis=1, min_count=1)
-    by_grp = {g: monthly[[u for u in monthly.columns if group_of.get(u, "outros") == g]].sum(axis=1)
-              for g in GROUP_LABELS_V2}
-    group_share = [{"point": p, **{g: (float(by_grp[g][p]) / float(m_total[p]) if m_total[p] else None)
-                                   for g in GROUP_LABELS_V2}} for p in monthly.index]
-    group_share_change = []
+    group_share, group_share_change = [], []
+    if not per_consent:
+        monthly = matrix if granularity == "month" else M.by_point(vals, start_ts, week, "month")
+        m_total = monthly.sum(axis=1, min_count=1)
+        by_grp = {g: monthly[[u for u in monthly.columns if group_of.get(u, "outros") == g]].sum(axis=1)
+                  for g in GROUP_LABELS_V2}
+        group_share = [{"point": p, **{g: (float(by_grp[g][p]) / float(m_total[p]) if m_total[p] else None)
+                                       for g in GROUP_LABELS_V2}} for p in monthly.index]
     if group_share:
         a_row, b_row = group_share[0], group_share[-1]
         for g in GROUP_LABELS_V2:
@@ -767,18 +799,22 @@ def evolution(
     # ── Ritmo trimestral: 10 maiores no fim (nos grupos escolhidos) e ecossistema ──
     end_month = week.strftime("%Y-%m")
     full_monthly = M.by_point(vals, vals.index.min(), week, "month")
-    top = [u for u in end_snap.dropna().sort_values(ascending=False).index if in_groups(u)][:_PACE_TOP]
+    top = [u for u in size_snap.dropna().sort_values(ascending=False).index if in_groups(u)][:_PACE_TOP]
     pace_rows = []
     for u in top:
         qp = M.quarterly_pace(full_monthly[u], end_month)
         if qp:
             pace_rows.append({"uuid": u, "name": short_of.get(u, u), "group": group_of.get(u, "outros"), **qp})
     pace_rows.sort(key=lambda r: -(r["last_quarter"] - r["prev_quarter"]))
-    eco_vals = M.flow_30d(eco_raw.to_frame("eco")) if is_flow else eco_raw.to_frame("eco")
+    if per_consent:
+        eco_vals = eco_pc.to_frame("eco")
+    else:
+        eco_vals = M.flow_30d(eco_raw.to_frame("eco")) if is_flow else eco_raw.to_frame("eco")
     eco_pace = M.quarterly_pace(M.by_point(eco_vals, eco_vals.index.min(), week, "month")["eco"], end_month)
 
     return _clean({
         "metric": metric, "granularity": granularity, "by": by,
+        "scale": scale, "share_available": not per_consent,
         "week": week.strftime("%Y-%m-%d"),
         "period": {"start": start_ts.strftime("%Y-%m-%d"), "end": week.strftime("%Y-%m-%d")},
         "points": matrix.index.tolist(),
@@ -789,6 +825,9 @@ def evolution(
         "share_changes": share_changes,
         "quarterly_pace": pace_rows,
         "ecosystem_quarterly_pace": eco_pace,
+        # Linha de referência do gráfico por consentimento (mesmos pontos de `points`).
+        "ecosystem_series": ({"values": M.by_point(eco_vals, start_ts, week, granularity)["eco"].tolist()}
+                             if per_consent else None),
         "filters_label": M.filters_label(grp, []),
         # Busca de transmissores no "+ Adicionar" (o /meta só lista receptores).
         "catalog": (ents.reset_index()[["uuid", "name", "short", "group"]].sort_values("short").to_dict(orient="records")
