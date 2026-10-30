@@ -47,7 +47,7 @@ Todas as medições abaixo foram feitas na base de 2026-10-29 (`data-loader/data
 ## Decisão 8 — Base de sucesso (status 200)
 
 - **Decisão**: `api_endpoint_weekly` só soma `status = 200` e exclui `api = 'consents'`.
-- **Racional**: a visão por grupo que o endpoint substitui parcialmente lê `api_group_weekly`, que também filtra `status = 200` e exclui `consents`. Usar a mesma base é o que garante o SC-003 (soma dos endpoints = total da API na visão por grupo). Erros (500) já têm sua própria tabela e bloco ("taxa de erro").
+- **Racional**: a visão por grupo que o endpoint substitui parcialmente lê `api_group_weekly`, que também filtra `status = 200` e exclui `consents`. Usar a mesma base é o que garante o SC-003 (soma dos endpoints = total da API na visão por grupo). Erros (500) já têm sua própria tabela e bloco ("taxa de erro"). Isso só vale depois da Decisão 14: antes dela, `api_group_weekly` somava duas vezes.
 
 ## Decisão 9 — "Sem endpoint identificado" como linha `endpoint_id = 0`
 
@@ -76,3 +76,13 @@ Todas as medições abaixo foram feitas na base de 2026-10-29 (`data-loader/data
 
 - **Decisão**: o `compute_signals.py` passa a chamar o refresh novo, o que preenche a base já existente sem recoletar; a coleta completa também o chama no fim, ao lado de `refresh_api_group_weekly` e `refresh_api_status_weekly`.
 - **Racional**: igual ao que já se faz com `api_status_weekly` (CLAUDE.md: "uma coleta interrompida deixa as tabelas semanais desatualizadas até rodar `compute_signals.py`"). O deploy do dashboard antes da base nova é seguro por causa da resposta `unavailable`.
+
+## Decisão 14 — `api_group_weekly` e `api_status_weekly` contavam cada chamada duas vezes
+
+- **Achado (durante a implementação da US3)**: `api_requests` traz, para cada API, o total (`endpoint_id = 0`) e uma linha por endpoint que reparte esse mesmo total. Os dois refreshes somavam os dois níveis. Na base de 2026-10-29, semana de 2026-09-25: `api_group_weekly` = 15.187.579.752 = agregado (7.683.507.574) + endpoints (7.504.072.178); fator 1,98. Para o Nubank em Conta: 1.504.348.110 = 766.524.439 + 737.823.671.
+- **Decisão** (confirmada pelo responsável do produto): corrigir agora, em commit próprio. `refresh_api_group_weekly` e `refresh_api_status_weekly` passam a somar só `endpoint_id = 0`, que é completo: em todas as 44.784 combinações data × receptor × API existem os dois níveis, e os endpoints somam 99,5% do agregado.
+- **Efeito**: totais absolutos de chamadas de API (inclusive "por consentimento/mês") caem ~50% em todo o painel (ex.: Nubank, por consentimento/mês, de ~890 para ~448); crescimento e participação quase não mudam, porque o fator é parecido para todos.
+- **`API_FLOOR` (`data-loader/signals.py`)**: de 1.000.000 para 500.000 chamadas/semana. O piso foi calibrado sobre os totais dobrados; com o novo total, manter 1 milhão tiraria instituições do alerta. Com 500 mil o conjunto de alertas fica idêntico (306 alertas, 256 de API, 9 em observação antes e depois).
+- **Fora do escopo, ainda dobrado**: consultas diretas a `api_requests` sem filtro de nível, em `dashboard/services/of_analytics.py` (perfil do receptor do legado). Não foram tocadas; ver o aviso no `CLAUDE.md`.
+- **SC-003 na base real**: o total da API na visão por endpoint bate com o grupo do mix (Itaú e Bradesco, diferença 0). No Nubank há ~10 chamadas de diferença em 3,27 bilhões, porque `api_group_weekly` só inclui semanas em que o receptor tem consentimentos únicos e `api_endpoint_weekly` não faz esse JOIN.
+- **Invariantes medidos na base real (2026-10-29)**: I1 fecha em 44.776 de 44.784 combinações (data × receptor × API) e nunca fica abaixo do agregado; nas 8 restantes, um receptor e a API de cheque especial, a soma dos endpoints passa do agregado em 0,04% a 4% (inconsistência da própria coleta, tratada pelo `MAX(0, …)`). I2 por semana difere até 1,2% do `api_group_weekly`, pelo JOIN com consentimentos únicos e pelos casos acima; por instituição e API os valores fecham (Itaú e Bradesco: diferença 0).

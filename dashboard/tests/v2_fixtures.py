@@ -100,6 +100,42 @@ CREATE TABLE behavior_watch (
 );
 """
 
+# Detalhe por endpoint (feature 012). 'accounts' reparte o total de chamadas (calls_ok) em dois
+# endpoints e uma parcela sem endpoint identificado (endpoint_id = 0), e tem um terceiro endpoint
+# no catálogo que ninguém usa; 'loans' só existe para o Nubank; 'resources' (grupo Resource)
+# nunca aparece no seletor de API. O dashboard só lê estas tabelas.
+DDL_ENDPOINTS = """
+CREATE TABLE api_endpoint_weekly (
+    date TEXT NOT NULL, receptor_uuid TEXT NOT NULL, receptor TEXT NOT NULL DEFAULT '',
+    api TEXT NOT NULL, endpoint_id INTEGER NOT NULL, endpoint TEXT NOT NULL DEFAULT '',
+    total INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (date, receptor_uuid, api, endpoint_id)
+);
+CREATE TABLE endpoint_history (
+    fetched_at TEXT NOT NULL, api TEXT NOT NULL, endpoint_id INTEGER NOT NULL,
+    endpoint_label TEXT NOT NULL DEFAULT '', source TEXT NOT NULL DEFAULT 'fallback',
+    PRIMARY KEY (fetched_at, api, endpoint_id)
+);
+"""
+ENDPOINT_CATALOG = [
+    ("accounts", 1, "Saldos da conta"), ("accounts", 2, "Extrato da conta"), ("accounts", 3, "Limites da conta"),
+    ("loans", 10, "Contratos de empréstimo"), ("loans", 11, "Parcelas do contrato"),
+    ("resources", 20, "Lista de recursos"),
+]
+
+
+def endpoint_rows(uuid: str, i: int) -> list[tuple[str, int, str, int]]:
+    """(api, endpoint_id, rótulo, total) da semana i. 'accounts' soma exatamente calls_ok."""
+    ok = calls_ok(uuid, i)
+    if ok is None:
+        return []
+    e1, e2 = ok * 6 // 10, ok * 3 // 10
+    rows = [("accounts", 1, "Saldos da conta", e1), ("accounts", 2, "Extrato da conta", e2),
+            ("accounts", 0, "", ok - e1 - e2), ("resources", 20, "Lista de recursos", ok // 50)]
+    if uuid == "rec-nu":
+        rows += [("loans", 10, "Contratos de empréstimo", ok // 20), ("loans", 11, "Parcelas do contrato", ok // 40)]
+    return rows
+
+
 # Alertas de agosto/2026 (aba "O que mudou?"):
 #   Nubank: 2 quedas de API · Belvo: queda em jul e ago (2º mês seguido)
 #   Santander: queda e alta de ativos em semanas seguidas (oscilação) · Shopee: novo entrante
@@ -130,9 +166,10 @@ def calls_err(uuid: str, i: int) -> int | None:
     return ok // 20 if uuid == "rec-nu" else ok // 10   # Nubank 5%/105, demais 10%/110
 
 
-def build_db(path: Path, with_status_table: bool = True, with_signals: bool = True) -> Path:
+def build_db(path: Path, with_status_table: bool = True, with_signals: bool = True,
+             with_endpoint_table: bool = True) -> Path:
     con = sqlite3.connect(str(path))
-    con.executescript(DDL + (DDL_STATUS if with_status_table else ""))
+    con.executescript(DDL + (DDL_STATUS if with_status_table else "") + (DDL_ENDPOINTS if with_endpoint_table else ""))
     if with_signals:
         con.executemany("INSERT INTO behavior_signals (week, signal_type, metric, api_group, receptor_uuid, "
                         "receptor, value_prev, value_curr, change_pct) VALUES (?,?,?,?,?,?,?,?,?)", SIGNALS)
@@ -153,11 +190,18 @@ def build_db(path: Path, with_status_table: bool = True, with_signals: bool = Tr
             ok, err = calls_ok(uuid, i), calls_err(uuid, i)
             con.execute("INSERT INTO api_group_weekly (date, receptor_uuid, receptor, grp, req_week, consents_total) "
                         "VALUES (?,?,?,?,?,?)", (week, uuid, name, "Conta", ok, pf + pj))
+            if with_endpoint_table:
+                con.executemany("INSERT INTO api_endpoint_weekly (date, receptor_uuid, receptor, api, endpoint_id, "
+                                "endpoint, total) VALUES (?,?,?,?,?,?,?)",
+                                [(week, uuid, name, api, eid, label, total) for api, eid, label, total in endpoint_rows(uuid, i)])
             if with_status_table:
                 for status, total in ((200, ok), (500, err)):
                     con.execute("INSERT INTO api_status_weekly (date, receptor_uuid, receptor, transmitter_uuid, "
                                 "transmitter, status, total) VALUES (?,?,?,?,?,?,?)",
                                 (week, uuid, name, "txm-1", "ITAÚ UNIBANCO", status, total))
+    if with_endpoint_table:
+        con.executemany("INSERT INTO endpoint_history (fetched_at, api, endpoint_id, endpoint_label) VALUES "
+                        "('2026-08-28T00:00:00', ?, ?, ?)", ENDPOINT_CATALOG)
     con.execute("INSERT INTO behavior_signals_run (id, computed_at, consents_through, api_through) "
                 "VALUES (1, '2026-09-23T10:00:00Z', ?, ?)", (END.isoformat(), END.isoformat()))
     con.commit()

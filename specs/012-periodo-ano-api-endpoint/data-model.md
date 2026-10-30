@@ -29,7 +29,7 @@ Chamadas bem-sucedidas (status 200) por semana × receptor × API × endpoint, s
 ### Invariantes (testadas)
 
 - **I1 — fechamento**: para toda tupla `(date, receptor_uuid, api)` com agregado, `SUM(total)` da tabela é **igual** ao agregado quando a soma dos endpoints é menor ou igual a ele, e igual à soma dos endpoints caso contrário.
-- **I2 — mesma base do grupo**: somando `api_endpoint_weekly` por grupo de API (pelo mapa `API_GROUPS`) e semana, o resultado é igual a `api_group_weekly.req_week` para as APIs com endpoint. É o que sustenta SC-003.
+- **I2 — mesma base do grupo**: somando `api_endpoint_weekly` por grupo de API (pelo mapa `API_GROUPS`) e semana, o resultado é igual a `api_group_weekly.req_week` (que, desde a correção da Decisão 14, soma só `endpoint_id = 0` de `api_requests`). É o que sustenta SC-003.
 - **I3 — sem consentimentos**: nenhuma linha com `api = 'consents'`.
 - **I4 — idempotência**: rodar o refresh duas vezes sobre a mesma base produz exatamente as mesmas linhas.
 

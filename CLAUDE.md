@@ -100,6 +100,8 @@ Telemetry:
 Derived (rebuilt by the collector at the end of a run and by `compute_signals.py`):
 - `api_group_weekly` — pre-aggregation by group (Conta, Cartao, Credito, Investimento, Cambio, Identidade, Resource) joined with consents_total. Populated by `scrapers.refresh_api_group_weekly`; consumed by the legacy dashboard and by the 2.0 API mix.
 - `api_status_weekly` — week × receptor × transmitter × status (200/500), excluding the `consents` API. Populated by `scrapers.refresh_api_status_weekly`; feeds the 2.0 API ranking (status filter) and error rates.
+- `api_endpoint_weekly` — week × receptor × API × endpoint (status 200, no `consents`); `endpoint_id = 0` holds the calls of the API that no endpoint accounts for. Populated by `scrapers.refresh_api_endpoint_weekly`; feeds the 2.0 "Por endpoint" view (feature 012).
+- **`api_requests` has two levels per API**: the API total (`endpoint_id = 0`) and one row per endpoint that splits that same total. `api_group_weekly` and `api_status_weekly` sum only `endpoint_id = 0`; summing both levels counts every call twice (fixed in feature 012). Raw `FROM api_requests` sums elsewhere (e.g. legacy `services/of_analytics.py`) must filter the level themselves.
 - `behavior_signals` / `behavior_signals_run` — behavior-change alerts and run metadata (feature 010; 30k floor always on unique consents).
 - `behavior_watch` — API alert conditions seen in the latest week, awaiting the confirmation week ("em observação", feature 011).
 
@@ -157,12 +159,13 @@ New panel organized by analytical question, served alongside the legacy one (whi
 | `/v2` | Quem lidera? (ranking Top 15, pin/exclude, pace, growth) | `GET /api/v2/ranking` |
 | `/v2/evolucao` | Como evolui? (lines, group share, pp gains/losses, quarterly pace) | `GET /api/v2/evolution` |
 | `/v2/mudancas` | O que mudou? (alerts by month, oscillation, "em observação") | `GET /api/v2/changes` |
-| `/v2/instituicao` | Como opera uma instituição? (KPIs, API mix, transmitters, error rate, alerts) | `GET /api/v2/institution/{uuid}` |
+| `/v2/instituicao` | Como opera uma instituição? (KPIs, API mix by group or by endpoint, transmitters, error rate, alerts) | `GET /api/v2/institution/{uuid}`, `GET /api/v2/institution/{uuid}/endpoints` |
 
 - `GET /api/v2/meta` — data dates, group colors/labels and the institution catalog (used by every tab).
 - Code: `routers/v2.py` (endpoints, contract in `specs/011-dashboard-v2/contracts/v2-api.md`), `services/v2_metrics.py` (pure pandas rules over wide weekly frames; `TTLCache` keyed by DB mtime, warmed at startup by `server._warm_v2_cache`).
 - Frontend: `gui/v2/` — `shell.js` (`window.V2`: header/tabs, filters shared via `sessionStorage['opf:v2:filters']`, ranking prefs in `localStorage['opf:v2:ranking']`, formatting, 16:9 image and CSV export), `v2.css` (light theme default), one HTML per tab. Group colors: `services/constants.py::GROUP_COLORS_V2`.
 - Shared rules: API flows are normalized as the last 4 weeks → 30 days; "por consentimento/mês" = that ÷ mean unique consents (PF + PJ), ecosystem counting only receptors with calls in each week; monthly points = last week with data of each institution in the month (a missing week is a gap, never zero).
+- Period filter: `V2.PERIODS` / `V2.periodStart` / `V2.periodShort` in `shell.js` (12m, 6m, 3m, "Desde o começo do ano" = Jan 1 of the year of `data_through`, all). `GET /api/v2/evolution` takes `scale=total|per_consent` (metric=api only; the page opens in per-consent, where share blocks are off and `share_available` is false). `GET /api/v2/institution/{uuid}/endpoints?api=` lists every endpoint of one API (catalog from `endpoint_history`, unused ones with zero); contract in `specs/012-periodo-ano-api-endpoint/contracts/v2-api-delta.md`.
 - Tests: `dashboard/tests/test_v2_*.py` over the synthetic DB in `tests/v2_fixtures.py`.
 
 ## Key Configuration

@@ -19,7 +19,7 @@ from services import v2_metrics as M
 import re
 import unicodedata
 
-from services.constants import API_GROUPS, GROUP_COLORS_V2, GROUP_LABELS_V2, INSTITUTION_GROUP_SLUGS
+from services.constants import API_GROUPS, API_LABELS, GROUP_COLORS_V2, GROUP_LABELS_V2, INSTITUTION_GROUP_SLUGS
 from services.of_analytics import resolve_institution_group as resolve_group
 
 router = APIRouter()
@@ -635,6 +635,115 @@ def institution(
         "alerts": alerts,
         "unavailable": unavailable,
     })
+
+
+# ── /institution/{uuid}/endpoints ─────────────────────────────────────────────
+# "Para que usa os dados" por endpoint (feature 012): todos os endpoints do catálogo de uma
+# API, na mesma janela (4 semanas normalizadas para 30 dias) e unidades do mix por grupo.
+# Contrato: specs/012-periodo-ano-api-endpoint/contracts/v2-api-delta.md
+
+_NO_ENDPOINT = "Sem endpoint identificado"
+
+
+@router.get("/institution/{uuid}/endpoints")
+def institution_endpoints(
+    uuid:    str,
+    compare: str = Query("ecosystem"),
+    api:     Optional[str] = Query(None),
+    end:     Optional[str] = Query(None),
+) -> dict:
+    inst = M.institutions().set_index("uuid")
+    if uuid not in inst.index:
+        raise HTTPException(404, detail="Instituição não encontrada nesta base.")
+    if compare not in ("ecosystem", "group") and (compare not in inst.index or compare == uuid):
+        raise HTTPException(422, detail="'compare' deve ser ecosystem, group ou o identificador de outra instituição.")
+    group_of, short_of = inst["group"].to_dict(), inst["short"].to_dict()
+    me_group = group_of.get(uuid, "outros")
+    end_ts = _date(end, "end")
+
+    uniq, calls = M.load_metric("unique_total"), M.load_metric("api")
+    week = _last_le(uniq.index, end_ts) if end_ts is not None else uniq.index.max()
+    if week is None:
+        raise HTTPException(404, detail="Sem dados para o período escolhido.")
+    members = M.ref_members(compare, uuid, group_of, inst.index)
+    is_other = compare not in ("ecosystem", "group")
+    ref_label = {"ecosystem": "Ecossistema", "group": GROUP_LABELS_V2.get(me_group, me_group) + " (grupo)"}.get(
+        compare, short_of.get(compare, compare))
+    out = {
+        "week": week.strftime("%Y-%m-%d"),
+        "institution": {"uuid": uuid, "name": short_of.get(uuid, uuid), "group": me_group},
+        "compare": {"kind": "institution" if is_other else compare, "uuid": compare if is_other else None,
+                    "label": ref_label},
+        "apis": [], "api": None, "total": None, "endpoints": [],
+        "footnote": "Sem o grupo Resource.", "unavailable": [],
+    }
+
+    try:
+        ew = M.load_endpoint_weekly()
+    except M.TableMissing:
+        return _clean({**out, "unavailable": ["endpoints"]})
+    api_group = {a: slug for slug, meta in API_GROUPS.items() if slug != "Resource" for a in meta["apis"]}
+    ew = ew[ew["api"].isin(api_group)]
+
+    cal = calls.index[calls.index <= week]
+
+    def calls_30d(df: pd.DataFrame) -> pd.Series:
+        """Chamadas em 30 dias na semana (4 semanas ÷ 28 × 30), por (api, endpoint_id)."""
+        if df.empty:
+            return pd.Series(dtype=float)
+        pv = df.pivot_table(index="date", columns=["api", "endpoint_id"], values="value", aggfunc="sum").reindex(cal)
+        return (pv.rolling(4, min_periods=1).mean() * 30 / 7).loc[week].dropna()
+
+    me30 = calls_30d(ew[ew["uuid"] == uuid])
+    ref30 = calls_30d(ew if members is None else ew[ew["uuid"].isin(members)])
+
+    # Por consentimento: mesma base do mix por grupo (a referência só conta quem teve chamadas).
+    avg_at = lambda s: s.reindex(cal).rolling(4, min_periods=1).mean().get(week)         # noqa: E731
+    u_me = avg_at(uniq[uuid]) if uuid in uniq.columns else None
+    u_ref = avg_at(M.paired_sums(calls, uniq, members)[1])
+
+    by_api = me30.groupby(level="api").sum() if len(me30) else pd.Series(dtype=float)
+    by_api = by_api[by_api > 0].sort_values(ascending=False)
+    out["apis"] = [{"api": a, "label": API_LABELS.get(a, a), "group": api_group[a],
+                    "color": API_GROUPS[api_group[a]]["color"], "calls_30d": float(v)} for a, v in by_api.items()]
+    if api is not None and api not in by_api.index:
+        raise HTTPException(422, detail="'api' deve ser uma das APIs listadas em 'apis'.")
+    api = api or (by_api.index[0] if len(by_api) else None)
+    if api is None:
+        return _clean(out)
+
+    me_api = me30.xs(api, level="api") if api in me30.index.get_level_values("api") else pd.Series(dtype=float)
+    ref_api = ref30.xs(api, level="api") if len(ref30) and api in ref30.index.get_level_values("api") else pd.Series(dtype=float)
+    tot_me, tot_ref = float(me_api.sum()), float(ref_api.sum())
+
+    # Todos os endpoints do catálogo da API (mais os vistos nos dados), com zero para os sem uso.
+    cat = M.load_endpoint_catalog()
+    label_of = {(r.api, int(r.endpoint_id)): r.endpoint for r in cat.itertuples() if r.endpoint}
+    seen = ew[(ew["api"] == api) & (ew["endpoint"] != "")].drop_duplicates(["api", "endpoint_id"], keep="last")
+    for r in seen.itertuples():
+        label_of.setdefault((r.api, int(r.endpoint_id)), r.endpoint)
+    ids = {int(e) for e in cat.loc[cat["api"] == api, "endpoint_id"]} | {int(e) for e in ew.loc[ew["api"] == api, "endpoint_id"]}
+    ids.discard(0)
+    if me_api.get(0, 0.0) > 0 or ref_api.get(0, 0.0) > 0:
+        ids.add(0)
+
+    div = lambda a, b: float(a) / float(b) if b else None                                    # noqa: E731
+    rows = []
+    for eid in ids:
+        c_me, c_ref = float(me_api.get(eid, 0.0)), float(ref_api.get(eid, 0.0))
+        rows.append({
+            "endpoint_id": eid, "name": _NO_ENDPOINT if eid == 0 else label_of.get((api, eid), f"Endpoint {eid}"),
+            "calls_30d": c_me, "share": div(c_me, tot_me), "per_consent": div(c_me, u_me),
+            "ref_calls_30d": c_ref, "ref_share": div(c_ref, tot_ref), "ref_per_consent": div(c_ref, u_ref),
+            "used": c_me > 0 or c_ref > 0,
+        })
+    rows.sort(key=lambda r: (-r["calls_30d"], -r["ref_calls_30d"], r["endpoint_id"]))
+    out.update({
+        "api": api, "endpoints": rows,
+        "total": {"calls_30d": tot_me, "ref_calls_30d": tot_ref,
+                  "per_consent": div(tot_me, u_me), "ref_per_consent": div(tot_ref, u_ref)},
+    })
+    return _clean(out)
 
 
 # ── /evolution ────────────────────────────────────────────────────────────────

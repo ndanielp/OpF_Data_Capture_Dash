@@ -136,7 +136,8 @@ def warm() -> None:
     for metric in ("unique_pf", "unique_pj", "unique_total", "active"):
         load_metric(metric)
     for job in (lambda: [load_metric("api", s) for s in ("200", "500", "all")], load_api_groups,
-                load_active_by_transmitter, transmitters, institutions, load_signals, load_watch):
+                load_active_by_transmitter, transmitters, institutions, load_signals, load_watch,
+                load_endpoint_weekly, load_endpoint_catalog):
         try:
             job()
         except TableMissing:
@@ -499,6 +500,27 @@ def load_status_by_transmitter(uuid: str) -> pd.DataFrame:
                 (uuid,)).copy()
     df["date"] = pd.to_datetime(df["date"])
     return df
+
+
+def load_endpoint_weekly() -> pd.DataFrame:
+    """api_endpoint_weekly longa (status 200): date (Timestamp), uuid, api, endpoint_id,
+    endpoint, value. endpoint_id = 0 é a parcela sem endpoint identificado. TableMissing
+    antes de compute_signals.py criar a tabela (feature 012)."""
+    df = _query("SELECT date, receptor_uuid AS uuid, api, endpoint_id, endpoint, total AS value "
+                "FROM api_endpoint_weekly").copy()
+    df["date"] = pd.to_datetime(df["date"])
+    return df
+
+
+def load_endpoint_catalog() -> pd.DataFrame:
+    """Endpoints conhecidos de cada API (api, endpoint_id, endpoint), com o rótulo mais
+    recente. Sem endpoint_history, vazio: a lista usa só os endpoints vistos nos dados."""
+    try:
+        df = _query("SELECT api, endpoint_id, endpoint_label AS endpoint, MAX(fetched_at) AS seen "
+                    "FROM endpoint_history GROUP BY api, endpoint_id")
+    except TableMissing:
+        return pd.DataFrame(columns=["api", "endpoint_id", "endpoint"])
+    return df[["api", "endpoint_id", "endpoint"]]
 
 
 # ── Evolução (aba "Como evolui?") ────────────────────────────────────────────

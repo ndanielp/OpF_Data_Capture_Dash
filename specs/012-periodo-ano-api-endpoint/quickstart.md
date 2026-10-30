@@ -18,13 +18,14 @@ Conferir:
 import sqlite3
 c = sqlite3.connect('file:data/consents.db?mode=ro', uri=True)
 print(c.execute("select count(*), min(date), max(date) from api_endpoint_weekly").fetchone())
-# I1: por (data, receptor, API), a tabela fecha com o agregado quando a soma dos endpoints é menor ou igual a ele
+# I1: por (data, receptor, API), a tabela fecha com o agregado (tab = agg); só fica acima dele quando a soma
+# dos endpoints já passa do agregado, e nunca abaixo (tab < agg)
 print(c.execute("""
   with a as (select date, receptor_uuid, api, sum(total) agg from api_requests
              where status = 200 and api <> 'consents' and coalesce(endpoint_id,0) = 0 group by 1,2,3),
        t as (select date, receptor_uuid, api, sum(total) tab from api_endpoint_weekly group by 1,2,3)
   select count(*), sum(tab = agg), sum(tab > agg), sum(tab < agg) from a join t using(date, receptor_uuid, api)
-""").fetchone())   # esperado: sum(tab > agg) = 0
+""").fetchone())   # esperado: sum(tab < agg) = 0; na base de 2026-10-29, tab > agg em 8 de 44.784 (um receptor, uma API, até 4%)
 E
 ```
 
