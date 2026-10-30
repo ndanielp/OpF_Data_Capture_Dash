@@ -103,7 +103,7 @@ button, input, select { font: inherit; color: inherit; }
 
 /* ── Main ────────────────────────────────────────────────────────────────── */
 .v2-main { max-width: 1280px; margin: 0 auto; padding: var(--sp-6); display: flex; flex-direction: column; gap: var(--sp-6); }
-.v2-title h1 { margin: 0; font-size: var(--text-h1); font-weight: 700; letter-spacing: -0.01em; }
+.v2-title h1, .v2-h1 { margin: 0; font-size: var(--text-h1); font-weight: 700; letter-spacing: -0.01em; }
 .v2-title p { margin: var(--sp-1) 0 0; color: var(--text-2); }
 
 /* ── Barra de filtros ────────────────────────────────────────────────────── */
@@ -225,15 +225,20 @@ button, input, select { font: inherit; color: inherit; }
 .v2-stack { display: flex; height: 28px; border-radius: var(--r-sm); overflow: hidden; gap: 2px; }
 .v2-stack > div { display: flex; align-items: center; padding-left: var(--sp-2); font-size: var(--text-caption); font-weight: 600; white-space: nowrap; overflow: hidden; }
 .v2-legend { display: flex; gap: var(--sp-4); flex-wrap: wrap; font-size: var(--text-caption); color: var(--text-2); }
+.v2-legend.lg { font-size: var(--text-small); }
 .v2-legend span { display: inline-flex; align-items: center; gap: var(--sp-1h); }
 .v2-dot { width: 8px; height: 8px; border-radius: var(--r-xxs); display: inline-block; }
 
 /* ── Ranking ─────────────────────────────────────────────────────────────── */
-.v2-rank-head, .v2-rank-row { display: grid; gap: var(--sp-2h); align-items: center; }
+/* Listas em linha. Reset e grade são comuns; cada lista (ranking, ritmo, barras, sparklines…)
+   define só as suas colunas, o espaçamento entre elas e o tamanho do texto. */
+.v2-rank-list, ul.ev-list, ul.in-list { list-style: none; margin: 0; padding: 0; }
+.v2-rank-head, .v2-rank-row, .ev-div li, .ev-pace li, .ev-pace .ev-pace-head, .in-bars li, .in-pair li, .in-spark li { display: grid; align-items: center; }
+.v2-rank-row, .ev-pace li, .in-bars li, .in-spark li { padding: var(--sp-2) 0; border-top: 1px solid var(--divider); }
+.v2-rank-head, .v2-rank-row { gap: var(--sp-2h); }
 .v2-rank-head { font-size: var(--text-caption); font-weight: 600; color: var(--text-2); padding: var(--sp-2) 0 var(--sp-1); }
-.v2-rank-list { list-style: none; margin: 0; padding: 0; }
-.v2-rank-row { padding: var(--sp-2) 0; border-top: 1px solid var(--divider); font-size: var(--text-small); }
-.v2-rank-row.wide { font-size: var(--text-body); padding: var(--sp-2) 0; gap: var(--sp-3h); }
+.v2-rank-row { font-size: var(--text-small); }
+.v2-rank-row.wide { font-size: var(--text-body); gap: var(--sp-3h); }
 .v2-rank-row.pinned { background: var(--pinned-bg); border-radius: var(--r-sm); padding-left: var(--sp-2); padding-right: var(--sp-2); margin: 0 -8px; }
 .v2-rank-row.cut { border-top: 2px dashed var(--control-border); }
 .v2-r { text-align: right; }
@@ -269,6 +274,9 @@ button, input, select { font: inherit; color: inherit; }
 
 /* Selos de alerta */
 .v2-badge { display: inline-block; padding: var(--sp-1) var(--sp-2h); border-radius: var(--r-pill); font-size: var(--text-caption); font-weight: 700; white-space: nowrap; }
+.v2-badge.neutral { background: var(--surface-2); }
+.v2-badge.lg { padding: var(--sp-1h) var(--sp-3); font-size: var(--text-small); font-weight: 600; white-space: normal; }
+.v2-badge.outline { padding: 3px var(--sp-2); border: 1px solid var(--control-border); font-weight: 600; }
 .v2-badge.decrease { background: var(--down-bg); color: var(--down); }
 .v2-badge.increase { background: var(--surface-2); color: var(--up); }
 .v2-badge.oscillation { background: var(--osc-bg); color: var(--osc); }

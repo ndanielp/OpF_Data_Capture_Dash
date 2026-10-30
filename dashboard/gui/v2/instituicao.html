@@ -13,15 +13,13 @@
 <script src="/static/v2/shell.js"></script>
 <style>
   .in-head { display: flex; justify-content: space-between; align-items: flex-end; gap: var(--sp-4); flex-wrap: wrap; }
-  .in-head h1 { margin: 0; font-size: var(--text-h1); font-weight: 700; letter-spacing: -0.01em; }
-  .in-pill { padding: var(--sp-1h) var(--sp-3); border-radius: var(--r-pill); background: var(--surface-2); font-size: var(--text-small); font-weight: 600; }
   .in-pick { min-height: 44px; min-width: 240px; border-radius: var(--r-md); border: 1px solid var(--control-border); background: var(--surface);
              padding: 0 var(--sp-3); text-align: left; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: var(--sp-2); }
-  .in-bars li { display: grid; grid-template-columns: 130px minmax(0, 1fr) 60px 76px; gap: var(--sp-3); align-items: center; padding: var(--sp-2) 0; border-top: 1px solid var(--divider); font-size: var(--text-body); }
-  .in-pair li { display: grid; grid-template-columns: 120px minmax(0, 1fr) 150px; gap: var(--sp-3); align-items: center; padding: var(--sp-1h) 0; font-size: var(--text-small); }
+  .in-bars li { grid-template-columns: 130px minmax(0, 1fr) 60px 76px; gap: var(--sp-3); font-size: var(--text-body); }
+  .in-pair li { grid-template-columns: 120px minmax(0, 1fr) 150px; gap: var(--sp-3); padding: var(--sp-1h) 0; font-size: var(--text-small); }
   .in-pair .tr { display: flex; flex-direction: column; gap: 3px; }
   .in-pair .tr div { height: 10px; border-radius: var(--r-xxs); }
-  .in-spark li { display: grid; grid-template-columns: 130px 130px minmax(0, 1fr) 72px; gap: var(--sp-3); align-items: center; padding: var(--sp-2) 0; border-top: 1px solid var(--divider); font-size: var(--text-body); }
+  .in-spark li { grid-template-columns: 130px 130px minmax(0, 1fr) 72px; gap: var(--sp-3); font-size: var(--text-body); }
   .in-err-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--sp-8); }
   @media (max-width: 1000px) { .in-err-grid { grid-template-columns: 1fr; } }
   @media (max-width: 720px) {   /* listas com colunas fixas: cabem na tela do celular sem rolagem lateral */
@@ -35,7 +33,6 @@
   .in-col div { width: 12px; border-radius: var(--r-xs) var(--r-xs) 0 0; }
   .in-col-labels { display: grid; gap: var(--sp-2h); font-size: var(--text-caption); color: var(--text-2); text-align: center; }
   .in-chart { position: relative; height: 240px; }
-  ul.in-list { list-style: none; margin: 0; padding: 0; }
 </style>
 </head>
 <body>
@@ -170,9 +167,9 @@
     const me = d.institution, ref = d.compare.label;
     const n12 = d.alerts.events.reduce((a, e) => a + e.items.length, 0);
     const pill = (d.unavailable || []).includes('signals') ? '' :
-      '<span class="in-pill">' + (n12 ? n12 + (n12 === 1 ? ' alerta' : ' alertas') + ' nos últimos 12 meses' : 'Sem alertas nos últimos 12 meses') + '</span>';
+      '<span class="v2-badge lg neutral">' + (n12 ? n12 + (n12 === 1 ? ' alerta' : ' alertas') + ' nos últimos 12 meses' : 'Sem alertas nos últimos 12 meses') + '</span>';
     document.getElementById('head').innerHTML = '<div class="in-head"><div style="display:flex;flex-direction:column;gap:var(--sp-1h)">' +
-      '<div style="display:flex;align-items:center;gap:var(--sp-3);flex-wrap:wrap"><h1>' + V2.esc(me.name) + '</h1>' +
+      '<div style="display:flex;align-items:center;gap:var(--sp-3);flex-wrap:wrap"><h1 class="v2-h1">' + V2.esc(me.name) + '</h1>' +
       '<span class="v2-legend"><span><span class="v2-dot" style="background:' + V2.groupColor(me.group) + '"></span>' + V2.groupLabel(me.group) + '</span></span></div>' +
       '<p style="margin:0;font-size:var(--text-body-lg)">' + rankSentence() + '</p>' +
       '<p class="v2-muted" style="margin:0;font-size:var(--text-small)">Semana de ' + V2.fmtDate(d.week) + ' · crescimento: ' + PERIODS[st.period][0].toLowerCase() + ' · comparado com ' + V2.esc(ref) + '</p></div>' + pill + '</div>';
