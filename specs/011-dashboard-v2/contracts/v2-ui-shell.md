@@ -22,7 +22,8 @@ Abas ainda não entregues abrem com um aviso e um link para a página equivalent
   <main class="v2-main">       largura máx. 1280 px, padding 24 px
     <section class="v2-filterbar">   só os controles da aba; linha 2 opcional (ex.: Sempre mostrar / Excluir / Ordenar)
     <h1> + subtítulo com semana, base e regra da métrica
-    blocos (.v2-card)        cada um com título, subtítulo, botões "Copiar como imagem" e "Baixar CSV", rodapé com regra + fonte
+    blocos (.v2-card com h2)  cada um com título, subtítulo, botão "Copiar como imagem", rodapé com regra + fonte
+                             cartões de indicador (KPIs, respostas do topo, resumo por grupo) não têm botões
 ```
 
 ## Controles por aba
@@ -62,7 +63,7 @@ Cores de grupo e de grupo de API vêm sempre de `/api/v2/meta` (nunca fixas no H
 
 ## Exportação
 
-- **CSV**: mesmas linhas e colunas do bloco (com fixadas, sem excluídas), cabeçalho em português, separador `;`, decimal com vírgula, UTF-8 com BOM (abre direto no Excel).
+- **CSV**: um botão "Exportar CSV" por página, na barra de filtros, sempre à direita e com o mesmo rótulo em todas as abas (o `title` diz o que exporta). Os blocos que já têm CSV próprio (rankings de "Quem lidera?" e alertas do mês) mantêm o ícone. Mesmas linhas e colunas do que está na tela (com fixadas, sem excluídas), cabeçalho em português, separador `;`, decimal com vírgula, UTF-8 com BOM (abre direto no Excel). Emendado em 2026-10-30 (Constituição 1.3.0): antes o contrato pedia imagem e CSV em todo bloco.
 - **Imagem**: PNG 1600×900 com título (incluindo filtro ativo), subtítulo (métrica, semana), conteúdo do bloco e rodapé "Fonte: dashboard Open Finance Brasil · dados até DD/MM/AAAA". Nome do arquivo: `opf-<aba>-<bloco>-<AAAA-MM-DD>.png`.
 
 ## Formatação
