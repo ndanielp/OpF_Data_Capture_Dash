@@ -126,6 +126,25 @@
     return nf(0).format(Math.round(v));
   };
   V2.fmtShare = function (s) { return s == null ? '—' : nf(1).format(s * 100) + '%'; };
+  /** Variação em pontos percentuais; `v` já vem em pp (para fração, use fmtPp(v * 100)). */
+  V2.fmtPp = function (v) { return v == null ? '—' : (v > 0 ? '+' : v < 0 ? '−' : '') + nf(1).format(Math.abs(v)) + ' pp'; };
+  /** Eixo de gráfico: 25 mi · 2,5 mi · 800 mil — sem casas decimais sobrando. */
+  V2.fmtAxis = function (v) {
+    const f = dd => new Intl.NumberFormat('pt-BR', { maximumFractionDigits: dd });
+    if (Math.abs(v) >= 1e9) return f(1).format(v / 1e9) + ' bi';
+    if (Math.abs(v) >= 1e6) return f(1).format(v / 1e6) + ' mi';
+    if (Math.abs(v) >= 1e3) return f(0).format(v / 1e3) + ' mil';
+    return f(0).format(v);
+  };
+  V2.cssVar = function (name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); };
+  /** Controle segmentado (escolha única): `options` = { valor: rótulo }. */
+  V2.seg = function (name, options, current) {
+    return '<div class="v2-seg" data-seg="' + name + '">' + Object.entries(options).map(([k, l]) =>
+      '<button type="button" data-v="' + k + '" aria-pressed="' + (k === current) + '">' + l + '</button>').join('') + '</div>';
+  };
+  V2.allGroups = function () { return V2.meta.groups.map(g => g.slug); };
+  /** Grupos em uso: os escolhidos, ou todos quando nenhum foi escolhido. */
+  V2.activeGroups = function (selected) { return selected.length ? selected : V2.allGroups(); };
   V2.fmtPct = function (p, digits) {
     if (p == null) return '—';
     const sign = p > 0 ? '+' : p < 0 ? '−' : '';

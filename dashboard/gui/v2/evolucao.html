@@ -53,6 +53,13 @@
 <script>
 (function () {
   'use strict';
+  const css = V2.cssVar;
+  const pct1 = V2.fmtShare;
+  const pp = V2.fmtPp;
+  const axis = V2.fmtAxis;
+  const seg = V2.seg;
+  const allGroups = V2.allGroups;
+  const activeGroups = () => V2.activeGroups(st.groups);
   const PERIODS = V2.PERIODS;
   const METRICS = { unique_pf: 'Únicos PF', unique_pj: 'Únicos PJ', active: 'Ativos', api: 'Chamadas de API' };
   const NOUN = { unique_pf: 'consentimentos únicos PF', unique_pj: 'consentimentos únicos PJ', active: 'consentimentos ativos', api: 'chamadas de API em 30 dias' };
@@ -78,10 +85,7 @@
   if (st.add) V2.setFilters({ evo_add: null });
   let d = null, chart = null;
 
-  const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
   const nf = dd => new Intl.NumberFormat('pt-BR', { minimumFractionDigits: dd, maximumFractionDigits: dd });
-  const pct1 = v => v == null ? '—' : nf(1).format(v * 100) + '%';
-  const pp = v => v == null ? '—' : (v > 0 ? '+' : v < 0 ? '−' : '') + nf(1).format(Math.abs(v)) + ' pp';
   const byTx = () => st.metric === 'active' && st.by === 'transmitter';
   const isPc = () => st.metric === 'api' && st.scale === 'per_consent';
   const noun = () => isPc() ? 'chamadas de API por consentimento (PF + PJ) por mês' : NOUN[st.metric];
@@ -90,15 +94,9 @@
   const ids = () => byTx() ? st.transmitters : st.institutions;
   const setIds = list => { if (byTx()) st.transmitters = list; else st.institutions = list; };
   const fmtPoint = p => p.length === 7 ? V2.fmtMonth(p) : V2.fmtDate(p).slice(0, 5) + '/' + p.slice(2, 4);
-  function allGroups() { return V2.meta.groups.map(g => g.slug); }
-  function activeGroups() { return st.groups.length ? st.groups : allGroups(); }
   function save() {
     V2.setFilters({ evo_metric: st.metric, metric: TAB1[st.metric], evo_by: st.by, period: st.period, evo_gran: st.gran,
                     evo_view: st.view, evo_scale: st.scale, groups: st.groups, institutions: st.institutions, evo_tx: st.transmitters });
-  }
-  function seg(name, options, current) {
-    return '<div class="v2-seg" data-seg="' + name + '">' + Object.entries(options).map(([k, l]) =>
-      '<button type="button" data-v="' + k + '" aria-pressed="' + (k === current) + '">' + l + '</button>').join('') + '</div>';
   }
   function head(title, sub, key) {
     return '<div class="v2-card-head"><div><h2>' + title + '</h2><span class="v2-sub">' + sub + '</span></div>' +
@@ -258,13 +256,6 @@
   }
 
   /** Eixo: 25 mi · 2,5 mi · 800 mil */
-  function axis(v) {
-    const f = dd => new Intl.NumberFormat('pt-BR', { maximumFractionDigits: dd });
-    if (Math.abs(v) >= 1e9) return f(1).format(v / 1e9) + ' bi';
-    if (Math.abs(v) >= 1e6) return f(1).format(v / 1e6) + ' mi';
-    if (Math.abs(v) >= 1e3) return f(0).format(v / 1e3) + ' mil';
-    return f(0).format(v);
-  }
   function endText(s, narrow) {
     if (st.view === 'share' && d.share_available) {
       const sh = s.shares.filter(v => v != null);

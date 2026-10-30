@@ -25,6 +25,9 @@
 <script>
 (function () {
   'use strict';
+  const seg = V2.seg;
+  const allGroups = V2.allGroups;
+  const activeGroups = () => V2.activeGroups(st.groups);
   const PERIODS = V2.PERIODS;
   // Nesta aba o período inteiro se chama "Desde o início" também dentro das frases.
   const periodShort = k => k === 'all' ? 'Desde o início' : V2.periodShort(k);
@@ -46,18 +49,12 @@
   function save() {
     V2.setFilters({ metric: st.metric, period: st.period, groups: st.groups, api_status: st.status, api_scale: st.scale });
   }
-  function allGroups() { return V2.meta.groups.map(g => g.slug); }
-  function activeGroups() { return st.groups.length ? st.groups : allGroups(); }
   function instName(uuid) {
     const i = V2.meta.institutions.find(x => x.uuid === uuid);
     return i ? i.short : uuid;
   }
 
   // ── Barra de filtros ─────────────────────────────────────────────────────
-  function seg(name, options, current) {
-    return '<div class="v2-seg" data-seg="' + name + '">' + Object.entries(options).map(([k, l]) =>
-      '<button type="button" data-v="' + k + '" aria-pressed="' + (k === current) + '">' + l + '</button>').join('') + '</div>';
-  }
   function renderFilterbar() {
     const prefs = V2.getPrefs();
     const isApi = st.metric === 'api';

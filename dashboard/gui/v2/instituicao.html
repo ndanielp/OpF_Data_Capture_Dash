@@ -59,6 +59,11 @@
 <script>
 (function () {
   'use strict';
+  const css = V2.cssVar;
+  const pct1 = V2.fmtShare;
+  const ppShare = v => V2.fmtPp(v * 100);   // recebe fração (evolucao usa V2.fmtPp direto, em pp)
+  const axis = V2.fmtAxis;
+  const segButtons = V2.seg;
   const PERIODS = V2.PERIODS;
   const MONTHS = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
   const f0 = V2.getFilters();
@@ -77,10 +82,7 @@
   };
   let d = null, chart = null, ep = null;   // ep = resposta de /endpoints, carregada sob demanda
 
-  const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
   const inst = u => (V2.meta.institutions || []).find(i => i.uuid === u);
-  const pct1 = v => v == null ? '—' : new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(v * 100) + '%';
-  const pp = v => (v > 0 ? '+' : v < 0 ? '−' : '') + new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(Math.abs(v * 100)) + ' pp';
   function save() {
     V2.setFilters({ institution: st.uuid, compare: st.compare, period: st.period, inst_evo: st.evo, inst_mix: st.mix });
     history.replaceState(null, '', '/v2/instituicao?uuid=' + encodeURIComponent(st.uuid));
@@ -201,17 +203,6 @@
   }
 
   /** Eixo: 25 mi · 2,5 mi · 800 mil — sem casas decimais sobrando. */
-  function axis(v) {
-    const f = dd => new Intl.NumberFormat('pt-BR', { maximumFractionDigits: dd });
-    if (Math.abs(v) >= 1e9) return f(1).format(v / 1e9) + ' bi';
-    if (Math.abs(v) >= 1e6) return f(1).format(v / 1e6) + ' mi';
-    if (Math.abs(v) >= 1e3) return f(0).format(v / 1e3) + ' mil';
-    return f(0).format(v);
-  }
-  function segButtons(name, options, current) {
-    return '<div class="v2-seg" data-seg="' + name + '">' + Object.entries(options).map(([k, l]) =>
-      '<button type="button" data-v="' + k + '" aria-pressed="' + (k === current) + '">' + l + '</button>').join('') + '</div>';
-  }
   const EVO_SUB = {
     unique_total: 'Consentimentos únicos (PF + PJ)', unique_pf: 'Consentimentos únicos PF', unique_pj: 'Consentimentos únicos PJ',
     active: 'Consentimentos ativos', api: 'Chamadas de API em 30 dias (média das últimas 4 semanas)',
@@ -237,7 +228,7 @@
       foot = V2.fmtInt(v0) + ' → ' + V2.fmtInt(v1) + ' por consentimento/mês' + (r1 != null ? ' · ' + V2.esc(ev.ref.label) + ': ' + V2.fmtInt(r1) : '');
     } else {
       title = v1 >= v0 ? (s1 < s0 ? 'Cresce, mas perde espaço' : 'Cresce e ganha espaço') : (s1 < s0 ? 'Encolhe e perde espaço' : 'Encolhe, mas ganha espaço');
-      foot = V2.fmtCompact(v0) + ' → ' + V2.fmtCompact(v1) + ' · participação ' + pct1(s0) + ' → ' + pct1(s1) + ' (' + pp(s1 - s0) + ')';
+      foot = V2.fmtCompact(v0) + ' → ' + V2.fmtCompact(v1) + ' · participação ' + pct1(s0) + ' → ' + pct1(s1) + ' (' + ppShare(s1 - s0) + ')';
     }
     el.innerHTML = head(title, EVO_SUB[st.evo] + (ratio ? '' : ' e participação no ecossistema') + ' · fim de cada mês', 'evo') + sel +
       '<div class="in-chart"><canvas id="evo-chart" aria-label="' + V2.esc(EVO_SUB[st.evo]) + ' mês a mês"></canvas></div>' +
@@ -287,7 +278,7 @@
     if (st.mix === 'share') {
       const diffs = m.filter(x => x.share != null && x.ref_share != null).map(x => [x.label, x.share - x.ref_share]).sort((a, b) => b[1] - a[1]);
       const more = diffs[0], less = diffs[diffs.length - 1];
-      if (more && less && more[1] > 0.005 && less[1] < -0.005) note = 'Pesa mais em ' + more[0] + ' (' + pp(more[1]) + ') e menos em ' + less[0] + ' (' + pp(less[1]) + ') que ' + d.compare.label;
+      if (more && less && more[1] > 0.005 && less[1] < -0.005) note = 'Pesa mais em ' + more[0] + ' (' + ppShare(more[1]) + ') e menos em ' + less[0] + ' (' + ppShare(less[1]) + ') que ' + d.compare.label;
     } else if (st.mix === 'per_consent') {
       const r = m.filter(x => x.per_consent && x.ref_per_consent).map(x => [x.label, x.per_consent / x.ref_per_consent]).sort((a, b) => b[1] - a[1]);
       if (r.length) note = 'Maior intensidade relativa: ' + r[0][0] + ' (' + new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 1 }).format(r[0][1]) + '× ' + d.compare.label + ')';
@@ -376,7 +367,7 @@
     const unit = st.mix;
     const rows = d.api_by_group.filter(g => g.units[unit]);
     const sub = { share: '% das chamadas da instituição por grupo', total: 'Chamadas em 30 dias', per_consent: 'Chamadas por consentimento em 30 dias' }[unit];
-    const growth = u => u.growth.kind === 'pp' ? pp(u.growth.value) : V2.fmtGrowth(u.growth);
+    const growth = u => u.growth.kind === 'pp' ? ppShare(u.growth.value) : V2.fmtGrowth(u.growth);
     el.innerHTML = head('Chamadas por grupo de API', sub + ' · linha = fim de cada mês · unidade do seletor do mix', 'groups') +
       (rows.length ? '<ul class="in-list in-spark">' + rows.map(g => { const u = g.units[unit]; return '<li><span style="font-weight:600">' + V2.esc(g.label) + '</span>' + spark(u.monthly, g.color) +
         '<span class="v2-r">' + mixFmt(u.from) + ' → ' + mixFmt(u.to) + '</span><span class="v2-r" style="font-weight:600">' + growth(u) + '</span></li>'; }).join('') + '</ul>'

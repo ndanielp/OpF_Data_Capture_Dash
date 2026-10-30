@@ -62,6 +62,8 @@
 <script>
 (function () {
   'use strict';
+  const allGroups = V2.allGroups;
+  const activeGroups = () => V2.activeGroups(st.groups);
   const MONTHS_FULL = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
   const TYPES = { decrease: 'Quedas', increase: 'Altas', oscillation: 'Oscilações', new_entrant: 'Novos entrantes' };
   const SIGNALS = { all: 'Todos', consents: 'Consentimentos', api: 'Uso de API' };
@@ -87,8 +89,6 @@
     const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
     return '01/' + String(m).padStart(2, '0') + ' a ' + last + '/' + String(m).padStart(2, '0') + '/' + y;
   }
-  function allGroups() { return V2.meta.groups.map(g => g.slug); }
-  function activeGroups() { return st.groups.length ? st.groups : allGroups(); }
 
   // ── Barra de filtros ─────────────────────────────────────────────────────
   function renderFilterbar() {
