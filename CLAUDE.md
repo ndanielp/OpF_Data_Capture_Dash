@@ -187,5 +187,5 @@ Omitting optional fields in `/api/api-requests` acts as "no filter" — used by 
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan
-at `specs/011-dashboard-v2/plan.md`.
+at `specs/012-periodo-ano-api-endpoint/plan.md`.
 <!-- SPECKIT END -->
