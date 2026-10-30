@@ -30,7 +30,7 @@ CONSENT_DOWN  = -0.10
 
 # ── Variação de uso de API (FR-005, FR-006) ───────────────────────────────────
 API_WINDOW        = 4            # semanas de cada janela (recente e base)
-API_FLOOR         = 1_000_000    # média da base, chamadas/semana
+API_FLOOR         = 500_000      # média da base, chamadas/semana (era 1 mi sobre totais que contavam cada chamada duas vezes)
 API_UP            = 2.0          # razão relativa ao ecossistema
 API_DOWN          = 0.6
 API_CONFIRM_WEEKS = 2

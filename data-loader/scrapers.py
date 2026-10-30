@@ -483,6 +483,10 @@ def refresh_api_group_weekly(con: sqlite3.Connection) -> None:
 
     Deve ser chamado após cada run de coleta para manter a tabela em sincronia.
     executescript() auto-comita, portanto não requer commit() adicional.
+
+    Soma só a chamada sem filtro de endpoint (endpoint_id = 0), que é o total da API: as
+    linhas por endpoint (endpoint_id > 0) repartem esse mesmo total, então somar os dois
+    níveis contava cada chamada duas vezes.
     """
     con.executescript("""
         DELETE FROM api_group_weekly;
@@ -505,6 +509,7 @@ def refresh_api_group_weekly(con: sqlite3.Connection) -> None:
         JOIN unique_consents c ON r.date = c.date AND r.receptor_uuid = c.receptor_uuid
         WHERE r.api <> 'consents'
           AND r.status = 200
+          AND r.endpoint_id = 0
         GROUP BY r.date, r.receptor_uuid, grp
         HAVING grp IS NOT NULL;
     """)
@@ -516,7 +521,7 @@ def refresh_api_status_weekly(con: sqlite3.Connection) -> None:
 
     Alimenta erros e taxa de erro do Dashboard 2.0. Chamada junto com
     refresh_api_group_weekly (fim da coleta e compute_signals.py). executescript()
-    auto-comita.
+    auto-comita. Soma só endpoint_id = 0 (o total da API), como api_group_weekly.
     """
     con.executescript("""
         DELETE FROM api_status_weekly;
@@ -525,7 +530,7 @@ def refresh_api_status_weekly(con: sqlite3.Connection) -> None:
         SELECT date, receptor_uuid, MAX(receptor), transmitter_uuid, MAX(transmitter),
                status, SUM(total)
         FROM api_requests
-        WHERE api <> 'consents'
+        WHERE api <> 'consents' AND endpoint_id = 0
         GROUP BY date, receptor_uuid, transmitter_uuid, status;
     """)
 
