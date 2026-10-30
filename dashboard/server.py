@@ -1257,7 +1257,18 @@ def get_stats():
             "last_updated": "",
         })
 
-app.mount("/static", StaticFiles(directory=str(GUI_DIR)), name="static")
+class _RevalidatingStatic(StaticFiles):
+    """StaticFiles que manda Cache-Control: no-cache. Sem cabeçalho, o navegador guarda o JS/CSS
+    por tempo heurístico e pode juntar um shell.js antigo com uma página nova (TypeError, tela
+    quebrada). Com no-cache ele revalida a cada carga pelo ETag e recebe 304 quando nada mudou."""
+
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
+app.mount("/static", _RevalidatingStatic(directory=str(GUI_DIR)), name="static")
 
 def run_server(port: int = 8000):
     GUI_DIR.mkdir(parents=True, exist_ok=True)

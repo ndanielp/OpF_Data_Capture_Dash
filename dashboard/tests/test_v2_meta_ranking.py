@@ -296,3 +296,13 @@ async def test_ranking_invalid_params_are_422_with_readable_message(client, para
     r = await client.get("/api/v2/ranking", params=params)
     assert r.status_code == 422
     assert r.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_static_assets_are_revalidated_not_cached(client):
+    """shell.js e v2.css mudam com as páginas; sem no-cache o navegador mistura versões."""
+    r = await client.get("/static/v2/shell.js")
+    assert r.status_code == 200 and r.headers["cache-control"] == "no-cache" and r.headers.get("etag")
+    # Revalidação: com o ETag atual, o servidor responde 304 em vez de reenviar o arquivo.
+    again = await client.get("/static/v2/shell.js", headers={"if-none-match": r.headers["etag"]})
+    assert again.status_code == 304
