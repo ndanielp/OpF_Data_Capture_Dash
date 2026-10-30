@@ -54,8 +54,7 @@
 <script>
 (function () {
   'use strict';
-  const PERIODS = { '12m': ['Últimos 12 meses', 364, '12 meses'], '6m': ['Últimos 6 meses', 182, '6 meses'],
-                    '3m': ['Últimos 3 meses', 91, '3 meses'], 'all': ['Desde o início', null, 'no período'] };
+  const PERIODS = V2.PERIODS;
   const METRICS = { unique_pf: 'Únicos PF', unique_pj: 'Únicos PJ', active: 'Ativos', api: 'Chamadas de API' };
   const NOUN = { unique_pf: 'consentimentos únicos PF', unique_pj: 'consentimentos únicos PJ', active: 'consentimentos ativos', api: 'chamadas de API em 30 dias' };
   const SHORT = { unique_pf: 'PF', unique_pj: 'PJ', active: 'ativos', api: 'API' };
@@ -89,13 +88,6 @@
   const fmtPoint = p => p.length === 7 ? V2.fmtMonth(p) : V2.fmtDate(p).slice(0, 5) + '/' + p.slice(2, 4);
   function allGroups() { return V2.meta.groups.map(g => g.slug); }
   function activeGroups() { return st.groups.length ? st.groups : allGroups(); }
-  function periodStart() {
-    const days = PERIODS[st.period][1];
-    if (days == null) return '2000-01-01';
-    const dt = new Date(V2.meta.data_through + 'T00:00:00Z');
-    dt.setUTCDate(dt.getUTCDate() - days);
-    return dt.toISOString().slice(0, 10);
-  }
   function save() {
     V2.setFilters({ evo_metric: st.metric, metric: TAB1[st.metric], evo_by: st.by, period: st.period, evo_gran: st.gran,
                     evo_view: st.view, groups: st.groups, institutions: st.institutions, evo_tx: st.transmitters });
@@ -180,7 +172,7 @@
 
   // ── Dados ────────────────────────────────────────────────────────────────
   function url() {
-    const q = new URLSearchParams({ metric: st.metric, granularity: st.gran, start: periodStart() });
+    const q = new URLSearchParams({ metric: st.metric, granularity: st.gran, start: V2.periodStart(st.period) });
     if (st.metric === 'active') q.set('by', st.by);
     if (st.groups.length) q.set('groups', st.groups.join(','));
     if (ids().length) q.set('institutions', ids().join(','));
@@ -250,7 +242,7 @@
       else loseSub = 'Cresceu ' + V2.fmtGrowth(l.growth) + ', abaixo do ecossistema (' + V2.fmtGrowth(eg) + ')';
     }
     document.getElementById('answers').innerHTML =
-      card('Ecossistema em ' + PERIODS[st.period][2], V2.fmtGrowth(eg), V2.fmtCompact(eg.from) + ' → ' + V2.fmtCompact(eg.to) + ' ' + NOUN[st.metric]) +
+      card('Ecossistema em ' + V2.periodShort(st.period), V2.fmtGrowth(eg), V2.fmtCompact(eg.from) + ' → ' + V2.fmtCompact(eg.to) + ' ' + NOUN[st.metric]) +
       card('Quem mais ganhou espaço' + among, g ? V2.esc(g.name) + ' ' + pp(g.pp) : '—', gainSub) +
       card('Quem mais perdeu espaço' + among, l ? V2.esc(l.name) + ' ' + pp(l.pp) : '—', loseSub);
   }
@@ -308,6 +300,8 @@
     const title = ids().length ? 'Evolução das instituições escolhidas' : 'Evolução das ' + n + ' maiores';
     el.innerHTML = head(byTx() ? title.replace('instituições', 'transmissores') : title,
       'Cor = grupo · mesmo grupo diferenciado pelo traço · valor e crescimento no fim da linha', 'lines') +
+      (d.points.length < 3 ? '<p class="v2-muted" style="margin:4px 0 8px;font-size:13px">Poucos dados neste período: ' +
+        d.points.length + (d.points.length === 1 ? ' ponto' : ' pontos') + ' para mostrar a evolução.</p>' : '') +
       '<div class="ev-chart"><canvas id="lines-chart" aria-label="' + V2.esc(NOUN[st.metric]) + ' de ' + periodText() + ': ' +
         V2.esc(d.series.map(s => s.name + ' ' + endText(s)).join('; ')) + '"></canvas></div>' +
       '<div class="v2-card-foot"><span>' + (st.gran === 'week' ? 'Semana sem coleta interrompe a linha em vez de cair a zero'
@@ -370,7 +364,7 @@
                   : '<span></span><div class="bar"><div style="width:' + w + ';height:14px;border-radius:0 3px 3px 0;background:' + c + '"></div></div>') +
         '<span>' + pp(r.pp) + (r.debut_month ? ' · estreou ' + V2.fmtMonth(r.debut_month) : '') + '</span></li>';
     };
-    el.innerHTML = head('Quem ganhou e quem perdeu espaço', 'Variação da participação ' + (st.period === 'all' ? 'desde o início' : 'em ' + PERIODS[st.period][2]) + ', em pontos percentuais', 'changes') +
+    el.innerHTML = head('Quem ganhou e quem perdeu espaço', 'Variação da participação ' + (st.period === 'all' ? 'desde o início' : 'em ' + V2.periodShort(st.period)) + ', em pontos percentuais', 'changes') +
       (rows.length ? '<ul class="ev-list ev-div">' + rows.map(li).join('') + '</ul>' : '<div class="v2-placeholder">Sem variações no período.</div>') +
       (allGrew ? '<div class="v2-card-foot"><span>Perder espaço não é encolher: todas as que perderam cresceram em números absolutos</span></div>' : '');
   }

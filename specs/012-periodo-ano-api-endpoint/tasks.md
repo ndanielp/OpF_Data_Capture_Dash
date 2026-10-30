@@ -38,7 +38,7 @@ Cada fase de história é um PR próprio contra `main` (plan.md, "Entrega por fa
 
 **Purpose**: Garantir a linha de base antes de mexer em qualquer arquivo.
 
-- [ ] T001 Rodar as suítes atuais (`dashboard/tests` e `data-loader/tests`) na branch `012-periodo-ano-api-endpoint` e anotar quais testes passam. Qualquer falha anterior à feature deve ser registrada e não corrigida aqui (SC-005 compara contra essa linha de base). Nenhum arquivo é alterado.
+- [X] T001 Rodar as suítes atuais (`dashboard/tests` e `data-loader/tests`) na branch `012-periodo-ano-api-endpoint` e anotar quais testes passam. Qualquer falha anterior à feature deve ser registrada e não corrigida aqui (SC-005 compara contra essa linha de base). Nenhum arquivo é alterado.
 
 ---
 
@@ -56,16 +56,16 @@ Nenhuma tarefa bloqueante. As três histórias não compartilham pré-requisito:
 
 ### Tests for User Story 1
 
-- [ ] T002 [P] [US1] Em `dashboard/tests/test_v2_evolution.py`, adicionar teste HTTP de `GET /api/v2/evolution?metric=unique_pf&start=<1º de janeiro do ano da base sintética>`: `headline.ecosystem_growth.from` deve ser o valor do ecossistema na primeira semana com data maior ou igual a `start` (regra `M._period_start`), `period.start` deve ecoar o `start` enviado e o status deve ser 200. Incluir um segundo caso com `start` igual à penúltima semana (período de 1 ponto): 200 e crescimento "sem base", sem erro (FR-005).
+- [X] T002 [P] [US1] Em `dashboard/tests/test_v2_evolution.py`, adicionar teste HTTP de `GET /api/v2/evolution?metric=unique_pf&start=<1º de janeiro do ano da base sintética>`: `headline.ecosystem_growth.from` deve ser o valor do ecossistema na primeira semana com data maior ou igual a `start` (regra `M._period_start`), `period.start` deve ecoar o `start` enviado e o status deve ser 200. Incluir um segundo caso com `start` igual à penúltima semana (período de 1 ponto): 200 e crescimento "sem base", sem erro (FR-005).
 
 ### Implementation for User Story 1
 
-- [ ] T003 [US1] Em `dashboard/gui/v2/shell.js`, criar `V2.PERIODS` (mesmas tuplas `[rótulo, dias, rótulo curto]` de hoje: `12m`, `6m`, `3m`, `all`) com a opção nova `ytd: ['Desde o começo do ano', 'ytd', 'no ano']` entre `3m` e `all`, e `V2.periodStart(period)`: `all` → `2000-01-01`, `ytd` → `AAAA-01-01` com AAAA = ano de `V2.meta.data_through`, demais → `data_through` menos os dias. Ajuda de comentário só para o porquê (o ano vem do dado, não do relógio).
-- [ ] T004 [P] [US1] Em `dashboard/gui/v2/index.html`, remover o `PERIODS` e o `periodStart()` locais (linhas ~28 e ~50) e usar `V2.PERIODS` / `V2.periodStart`; manter a validação do período salvo (valor desconhecido cai em `12m`) e conferir os textos que usam `PERIODS[st.period][2]` (cartões, cabeçalho de crescimento, CSV) para a opção `ytd`.
-- [ ] T005 [P] [US1] Em `dashboard/gui/v2/evolucao.html`, remover o `PERIODS` (linha ~57) e o `periodStart()` (linha ~91) locais e usar `V2.PERIODS` / `V2.periodStart`; ajustar os textos condicionados a `st.period === 'all'` (por exemplo "desde o início", linha ~373) para também tratar `ytd` ("desde o começo do ano").
-- [ ] T006 [P] [US1] Em `dashboard/gui/v2/instituicao.html`, remover o `PERIODS` (linha ~62) e o `periodStart()` (linha ~81) locais e usar `V2.PERIODS` / `V2.periodStart`; conferir o texto de crescimento (linha ~178) para `ytd`.
-- [ ] T007 [US1] Em `dashboard/gui/v2/evolucao.html`, exibir o aviso "Poucos dados neste período" no card do gráfico de linhas quando `d.points.length < 3` (FR-005), sem esconder o que existe. Depende de T005.
-- [ ] T008 [US1] Validar no navegador (porta 8000) o roteiro "Período 'Desde o começo do ano'" de `quickstart.md`, nas três abas com período, e conferir que `12m`, `6m`, `3m` e `all` mostram os mesmos números de antes (SC-005).
+- [X] T003 [US1] Em `dashboard/gui/v2/shell.js`, criar `V2.PERIODS` (mesmas tuplas `[rótulo, dias, rótulo curto]` de hoje: `12m`, `6m`, `3m`, `all`) com a opção nova `ytd: ['Desde o começo do ano', 'ytd', 'no ano']` entre `3m` e `all`, e `V2.periodStart(period)`: `all` → `2000-01-01`, `ytd` → `AAAA-01-01` com AAAA = ano de `V2.meta.data_through`, demais → `data_through` menos os dias. Ajuda de comentário só para o porquê (o ano vem do dado, não do relógio).
+- [X] T004 [P] [US1] Em `dashboard/gui/v2/index.html`, remover o `PERIODS` e o `periodStart()` locais (linhas ~28 e ~50) e usar `V2.PERIODS` / `V2.periodStart`; manter a validação do período salvo (valor desconhecido cai em `12m`) e conferir os textos que usam `PERIODS[st.period][2]` (cartões, cabeçalho de crescimento, CSV) para a opção `ytd`.
+- [X] T005 [P] [US1] Em `dashboard/gui/v2/evolucao.html`, remover o `PERIODS` (linha ~57) e o `periodStart()` (linha ~91) locais e usar `V2.PERIODS` / `V2.periodStart`; ajustar os textos condicionados a `st.period === 'all'` (por exemplo "desde o início", linha ~373) para também tratar `ytd` ("desde o começo do ano").
+- [X] T006 [P] [US1] Em `dashboard/gui/v2/instituicao.html`, remover o `PERIODS` (linha ~62) e o `periodStart()` (linha ~81) locais e usar `V2.PERIODS` / `V2.periodStart`; conferir o texto de crescimento (linha ~178) para `ytd`.
+- [X] T007 [US1] Em `dashboard/gui/v2/evolucao.html`, exibir o aviso "Poucos dados neste período" no card do gráfico de linhas quando `d.points.length < 3` (FR-005), sem esconder o que existe. Depende de T005.
+- [X] T008 [US1] Validar no navegador (porta 8000) o roteiro "Período 'Desde o começo do ano'" de `quickstart.md`, nas três abas com período, e conferir que `12m`, `6m`, `3m` e `all` mostram os mesmos números de antes (SC-005).
 
 **Checkpoint**: US1 entregue e testável sozinha. É o MVP e pode ir para produção sem tocar no banco.
 

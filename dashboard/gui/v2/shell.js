@@ -29,6 +29,31 @@
     writeJSON('sessionStorage', KEY_FILTERS, Object.assign({}, V2.getFilters(), partial));
   };
 
+  /** Períodos do filtro, comuns às abas que o têm: [rótulo, dias, rótulo curto]. Dias nulo =
+      toda a base; 'ytd' = desde 1º de janeiro do ano da semana mais recente com dados. */
+  V2.PERIODS = {
+    '12m': ['Últimos 12 meses', 364, '12 meses'],
+    '6m': ['Últimos 6 meses', 182, '6 meses'],
+    '3m': ['Últimos 3 meses', 91, '3 meses'],
+    'ytd': ['Desde o começo do ano', 'ytd', null],
+    'all': ['Desde o início', null, 'no período'],
+  };
+  /** Data inicial (AAAA-MM-DD) do período. O ano de 'ytd' vem do dado, não do relógio: com a
+      base ainda em dezembro, "começo do ano" continua sendo o do ano anterior. */
+  V2.periodStart = function (key) {
+    const days = V2.PERIODS[key][1];
+    if (days == null) return '2000-01-01';
+    if (!V2.meta || !V2.meta.data_through) return null;
+    if (days === 'ytd') return V2.meta.data_through.slice(0, 4) + '-01-01';
+    const d = new Date(V2.meta.data_through + 'T00:00:00Z');
+    d.setUTCDate(d.getUTCDate() - days);
+    return d.toISOString().slice(0, 10);
+  };
+  /** Rótulo curto para frases como "crescimento em …" (o ano, no período anual). */
+  V2.periodShort = function (key) {
+    return key === 'ytd' ? ((V2.meta && V2.meta.data_through) || '').slice(0, 4) : V2.PERIODS[key][2];
+  };
+
   /** Preferências do ranking. Primeiro acesso: Bradesco em "Sempre mostrar". */
   V2.getPrefs = function () {
     const p = readJSON('localStorage', KEY_PREFS);

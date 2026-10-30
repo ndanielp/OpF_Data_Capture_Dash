@@ -59,8 +59,7 @@
 <script>
 (function () {
   'use strict';
-  const PERIODS = { '12m': ['Últimos 12 meses', 364, '12 meses'], '6m': ['Últimos 6 meses', 182, '6 meses'],
-                    '3m': ['Últimos 3 meses', 91, '3 meses'], 'all': ['Desde o início', null, 'no período'] };
+  const PERIODS = V2.PERIODS;
   const MONTHS = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
   const f0 = V2.getFilters();
   const EVO = { unique_pf: 'PF', unique_pj: 'PJ', unique_total: 'PF + PJ', active: 'Ativos', api: 'API', api_per_consent: 'API/(PF + PJ)' };
@@ -78,13 +77,6 @@
   const inst = u => (V2.meta.institutions || []).find(i => i.uuid === u);
   const pct1 = v => v == null ? '—' : new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(v * 100) + '%';
   const pp = v => (v > 0 ? '+' : v < 0 ? '−' : '') + new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(Math.abs(v * 100)) + ' pp';
-  function periodStart() {
-    const days = PERIODS[st.period][1];
-    if (days == null) return '2000-01-01';
-    const dt = new Date(V2.meta.data_through + 'T00:00:00Z');
-    dt.setUTCDate(dt.getUTCDate() - days);
-    return dt.toISOString().slice(0, 10);
-  }
   function save() {
     V2.setFilters({ institution: st.uuid, compare: st.compare, period: st.period, inst_evo: st.evo, inst_mix: st.mix });
     history.replaceState(null, '', '/v2/instituicao?uuid=' + encodeURIComponent(st.uuid));
@@ -142,7 +134,7 @@
     save();
     renderFilterbar();
     document.querySelectorAll('.v2-card').forEach(c => V2.setLoading(c, true));
-    const q = new URLSearchParams({ compare: st.compare, start: periodStart() });
+    const q = new URLSearchParams({ compare: st.compare, start: V2.periodStart(st.period) });
     try {
       d = await V2.fetchJSON('/api/v2/institution/' + encodeURIComponent(st.uuid) + '?' + q.toString());
       render();
@@ -188,7 +180,7 @@
       return '<div class="v2-card"><span class="v2-kpi-label">' + label + '</span>' +
         '<span class="v2-kpi-value">' + V2.fmtCompact(k.value) + '</span>' +
         paceLine(k.pace, flow) +
-        '<span class="v2-muted" style="font-size:13px">' + V2.fmtShare(k.share) + ' do total · ' + k.rank + 'º · ' + V2.fmtGrowth(k.growth) + ' em ' + PERIODS[st.period][2] + '</span>' +
+        '<span class="v2-muted" style="font-size:13px">' + V2.fmtShare(k.share) + ' do total · ' + k.rank + 'º · ' + V2.fmtGrowth(k.growth) + ' em ' + V2.periodShort(st.period) + '</span>' +
         '<span class="v2-muted v2-small">' + V2.esc(ref) + ': ' + V2.fmtGrowth(k.ref_growth) + (extra || '') + '</span></div>';
     };
     const api = d.kpis.api;
@@ -330,7 +322,7 @@
     const named = t.filter(x => !x.other);
     const max = Math.max.apply(null, t.map(x => x.value).concat([1]));
     const top6 = named.slice(0, 6).reduce((a, x) => a + (x.share || 0), 0);
-    el.innerHTML = head('De onde vêm os consentimentos ativos', 'Instituições que transmitem os dados · semana de ' + V2.fmtDate(d.week) + ' · cor = grupo · crescimento em ' + PERIODS[st.period][2], 'tx') +
+    el.innerHTML = head('De onde vêm os consentimentos ativos', 'Instituições que transmitem os dados · semana de ' + V2.fmtDate(d.week) + ' · cor = grupo · crescimento em ' + V2.periodShort(st.period), 'tx') +
       (t.length ? '<ul class="in-list in-bars">' + t.map(x => '<li style="grid-template-columns:150px minmax(0,1fr) 56px 76px 76px">' +
         '<span style="font-weight:' + (x.other ? 500 : 600) + (x.other ? ';color:var(--text-2)' : '') + '">' + V2.esc(x.name) + '</span>' +
         '<div class="v2-track" style="height:10px"><div style="width:' + (100 * x.value / max).toFixed(1) + '%;background:' + (x.other ? css('--control-border') : V2.groupColor(x.group)) + '"></div></div>' +

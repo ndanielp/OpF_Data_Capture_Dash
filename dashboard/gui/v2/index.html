@@ -25,8 +25,9 @@
 <script>
 (function () {
   'use strict';
-  const PERIODS = { '12m': ['Últimos 12 meses', 364, '12 meses'], '6m': ['Últimos 6 meses', 182, '6 meses'],
-                    '3m': ['Últimos 3 meses', 91, '3 meses'], 'all': ['Desde o início', null, 'Desde o início'] };
+  const PERIODS = V2.PERIODS;
+  // Nesta aba o período inteiro se chama "Desde o início" também dentro das frases.
+  const periodShort = k => k === 'all' ? 'Desde o início' : V2.periodShort(k);
   const METRICS = { unique: 'Consentimentos únicos', active: 'Consentimentos ativos', api: 'Chamadas de API' };
   const SORTS = { total: 'Total', pace: 'Ritmo por dia', growth: 'Crescimento', per_consent: 'Por consentimento' };
   const SOURCE = 'Fonte: dashboard Open Finance Brasil';
@@ -47,14 +48,6 @@
   }
   function allGroups() { return V2.meta.groups.map(g => g.slug); }
   function activeGroups() { return st.groups.length ? st.groups : allGroups(); }
-  function periodStart() {
-    const days = PERIODS[st.period][1];
-    if (!V2.meta.data_through) return null;
-    if (days == null) return '2000-01-01';
-    const d = new Date(V2.meta.data_through + 'T00:00:00Z');
-    d.setUTCDate(d.getUTCDate() - days);
-    return d.toISOString().slice(0, 10);
-  }
   function instName(uuid) {
     const i = V2.meta.institutions.find(x => x.uuid === uuid);
     return i ? i.short : uuid;
@@ -144,7 +137,7 @@
   function rankingUrl(metric) {
     const p = V2.getPrefs();
     const q = new URLSearchParams({ metric: metric, limit: LIMIT });
-    const start = periodStart();
+    const start = V2.periodStart(st.period);
     if (start) q.set('start', start);
     if (st.groups.length) q.set('groups', st.groups.join(','));
     if (p.pinned.length) q.set('pinned', p.pinned.join(','));
@@ -226,7 +219,7 @@
       stack(e.by_group_4w || e.by_group, 'das ' + what + ' de API nas últimas 4 semanas') + '</div>';
     return '<div style="display:flex;flex-direction:column;gap:16px"><div class="v2-grid v2-grid-4">' +
       card(errMode ? (d.status === '500' ? 'Erros na semana' : 'Chamadas na semana (todas)') : 'Chamadas na semana',
-           V2.fmtCompact(e.total), e.receptors + ' receptores · ' + V2.fmtGrowth(e.growth) + ' em ' + PERIODS[st.period][2]) +
+           V2.fmtCompact(e.total), e.receptors + ' receptores · ' + V2.fmtGrowth(e.growth) + ' em ' + periodShort(st.period)) +
       card('Ritmo por dia · 4 semanas', V2.fmtCompact(p.per_day) + ' ' + V2.trendArrow(p.trend, errMode),
            p.change_pct == null ? '' : V2.fmtPct(p.change_pct, 1) + ' sobre as 4 semanas anteriores') +
       (errMode
@@ -279,7 +272,7 @@
     const scaleConsent = isApi && d.scale === 'per_consent';
     const barOf = r => scaleConsent ? (r.per_consent_month || 0) : r.value;
     const max = Math.max.apply(null, d.rows.map(barOf).concat([1]));
-    const growthHead = PERIODS[st.period][2];
+    const growthHead = periodShort(st.period);
     const thirdHead = isApi ? (d.status === '200' ? 'Por consent./mês' : 'Taxa de erro') : null;
     let head;
     if (mode === 'narrow') head = ['#', 'Instituição', 'Part.', 'Total', 'Ritmo/dia · 4 sem.', growthHead, ''];
@@ -414,7 +407,7 @@
       { label: isApi ? 'Chamadas na semana' : 'Total', value: r => r.value },
       { label: isApi ? 'Chamadas por dia (4 sem.)' : 'Ritmo por dia (4 sem.)', value: r => r.pace ? Math.round(r.pace.per_day) : null },
       { label: 'Ritmo 4 sem. antes', value: r => r.pace && r.pace.prev_per_day != null ? Math.round(r.pace.prev_per_day) : null },
-      { label: 'Crescimento ' + PERIODS[st.period][2], value: r => V2.fmtGrowth(r.growth) },
+      { label: 'Crescimento ' + periodShort(st.period), value: r => V2.fmtGrowth(r.growth) },
     ];
     if (isApi) {
       cols.push({ label: 'Por consentimento/mês', value: r => r.per_consent_month == null ? null : Math.round(r.per_consent_month) });

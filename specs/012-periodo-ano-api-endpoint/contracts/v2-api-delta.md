@@ -12,7 +12,7 @@ Nenhum endpoint muda. O frontend manda `start=<1º de janeiro do ano de data_thr
 |---|---|
 | Chave no estado compartilhado | `opf:v2:filters.period = "ytd"` |
 | Rótulo no filtro | "Desde o começo do ano" |
-| Rótulo curto (cartões, rodapés) | "no ano" / "desde o começo do ano" |
+| Rótulo curto (frases como "crescimento em …") | o ano dos dados (ex.: "2026"); o rótulo completo "desde o começo do ano" aparece quando a frase cita o filtro |
 | Valor desconhecido salvo em sessão | cai em `12m` (comportamento atual) |
 
 ---
@@ -117,7 +117,7 @@ Os números acima são ilustrativos; o formato é o contrato.
 
 | Tela | Mudança |
 |---|---|
-| Barra de filtros (3 páginas com período) | A lista vem de `V2.PERIODS`; a opção "Desde o começo do ano" aparece depois de "Últimos 3 meses" e antes de "Desde o início" |
+| Barra de filtros (3 páginas com período) | A lista vem de `V2.PERIODS` (rótulo curto por `V2.periodShort`, data inicial por `V2.periodStart`); a opção "Desde o começo do ano" aparece depois de "Últimos 3 meses" e antes de "Desde o início" |
 | Como evolui? (métrica "Chamadas de API") | Seletor de escala `Por consentimento/mês` (padrão) · `Volume (30 dias)`, só com a métrica de API; salvo em `opf:v2:filters.evo_scale`; título, subtítulo, imagem e CSV citam a escala |
 | Como evolui? (escala por consentimento) | Linha do ecossistema como referência; alternador "participação %", "Participação por grupo", "Quem ganhou e quem perdeu espaço" desativados com o texto "Participação não se aplica a chamadas por consentimento"; cartões de topo mostram o crescimento do ecossistema e, no lugar de ganhou/perdeu, a mesma explicação |
 | Como evolui? (período curto) | Com menos de 3 pontos no período, aviso "Poucos dados neste período" no card do gráfico |

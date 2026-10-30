@@ -187,3 +187,27 @@ async def test_validation_errors(client):
     assert r.status_code == 422
     r = await client.get("/api/v2/evolution", params={"start": "2026-09-01"})
     assert r.status_code == 422
+
+
+# ── Período "Desde o começo do ano" (feature 012) ─────────────────────────────
+# O período é só do frontend (V2.periodStart manda start=AAAA-01-01); o backend precisa
+# tomar a primeira semana a partir daí como base e aceitar períodos de 1 ponto.
+
+@pytest.mark.asyncio
+async def test_year_to_date_start_uses_first_week_of_the_year(client):
+    first = next(i for i, w in enumerate(F.WEEKS) if w >= "2026-01-01")
+    d = await _get(client, start="2026-01-01")
+    tot = lambda i: sum((F.cpf(u, i) or 0) for u in F.INSTITUTIONS)   # noqa: E731
+    eg = d["headline"]["ecosystem_growth"]
+    assert d["period"]["start"] == "2026-01-01" and d["period"]["end"] == F.WEEKS[LAST]
+    assert eg["from"] == tot(first) and eg["to"] == tot(LAST)
+    assert eg["value"] == pytest.approx(tot(LAST) / tot(first) - 1)
+    assert d["points"][0] == "2026-01"
+
+
+@pytest.mark.asyncio
+async def test_year_to_date_with_a_single_week_is_not_an_error(client):
+    first = next(i for i, w in enumerate(F.WEEKS) if w >= "2026-01-01")
+    d = await _get(client, start="2026-01-01", end=F.WEEKS[first])
+    assert d["points"] == ["2026-01"] and d["week"] == F.WEEKS[first]
+    assert d["headline"]["ecosystem_growth"]["value"] == pytest.approx(0.0)
