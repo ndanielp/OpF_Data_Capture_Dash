@@ -1,8 +1,8 @@
 /* Dashboard 2.0 — Shell v2 (Constituição §6.8; specs/011-dashboard-v2/contracts/v2-ui-shell.md)
    Cores de dados (grupos, grupos de API) vêm de /api/v2/meta; aqui só tokens de tema. */
 
-/* Escalas de tipografia, espaçamento e raio. Os valores são os que o v2 já usava; os que não
-   têm token (2, 3, 7 e 9 px de espaçamento) ainda estão soltos no CSS. */
+/* Escalas de tipografia, espaçamento (grade de 4 px, com meios-passos de 2 px) e raio. Ficam sem
+   token só os microespaços de 2 e 3 px (inset do controle segmentado, folga de contorno). */
 :root {
   --text-caption: 12px; --text-small: 13px; --text-body: 14px; --text-body-lg: 15px; --text-emph: 16px;
   --text-h2: 17px; --text-metric: 22px; --text-h1: 26px; --text-kpi: 30px; --text-kpi-lg: 34px;
@@ -232,7 +232,7 @@ button, input, select { font: inherit; color: inherit; }
 .v2-rank-head, .v2-rank-row { display: grid; gap: var(--sp-2h); align-items: center; }
 .v2-rank-head { font-size: var(--text-caption); font-weight: 600; color: var(--text-2); padding: var(--sp-2) 0 var(--sp-1); }
 .v2-rank-list { list-style: none; margin: 0; padding: 0; }
-.v2-rank-row { padding: 7px 0; border-top: 1px solid var(--divider); font-size: var(--text-small); }
+.v2-rank-row { padding: var(--sp-2) 0; border-top: 1px solid var(--divider); font-size: var(--text-small); }
 .v2-rank-row.wide { font-size: var(--text-body); padding: var(--sp-2) 0; gap: var(--sp-3h); }
 .v2-rank-row.pinned { background: var(--pinned-bg); border-radius: var(--r-sm); padding-left: var(--sp-2); padding-right: var(--sp-2); margin: 0 -8px; }
 .v2-rank-row.cut { border-top: 2px dashed var(--control-border); }
