@@ -109,7 +109,7 @@
         '<fieldset class="v2-field"><legend>Sinal</legend><div class="v2-seg" data-seg="signal">' +
           Object.entries(SIGNALS).map(([k, l]) => '<button type="button" data-v="' + k + '" aria-pressed="' + (k === st.signal) + '">' + l + '</button>').join('') +
         '</div></fieldset>' +
-      '</div><button type="button" class="v2-btn" id="f-export">Exportar alertas (CSV)</button></div>' +
+      '</div><button type="button" class="v2-btn v2-fb-export" id="f-export" title="Exportar os alertas em CSV">Exportar CSV</button></div>' +
       '<div class="v2-fb-row"><div class="v2-fb-group">' +
         '<label class="v2-field"><span class="v2-label">Instituição</span><input type="search" class="mc-search" id="f-q" placeholder="Buscar…" value="' + V2.esc(st.q) + '"></label>' +
         '<fieldset class="v2-field"><legend>Grupos</legend><div class="v2-chips">' + groups + '</div></fieldset>' +

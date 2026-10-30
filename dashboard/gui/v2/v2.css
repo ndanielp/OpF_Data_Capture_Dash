@@ -126,6 +126,8 @@ button, input, select { font: inherit; color: inherit; }
   background: var(--surface); font-weight: 600; cursor: pointer;
 }
 .v2-btn:hover { border-color: var(--text-2); }
+/* "Exportar CSV" da barra de filtros: à direita em todas as abas, inclusive quando quebra de linha. */
+.v2-fb-export { margin-left: auto; }
 /* Link que age como botão (ex.: "Abrir perfil →"): mesma altura de toque dos controles. */
 .v2-link-action { display: inline-flex; align-items: center; min-height: 44px; font-weight: 600; text-decoration: none; }
 
@@ -236,7 +238,7 @@ button, input, select { font: inherit; color: inherit; }
 .v2-track > div { height: 100%; border-radius: 3px; }
 .v2-rank-row.wide .v2-track { height: 10px; }
 .v2-pace b { font-weight: 700; }
-.v2-pace small { display: block; font-size: 11px; color: var(--text-2); }
+.v2-pace small { display: block; font-size: 12px; color: var(--text-2); }
 .v2-up { color: var(--up); font-weight: 700; }
 .v2-down { color: var(--down); font-weight: 700; }
 .v2-flat { color: var(--text-2); }

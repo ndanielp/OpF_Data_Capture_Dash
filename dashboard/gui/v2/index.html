@@ -87,7 +87,7 @@
           Object.entries(PERIODS).map(([k, v]) => '<option value="' + k + '"' + (k === st.period ? ' selected' : '') + '>' + v[0] + '</option>').join('') +
         '</select></label>' +
         '<fieldset class="v2-field"><legend>Grupos</legend><div class="v2-chips">' + groups + '</div></fieldset>' +
-      '</div><button type="button" class="v2-btn" id="f-export">Exportar dados (CSV)</button></div>' +
+      '</div><button type="button" class="v2-btn v2-fb-export" id="f-export" title="Exportar os rankings em CSV">Exportar CSV</button></div>' +
       '<div class="v2-fb-row"><div class="v2-fb-group">' +
         '<fieldset class="v2-field"><legend>Sempre mostrar no ranking</legend><div class="v2-chips">' + pinned +
           '<button type="button" class="v2-chip-add" id="f-pin-add">+ Incluir instituição</button></div></fieldset>' +
@@ -381,11 +381,12 @@
     if (img) {
       const card = img.closest('.v2-card');
       const pair = st.metric === 'unique' ? last[img.dataset.img === 'pf' ? 0 : 1] : last[0];
+      const changes = img.dataset.img === 'changes';
       V2.exportImage(card, {
         title: card.querySelector('h2').textContent,
         subtitle: card.querySelector('.v2-sub').textContent,
-        note: 'Ritmo: novos por dia nas últimas 4 semanas · cor = grupo',
-        filename: 'opf-quem-lidera-' + st.metric + '-' + img.dataset.img + '-' + pair[1].week + '.png',
+        note: changes ? 'Resumo do último ciclo · regras em "O que mudou?"' : 'Ritmo: novos por dia nas últimas 4 semanas · cor = grupo',
+        filename: 'opf-quem-lidera-' + (changes ? 'changes' : st.metric + '-' + img.dataset.img) + '-' + pair[1].week + '.png',
       }).catch(e => alert(e.message));
       return;
     }
@@ -450,7 +451,8 @@
       '<div class="v2-card-head"><div><h2>O que mudou desde a última atualização</h2>' +
         '<span class="v2-sub">' + period + ' · ' + s.alerts + (s.alerts === 1 ? ' alerta' : ' alertas') + ' em ' + s.institutions +
         (s.institutions === 1 ? ' instituição' : ' instituições') + (s.watching ? ' · ' + s.watching + ' em observação' : '') + '</span></div>' +
-        '<a href="/v2/mudancas" class="v2-link-action">Ver tudo em "O que mudou?" →</a></div>' +
+        '<div class="v2-card-actions"><a href="/v2/mudancas" class="v2-link-action">Ver tudo em "O que mudou?" →</a>' +
+        '<button type="button" class="v2-icon-btn" data-img="changes" aria-label="Copiar como imagem">' + V2.icon('image') + '</button></div></div>' +
       (shown.length ? '<ul style="list-style:none;margin:0;padding:0">' + rows + '</ul>' + more
                     : '<span class="v2-muted">Nenhum alerta no último mês.</span>') +
       '</section>';
