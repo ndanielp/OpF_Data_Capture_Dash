@@ -122,7 +122,9 @@ step "Fazendo deploy no Cloud Run (${REGION})..."
 
 # Memoria: a base (~3,9 GiB) e baixada para o filesystem em memoria da instancia;
 # 8 GiB deixa folga para o Python e o cache do Dashboard 2.0 (8 GiB exige 2 CPUs).
+# --timeout 3600: um download grande da exportacao de dados (feature 015) passa de 5 minutos.
 gcloud run deploy "$SERVICE_NAME" \
+    --timeout 3600 \
     --image "$IMAGE" \
     --platform managed \
     --region "$REGION" \

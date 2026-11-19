@@ -1,0 +1,555 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Exportar dados · Open Finance 2.0</title>
+<script>try{document.documentElement.dataset.theme=localStorage.getItem('opf:v2:theme')||'light'}catch(e){document.documentElement.dataset.theme='light'}</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" crossorigin="anonymous">
+<link rel="stylesheet" href="/static/v2/v2.css">
+<script src="/static/v2/shell.js"></script>
+</head>
+<body>
+<header id="v2-header" class="v2-header"></header>
+<main class="v2-main">
+  <div class="v2-title"><h1>Exportar dados</h1>
+    <p>Baixe os números como foram coletados, por semana. Registros da coleta e análises do painel não entram.</p></div>
+  <section id="gate" hidden></section>
+  <div id="app" hidden>
+    <section class="v2-filterbar" id="filterbar" aria-label="Período"></section>
+    <div class="ex-layout" style="margin-top: var(--sp-4)">
+      <div class="ex-left">
+        <article class="v2-card" id="card-tables"></article>
+        <article class="v2-card" id="card-filters"></article>
+      </div>
+      <aside class="v2-card ex-summary" id="card-summary" aria-label="Resumo da exportação"></aside>
+    </div>
+  </div>
+</main>
+<div class="ex-mobilebar" id="mobilebar" hidden></div>
+
+<script>
+(function () {
+  'use strict';
+  const KEY_TOKEN = 'opf:v2:export';
+  const KEY_PREFS = 'opf:v2:export-prefs';
+  const ORDER = ['unique', 'active', 'api', 'pay'];
+  const SHORT = { unique: 'únicos', active: 'ativos', api: 'chamadas', pay: 'pagamentos' };
+  const SEG_PERIODS = { '12m': '12 meses', '6m': '6 meses', '3m': '3 meses', 'ytd': 'Desde jan', 'all': 'Tudo' };
+  const MSG_LOCKED = 'O código de acesso mudou. Digite o código novo para continuar. Seus filtros foram mantidos.';
+  const $ = id => document.getElementById(id);
+  const esc = V2.esc;
+
+  // ── Armazenamento tolerante a falhas ───────────────────────────────────────
+  function sget(k) { try { return sessionStorage.getItem(k); } catch (e) { return null; } }
+  function sset(k, v) { try { if (v == null) sessionStorage.removeItem(k); else sessionStorage.setItem(k, v); } catch (e) { /* ok */ } }
+  function lget(k) { try { return JSON.parse(localStorage.getItem(k) || 'null'); } catch (e) { return null; } }
+  function lset(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* ok */ } }
+
+  // ── Estado ─────────────────────────────────────────────────────────────────
+  const f0 = V2.getFilters();
+  const prefs = lget(KEY_PREFS) || {};
+  const st = {
+    token: sget(KEY_TOKEN),
+    opts: null,
+    tables: Array.isArray(prefs.tables) && prefs.tables.some(t => ORDER.includes(t)) ? ORDER.filter(t => prefs.tables.includes(t)) : ['unique'],
+    level: prefs.level === 'endpoint' ? 'endpoint' : 'api',
+    period: SEG_PERIODS[f0.period] ? f0.period : '12m',
+    custom: false, start: null, end: null,
+    // Semente: as instituições escolhidas em "Como evolui?"; depois a aba guarda a sua própria lista.
+    receptors: Array.isArray(f0.export_receptors) ? f0.export_receptors.slice() : Array.isArray(f0.institutions) ? f0.institutions.slice() : [],
+    transmitters: [], apis: [], status: 'all',
+    counts: null, counting: false, countError: '',
+    phase: 'ready',            // ready | downloading | done | failed
+    dl: null,                  // { bytes, estimate, rows, name, size }
+    gateMsg: '', cooldown: 0,
+  };
+  let countSeq = 0, countTimer = null, abortCtl = null, cooldownTimer = null;
+
+  // ── Utilidades ─────────────────────────────────────────────────────────────
+  const fmtInt = V2.fmtInt;
+  function fmtBytes(n) {
+    if (n == null) return '—';
+    if (n < 1e6) return V2.fmtInt(Math.max(1, Math.round(n / 1e3))) + ' KB';
+    if (n < 1e9) return V2.fmtDec(n / 1e6, n < 1e8 ? 1 : 0) + ' MB';
+    return V2.fmtDec(n / 1e9, 1) + ' GB';
+  }
+  function fmtTime(bytes) {
+    const s = bytes / 5e6;           // ~5 MB/s, estimativa conservadora
+    if (s < 60) return 'menos de 1 minuto';
+    const m = Math.round(s / 60);
+    return m < 60 ? 'cerca de ' + m + ' min' : 'cerca de ' + V2.fmtDec(m / 60, 1) + ' h';
+  }
+  const tableOpt = id => (st.opts.tables || []).find(t => t.id === id);
+  const usesFilter = f => st.tables.some(t => (tableOpt(t).filters || []).includes(f));
+  const onlyPay = () => st.tables.length === 1 && st.tables[0] === 'pay';
+  const isMulti = () => st.tables.length > 1;
+
+  function currentRange() {
+    if (st.custom) return { start: st.start || null, end: st.end || null };
+    const s = st.period === 'all' ? null : V2.periodStart(st.period);
+    return { start: s, end: null };
+  }
+  function params() {
+    const r = currentRange();
+    const p = new URLSearchParams();
+    p.set('tables', st.tables.join(','));
+    if (r.start) p.set('start', r.start);
+    if (r.end) p.set('end', r.end);
+    if (st.receptors.length) p.set('receptors', st.receptors.join(','));
+    if (usesFilter('transmitters') && st.transmitters.length) p.set('transmitters', st.transmitters.join(','));
+    if (usesFilter('apis') && st.apis.length) p.set('apis', st.apis.join(','));
+    if (usesFilter('status')) p.set('status', st.status);
+    if (usesFilter('level')) p.set('level', st.level);
+    return p;
+  }
+  function body() {
+    const r = currentRange();
+    return {
+      tables: st.tables, start: r.start, end: r.end, receptors: st.receptors,
+      transmitters: usesFilter('transmitters') ? st.transmitters : [], apis: usesFilter('apis') ? st.apis : [],
+      status: usesFilter('status') ? st.status : 'all', level: usesFilter('level') ? st.level : 'api',
+    };
+  }
+  function savePrefs() {
+    lset(KEY_PREFS, { tables: st.tables, level: st.level });
+    const shared = { export_receptors: st.receptors };
+    if (!st.custom) shared.period = st.period;
+    V2.setFilters(shared);
+  }
+
+  // ── Rede ───────────────────────────────────────────────────────────────────
+  class Locked extends Error {}
+  async function api(url, init) {
+    init = init || {};
+    init.headers = Object.assign({ 'X-Export-Token': st.token || '' }, init.headers || {});
+    let res;
+    try { res = await fetch(url, init); } catch (e) {
+      if (e.name === 'AbortError') throw e;
+      throw new Error('Não foi possível falar com o servidor. Verifique a conexão e tente de novo.');
+    }
+    if (res.status === 401) throw new Locked();
+    if (!res.ok) {
+      let detail = '';
+      try { detail = (await res.json()).detail || ''; } catch (e) { /* sem corpo */ }
+      throw Object.assign(new Error(detail || 'O servidor não conseguiu atender agora. Tente de novo em instantes.'), { status: res.status });
+    }
+    return res;
+  }
+
+  // ── Acesso ─────────────────────────────────────────────────────────────────
+  function showGate(msg, opts) {
+    opts = opts || {};
+    st.gateMsg = msg || '';
+    $('app').hidden = true;
+    $('mobilebar').hidden = true;
+    const g = $('gate');
+    g.hidden = false;
+    g.innerHTML =
+      '<form class="v2-card ex-gate" id="gate-form" autocomplete="off">' +
+        '<span class="ex-lock" aria-hidden="true">' + lockIcon() + '</span>' +
+        '<h2>Acesso por código</h2>' +
+        ('<p class="v2-muted" style="margin:0">A exportação de dados é restrita. As outras abas continuam abertas para todos.</p>' +
+            '<label class="v2-field"><span class="v2-label">Código de acesso</span>' +
+              '<input type="password" id="gate-code" autocomplete="off" required maxlength="128"' + (st.cooldown ? ' disabled' : '') + (opts.invalid ? ' aria-invalid="true"' : '') + '></label>' +
+            (msg ? '<div class="v2-error" role="alert">' + esc(msg) + '</div>' : '') +
+            '<button type="submit" class="v2-btn btn-primary" id="gate-go"' + (st.cooldown ? ' disabled' : '') + '>Entrar</button>' +
+            '<p class="ex-help">O acesso vale enquanto esta aba estiver aberta. Você pode sair a qualquer momento.</p>') +
+      '</form>';
+    const form = $('gate-form');
+    if (form) {
+      form.addEventListener('submit', onLogin);
+      const input = $('gate-code');
+      if (input && !st.cooldown) input.focus();
+    }
+  }
+  function lockIcon() {
+    return '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>';
+  }
+  function startCooldown(sec) {
+    st.cooldown = sec;
+    clearInterval(cooldownTimer);
+    cooldownTimer = setInterval(() => {
+      st.cooldown -= 1;
+      if (st.cooldown <= 0) { st.cooldown = 0; clearInterval(cooldownTimer); showGate(''); }
+    }, 1000);
+  }
+  async function onLogin(ev) {
+    ev.preventDefault();
+    const code = $('gate-code').value;
+    $('gate-go').disabled = true;
+    let res;
+    try {
+      res = await fetch('/api/v2/export/session', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code }) });
+    } catch (e) { return showGate('Não foi possível falar com o servidor. Verifique a conexão e tente de novo.'); }
+    let data = {};
+    try { data = await res.json(); } catch (e) { /* sem corpo */ }
+    if (res.ok) { st.token = data.token; sset(KEY_TOKEN, st.token); return enter(); }
+    if (res.status === 429) { startCooldown(data.retry_after || 60); return showGate(data.detail, { invalid: true }); }
+    showGate(data.detail || 'Código inválido. Confira com quem administra o painel e tente de novo.', { invalid: true });
+  }
+  function lock(msg) {
+    st.token = null; sset(KEY_TOKEN, null);
+    if (abortCtl) abortCtl.abort();
+    showGate(msg || '');
+  }
+  function logout() { st.phase = 'ready'; st.dl = null; lock(''); }
+
+  async function enter() {
+    $('gate').hidden = true;
+    $('app').hidden = false;
+    try {
+      st.opts = await (await api('/api/v2/export/options')).json();
+    } catch (e) {
+      if (e instanceof Locked) return lock(st.token ? MSG_LOCKED : '');
+      $('app').hidden = true; $('gate').hidden = false;
+      $('gate').innerHTML = V2.errorBox(e.message);
+      return;
+    }
+    st.tables = st.tables.filter(t => tableOpt(t));
+    if (!st.tables.length) st.tables = ['unique'];
+    renderAll();
+    refreshCount(true);
+  }
+
+  // ── Contagem ───────────────────────────────────────────────────────────────
+  function refreshCount(now) {
+    clearTimeout(countTimer);
+    st.counting = true; st.countError = '';
+    renderSummary();
+    countTimer = setTimeout(async () => {
+      const seq = ++countSeq;
+      try {
+        const res = await api('/api/v2/export/count?' + params().toString());
+        const data = await res.json();
+        if (seq !== countSeq) return;
+        st.counts = data; st.counting = false;
+      } catch (e) {
+        if (seq !== countSeq) return;
+        st.counting = false;
+        if (e instanceof Locked) return lock(MSG_LOCKED);
+        st.counts = null; st.countError = e.message;
+      }
+      renderSummary();
+    }, now ? 0 : 250);
+  }
+  function changed(skipRender) {
+    savePrefs();
+    if (!skipRender) { renderTables(); renderFilters(); }
+    if (['done', 'failed', 'error'].includes(st.phase)) { st.phase = 'ready'; st.dl = null; }
+    refreshCount();
+  }
+
+  // ── Renderização ───────────────────────────────────────────────────────────
+  function renderAll() { renderFilterbar(); renderTables(); renderFilters(); renderSummary(); }
+  function busy() { return st.phase === 'downloading'; }
+  function locked() { return st.phase === 'downloading' || st.phase === 'native'; }
+
+  function renderFilterbar() {
+    const r = currentRange();
+    const first = (st.opts.tables.find(t => t.id === 'unique') || {}).first_date;
+    const last = st.opts.data_through;
+    $('filterbar').innerHTML =
+      '<div class="v2-fb-row"><div class="v2-fb-group' + (busy() ? ' ex-locked' : '') + '"' + (busy() ? ' inert' : '') + '>' +
+        '<div class="v2-field"><span class="v2-label">Período</span>' +
+          V2.seg('period', SEG_PERIODS, st.custom ? '' : st.period) + '</div>' +
+        '<div class="ex-dates">' +
+          '<label class="v2-field"><span class="v2-label">De</span><input type="date" id="f-start" value="' + esc(r.start || first || '') + '" min="' + esc(first || '') + '" max="' + esc(last || '') + '"></label>' +
+          '<label class="v2-field"><span class="v2-label">Até</span><input type="date" id="f-end" value="' + esc(r.end || last || '') + '" min="' + esc(first || '') + '" max="' + esc(last || '') + '"></label>' +
+        '</div></div>' +
+        '<div class="ex-access"><span aria-hidden="true">' + lockIcon().replace('width="28" height="28"', 'width="16" height="16"') + '</span>Acesso liberado' +
+          '<button type="button" id="f-logout">Sair</button></div></div>';
+  }
+
+  function renderTables() {
+    $('card-tables').className = 'v2-card' + (locked() ? ' ex-locked' : '');
+    $('card-tables').toggleAttribute('inert', locked());
+    $('card-tables').innerHTML =
+      '<h2 class="ex-step">1. Tabelas</h2>' +
+      '<div class="ex-picks" role="group" aria-label="Tabelas">' + st.opts.tables.map(t => {
+        const filters = { unique: 'período, receptores', active: 'período, receptores, transmissores',
+                          api: 'todos, mais o nível (total ou endpoint)',
+                          pay: 'Dados de ' + V2.fmtDate(t.first_date) + ' a ' + V2.fmtDate(t.last_date) };
+        return '<label class="ex-pick"><input type="checkbox" data-table="' + t.id + '"' + (st.tables.includes(t.id) ? ' checked' : '') + '><span>' +
+          '<b>' + esc(t.label) + '</b>' + esc(t.description) +
+          '<small>' + (t.id === 'pay' ? filters.pay : 'Filtros: ' + filters[t.id]) + '</small></span></label>';
+      }).join('') + '</div>';
+  }
+
+  /** Controle segmentado com ordem fixa (V2.seg usa objeto, e chaves numéricas reordenam). */
+  function segList(name, pairs, current) {
+    return '<div class="v2-seg" data-seg="' + name + '">' + pairs.map(([k, l]) =>
+      '<button type="button" data-v="' + k + '" aria-pressed="' + (k === current) + '">' + l + '</button>').join('') + '</div>';
+  }
+  function chips(list, lookup, kind) {
+    return '<div class="ex-chiprow">' + list.map(u =>
+      '<span class="v2-chip-tag ex"><span class="v2-chip-name">' + esc(lookup(u)) + '</span><button type="button" data-rm="' + kind + '" data-v="' + esc(u) + '" aria-label="Remover ' + esc(lookup(u)) + '">×</button></span>').join('') + '</div>';
+  }
+  const recName = u => { const i = (V2.meta.institutions || []).find(x => x.uuid === u); return i ? i.short : u; };
+  const txName = u => { const i = (st.opts.transmitters || []).find(x => x.uuid === u); return i ? i.label : u; };
+  const apiName = u => { const i = (st.opts.apis || []).find(x => x.slug === u); return i ? i.label : u; };
+  function appliesTo(filter) {
+    return st.tables.filter(t => (tableOpt(t).filters || []).includes(filter)).map(t => SHORT[t]);
+  }
+  function label(base, filter) {
+    const t = appliesTo(filter);
+    return base + (t.length && t.length < st.tables.length ? ' · ' + t.join(', ') : '');
+  }
+
+  function renderFilters() {
+    const el = $('card-filters');
+    el.className = 'v2-card' + (locked() ? ' ex-locked' : '');
+    el.toggleAttribute('inert', locked());
+    const rec = onlyPay() ? 'Iniciadoras' : 'Receptores';
+    const tx = onlyPay() ? 'Detentoras' : 'Transmissores';
+    let h = '<h2 class="ex-step">2. Filtros</h2><div class="v2-fb-group" style="flex-direction:column;align-items:stretch;gap:var(--sp-4)">';
+    h += '<div class="v2-field"><span class="v2-label">' + rec + '</span><div class="ex-chiprow">' +
+      (st.receptors.length ? chips(st.receptors, recName, 'receptors') : '<span class="v2-muted">Todos os receptores</span>') +
+      '<button type="button" class="v2-chip-add" id="add-rec">+ Adicionar receptor</button></div></div>';
+    if (usesFilter('transmitters')) {
+      h += '<div class="v2-field"><span class="v2-label">' + label(tx, 'transmitters') + '</span><div class="ex-chiprow">' +
+        (st.transmitters.length ? chips(st.transmitters, txName, 'transmitters') : '<span class="v2-muted">Todos os transmissores</span>') +
+        '<button type="button" class="v2-chip-add" id="add-tx">+ Adicionar transmissor</button></div></div>';
+    }
+    if (usesFilter('apis')) {
+      h += '<div class="v2-field"><span class="v2-label">' + label('APIs', 'apis') + '</span><div class="ex-chiprow">' +
+        (st.apis.length ? chips(st.apis, apiName, 'apis') : '<span class="v2-muted">Todas as APIs</span>') +
+        '<button type="button" class="v2-chip-add" id="add-api">+ Escolher APIs</button></div></div>';
+    }
+    if (usesFilter('status')) {
+      h += '<div class="v2-field"><span class="v2-label">' + label('Status da resposta', 'status') + '</span>' +
+        segList('status', [['all', '200 e 500'], ['200', '200'], ['500', '500']], st.status) + '</div>';
+    }
+    if (usesFilter('level')) {
+      h += '<fieldset class="v2-field v2-accent"><legend>' + label('Nível das chamadas de API', 'level') + '</legend>' +
+        V2.seg('level', { api: 'Total por API', endpoint: 'Por endpoint' }, st.level) +
+        '<p class="ex-help">' + (st.level === 'api'
+          ? 'Uma linha por API. Some à vontade: não há dupla contagem.'
+          : 'Uma linha por endpoint. A soma pode ficar um pouco abaixo do total da API: algumas chamadas não são atribuídas a um endpoint pelo portal.') + '</p></fieldset>';
+    }
+    el.innerHTML = h + '</div>';
+  }
+
+  function fileName() {
+    const through = st.opts.data_through || '';
+    return st.tables.length === 1
+      ? 'opf-dados-' + ({ unique: 'consentimentos-unicos', active: 'consentimentos-ativos', api: 'chamadas-api', pay: 'iniciacao-pagamento' })[st.tables[0]] + '-' + through + '.csv'
+      : 'opf-dados-' + through + '.zip';
+  }
+  function periodLabel() {
+    const c = st.counts;
+    const p = c && c.tables.length ? c.tables[0].period : null;
+    const r = currentRange();
+    const lo = r.start || (p && p.start), hi = r.end || (p && p.end) || st.opts.data_through;
+    return (lo ? V2.fmtDate(lo) : '—') + ' a ' + (hi ? V2.fmtDate(hi) : '—');
+  }
+
+  function renderSummary() {
+    const c = st.counts;
+    const card = $('card-summary');
+    card.classList.toggle('loading', st.counting);
+    const rows = {};
+    if (c) c.tables.forEach(t => { rows[t.id] = t; });
+    const total = c ? c.total_rows : null;
+    const bytes = c ? c.total_bytes_estimate : null;
+    const empty = !!c && total === 0;
+    const canGo = !!c && total > 0 && !st.counting && st.tables.length > 0 && !busy();
+    const nT = st.tables.length;
+    const recTxt = st.receptors.length ? st.receptors.length + (st.receptors.length === 1 ? ' receptor' : ' receptores') : 'todos os receptores';
+    let h = '<h2 class="ex-step">3. Resumo</h2><span class="v2-sub v2-muted">' + esc(periodLabel()) + ' · ' + recTxt + '</span>';
+    h += '<ul class="ex-rows">' + st.tables.map(id => {
+      const t = rows[id];
+      const n = t ? t.rows : null;
+      let note = 'linhas';
+      if (t && n === 0) note = 'sem dados no período';
+      else if (id === 'api' || id === 'pay') note = 'linhas · ' + (st.level === 'api' ? 'total por API' : 'por endpoint');
+      return '<li class="ex-row"><span>' + esc(tableOpt(id).label) + '<br><small>' + (st.counting && !t ? 'Atualizando a contagem com os filtros novos…' : note) + '</small></span>' +
+        '<span class="ex-r">' + (t ? fmtInt(n) : '—') + '<br><small>' + (t ? fmtBytes(t.bytes_estimate) : '') + '</small></span></li>';
+    }).join('') + '</ul>';
+    h += '<div class="ex-total"><span>Total</span><span style="text-align:right"><b>' + (c ? fmtInt(total) : '—') + '</b><br><small class="v2-muted">' + (c ? fmtBytes(bytes) : '') + '</small></span></div>';
+    if (st.countError) h += V2.errorBox(st.countError);
+    if (empty) {
+      let hint = '';
+      const pay = tableOpt('pay');
+      if (st.tables.includes('pay') && pay) hint = ' Os dados de pagamento vão de ' + V2.fmtDate(pay.first_date) + ' a ' + V2.fmtDate(pay.last_date) + '.';
+      h += '<div class="v2-error" role="status">Não há dados para os filtros escolhidos.' + esc(hint) + '</div>';
+    }
+    if (c && c.large && !busy() && st.phase !== 'done') {
+      h += '<div class="ex-note" role="status">Arquivo grande: ' + fmtBytes(bytes) + ', ' + fmtTime(bytes) + ' para baixar. Dá para exportar assim mesmo, ou reduzir período, receptores ou APIs.</div>';
+    }
+    if (st.phase === 'downloading' && st.dl) {
+      const pctv = st.dl.estimate ? Math.min(99, Math.round(100 * st.dl.bytes / st.dl.estimate)) : null;
+      h += '<div role="status"><b>Baixando…</b><br><span class="v2-muted v2-small">' + fmtBytes(st.dl.bytes) + ' de cerca de ' + fmtBytes(st.dl.estimate) + '</span></div>' +
+        '<div class="ex-progress" role="progressbar" aria-label="Progresso do download" aria-valuemin="0" aria-valuemax="100"' + (pctv != null ? ' aria-valuenow="' + pctv + '"' : '') + '><div style="width:' + (pctv == null ? 0 : pctv) + '%"></div></div>' +
+        '<p class="ex-help">O arquivo já está chegando pelo navegador. Você pode continuar usando as outras abas.</p>';
+    } else if (st.phase === 'native') {
+      h += '<div role="status" class="ex-note">Download iniciado: acompanhe o progresso e cancele pelo gerenciador de downloads do navegador.</div>';
+    } else if (st.phase === 'done' && st.dl) {
+      h += '<div class="ex-done" role="status"><b>Download concluído.</b><br>' + fmtInt(st.dl.rows) + ' linhas · ' + esc(st.dl.name) + ' · ' + fmtBytes(st.dl.size) + '</div>';
+    } else if (st.phase === 'failed' && st.dl) {
+      h += '<div class="v2-error" role="alert">O download parou no meio (' + fmtBytes(st.dl.bytes) + ' de cerca de ' + fmtBytes(st.dl.estimate) + '). O arquivo baixado está incompleto: apague-o e exporte de novo.</div>';
+    } else if (st.phase === 'error' && st.dl) {
+      h += V2.errorBox(st.dl.message);
+    }
+    let btn;
+    if (busy()) {
+      btn = '<button type="button" class="v2-btn ex-btn-wide" id="b-cancel">Cancelar download</button>' +
+            '<button type="button" class="v2-btn ex-btn-wide btn-primary" disabled>Exportando…</button>';
+    } else {
+      const text = st.phase === 'failed' ? 'Tentar de novo' : st.phase === 'done' ? 'Exportar de novo'
+        : nT > 1 ? 'Exportar ' + nT + ' arquivos (.zip)' : 'Exportar CSV';
+      btn = '<button type="button" class="v2-btn ex-btn-wide btn-primary" id="b-export"' + (canGo || (st.phase === 'failed' && !!c && total > 0) ? '' : ' disabled') + '>' + V2.icon('download') + text + '</button>';
+    }
+    h += btn + '<div class="ex-file">' + esc(fileName()) + '</div>';
+    h += '<div class="v2-card-foot"><span>CSV com ; e vírgula decimal. Valores zero informados pelo portal entram; semanas sem dado, não.</span><span>' +
+      (isMulti() ? 'A descrição das colunas e dos filtros vai no arquivo LEIAME.txt dentro do .zip.' : 'A descrição dos filtros e das colunas fica nas linhas iniciais (#) do CSV.') + '</span></div>';
+    card.innerHTML = h;
+    renderMobilebar(c, total, bytes, canGo);
+  }
+
+  function renderMobilebar(c, total, bytes, canGo) {
+    const bar = $('mobilebar');
+    bar.hidden = $('app').hidden;
+    if (busy()) {
+      bar.innerHTML = '<div><b>Baixando…</b><small>' + (st.dl ? fmtBytes(st.dl.bytes) + ' de cerca de ' + fmtBytes(st.dl.estimate) : '') + '</small></div>' +
+        '<button type="button" class="v2-btn" id="b-cancel-m">Cancelar</button>';
+      return;
+    }
+    bar.innerHTML = '<div><b>' + (c ? fmtInt(total) + ' linhas' : st.counting ? 'Contando…' : '—') + '</b><small>' +
+      (c ? fmtBytes(bytes) + ' · ' + st.tables.length + (st.tables.length === 1 ? ' arquivo' : ' arquivos') : '') + '</small></div>' +
+      '<button type="button" class="v2-btn btn-primary" id="b-export-m"' + (canGo ? '' : ' disabled') + '>' + (isMulti() ? 'Exportar .zip' : 'Exportar CSV') + '</button>';
+  }
+
+  // ── Download ───────────────────────────────────────────────────────────────
+  async function startExport() {
+    if (busy() || !st.counts || !st.counts.total_rows) return;
+    const name = fileName();
+    const estimate = st.counts.total_bytes_estimate, rows = st.counts.total_rows;
+    let handle = null;
+    const canSave = typeof window.showSaveFilePicker === 'function' && window.isSecureContext;
+    if (canSave) {      // precisa vir antes de qualquer await: depende do clique
+      try {
+        const zip = name.endsWith('.zip');
+        handle = await window.showSaveFilePicker({ suggestedName: name,
+          types: [zip ? { description: 'Arquivo ZIP', accept: { 'application/zip': ['.zip'] } } : { description: 'CSV', accept: { 'text/csv': ['.csv'] } }] });
+      } catch (e) {
+        if (e && e.name === 'AbortError') return;      // o usuário desistiu do diálogo
+        handle = null;
+      }
+    }
+    st.phase = 'downloading'; st.dl = { bytes: 0, estimate, rows, name, size: 0 };
+    renderAll();
+    let url;
+    try {
+      const t = await (await api('/api/v2/export/ticket', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body()) })).json();
+      url = t.url;
+    } catch (e) {
+      if (e instanceof Locked) { st.phase = 'ready'; st.dl = null; return lock(MSG_LOCKED); }
+      return failed(e.message, false);
+    }
+    if (!handle) return nativeDownload(url);
+    abortCtl = new AbortController();
+    let writable = null;
+    try {
+      const res = await fetch(url, { signal: abortCtl.signal });
+      if (!res.ok) {
+        let d = ''; try { d = (await res.json()).detail || ''; } catch (e) { /* sem corpo */ }
+        throw new Error(d || 'O servidor não conseguiu gerar o arquivo agora. Tente de novo em instantes.');
+      }
+      const exp = Number(res.headers.get('X-Bytes-Estimate'));
+      if (exp) st.dl.estimate = exp;
+      writable = await handle.createWritable();
+      const reader = res.body.getReader();
+      let last = 0;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        await writable.write(value);
+        st.dl.bytes += value.length;
+        if (Date.now() - last > 150) { last = Date.now(); renderSummary(); }
+      }
+      await writable.close();
+      st.phase = 'done'; st.dl.size = st.dl.bytes;
+    } catch (e) {
+      try { if (writable) await writable.abort(); } catch (e2) { /* ok */ }
+      if (e && e.name === 'AbortError') { st.phase = 'ready'; st.dl = null; }
+      else return failed(e.message, true);
+    } finally { abortCtl = null; }
+    renderAll();
+  }
+  function failed(msg, partial) {
+    if (partial && st.dl) { st.phase = 'failed'; }
+    else { st.phase = 'error'; st.dl = { message: msg }; }
+    renderAll();
+  }
+  function nativeDownload(url) {
+    const a = document.createElement('a');
+    a.href = url; a.rel = 'noopener';
+    document.body.appendChild(a); a.click(); a.remove();
+    st.phase = 'native'; renderAll();
+    setTimeout(() => { if (st.phase === 'native') { st.phase = 'ready'; renderAll(); } }, 3000);
+  }
+  function cancelExport() { if (abortCtl) abortCtl.abort(); }
+
+  // ── Eventos ────────────────────────────────────────────────────────────────
+  function setPeriod(key) {
+    st.period = key; st.custom = false; st.start = st.end = null;
+    renderFilterbar(); changed();
+  }
+  function pickFrom(anchor, list, current, onPick, opts) {
+    V2.openInstitutionPicker(anchor, uuid => { if (!current.includes(uuid)) onPick(uuid); changed(); }, current,
+      Object.assign({ list: list }, opts || {}));
+  }
+  document.addEventListener('click', ev => {
+    const t = ev.target;
+    const seg = t.closest('[data-seg] button[data-v]');
+    if (seg) {
+      const kind = seg.parentElement.dataset.seg, v = seg.dataset.v;
+      if (kind === 'period') return setPeriod(v);
+      if (kind === 'status') { st.status = v; return changed(); }
+      if (kind === 'level') { st.level = v; return changed(); }
+    }
+    const rm = t.closest('button[data-rm]');
+    if (rm) {
+      const k = rm.dataset.rm;
+      st[k] = st[k].filter(x => x !== rm.dataset.v);
+      return changed();
+    }
+    if (t.closest('#add-rec')) return pickFrom(t.closest('#add-rec'), V2.meta.institutions, st.receptors, u => st.receptors.push(u), { placeholder: 'Buscar instituição' });
+    if (t.closest('#add-tx')) return pickFrom(t.closest('#add-tx'), (st.opts.transmitters || []).map(x => ({ uuid: x.uuid, short: x.label, name: x.label, group: '' })), st.transmitters, u => st.transmitters.push(u), { placeholder: 'Buscar transmissor' });
+    if (t.closest('#add-api')) return pickFrom(t.closest('#add-api'), (st.opts.apis || []).map(x => ({ uuid: x.slug, short: x.label, name: x.slug, group: '' })), st.apis, u => st.apis.push(u), { placeholder: 'Buscar API', empty: 'Nenhuma API encontrada' });
+    if (t.closest('#b-export') || t.closest('#b-export-m')) return startExport();
+    if (t.closest('#b-cancel') || t.closest('#b-cancel-m')) return cancelExport();
+    if (t.closest('#f-logout')) return logout();
+  });
+  document.addEventListener('change', ev => {
+    const t = ev.target;
+    if (t.matches && t.matches('input[data-table]')) {
+      const id = t.dataset.table;
+      const set = new Set(st.tables);
+      if (t.checked) set.add(id); else set.delete(id);
+      if (!set.size) { t.checked = true; return; }       // pelo menos uma tabela
+      st.tables = ORDER.filter(x => set.has(x));
+      return changed();
+    }
+    if (t.id === 'f-start' || t.id === 'f-end') {
+      const s = $('f-start').value || null, e = $('f-end').value || null;
+      if (s && e && s > e) { $('f-end').value = s; }
+      st.custom = true; st.start = s; st.end = $('f-end').value || null;
+      renderFilterbar(); return changed();
+    }
+  });
+  V2.onThemeChange(() => { if (st.opts) renderAll(); });
+
+  // ── Início ─────────────────────────────────────────────────────────────────
+  (async function init() {
+    try { await V2.initShell('exportar'); } catch (e) { V2.meta = V2.meta || { institutions: [], groups: [] }; }
+    if (!st.token) return showGate('');
+    enter();
+  })();
+})();
+</script>
+</body>
+</html>

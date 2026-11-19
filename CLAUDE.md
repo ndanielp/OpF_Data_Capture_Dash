@@ -160,6 +160,7 @@ New panel organized by analytical question, served alongside the legacy one (whi
 | `/v2/evolucao` | Como evolui? (lines, group share, pp gains/losses, quarterly pace) | `GET /api/v2/evolution` |
 | `/v2/mudancas` | O que mudou? (alerts by month, oscillation, "em observação") | `GET /api/v2/changes` |
 | `/v2/instituicao` | Como opera uma instituição? (KPIs, "Quais dados busca" = API mix by group or by endpoint, transmitters, error rate, alerts) | `GET /api/v2/institution/{uuid}`, `GET /api/v2/institution/{uuid}/endpoints` |
+| `/v2/exportar` | Exportar dados (feature 015; **not in the tab menu**, URL only; code-protected; collected tables as CSV/ZIP) | `/api/v2/export/{session,options,count,ticket,file}` |
 
 - `GET /api/v2/meta` — data dates, group colors/labels and the institution catalog (used by every tab).
 - Code: `routers/v2.py` (endpoints, contract in `specs/011-dashboard-v2/contracts/v2-api.md`), `services/v2_metrics.py` (pure pandas rules over wide weekly frames; `TTLCache` keyed by DB mtime, warmed at startup by `server._warm_v2_cache`).
@@ -167,6 +168,7 @@ New panel organized by analytical question, served alongside the legacy one (whi
 - Shared rules: API flows are normalized as the last 4 weeks → 30 days; "por consentimento/mês" = that ÷ mean unique consents (PF + PJ), ecosystem counting only receptors with calls in each week; monthly points = last week with data of each institution in the month (a missing week is a gap, never zero).
 - Period filter: `V2.PERIODS` / `V2.periodStart` / `V2.periodShort` in `shell.js` (12m, 6m, 3m, "Desde o começo do ano" = Jan 1 of the year of `data_through`, all). `GET /api/v2/evolution` takes `scale=total|per_consent` (metric=api only; the page opens in per-consent, where share blocks are off and `share_available` is false). `GET /api/v2/institution/{uuid}/endpoints?api=` lists every endpoint of one API (catalog from `endpoint_history`, unused ones with zero); contract in `specs/012-periodo-ano-api-endpoint/contracts/v2-api-delta.md`.
 - Slide export (feature 014): `/v2/instituicao` has "Exportar slide" in the filter bar — a 1600×900 PNG built by `V2.exportSlide` (`shell.js`, shares the frame with `V2.exportImage`) from the page's blocks, without alerts, the API error rate or the by-group calls; "Quais dados busca" (the block formerly "Para que usa os dados") always comes complete, transmitters are cut with "+N" (text never shrinks). Front-end only.
+- Export portal (feature 015): `/v2/exportar` lets a user with the access code pick 1–4 of the *collected* tables (`unique`, `active`, `api`, `pay` — the closed list `EXPORT_TABLES` in `services/export.py`; logs and derived tables have no path out), filter, see rows/size and download a streamed CSV (one table) or ZIP with `LEIAME.txt` (several). `routers/export.py` is read-only; the access code is fixed in the server (`EXPORT_CODE` in `services/export.py`, checked only there and never sent to the page; `deploy.sh`/`deploy.ps1` pass `--timeout 3600`). Session token (12 h) and download ticket (60 s) are HMAC-signed with a key derived from the code, so changing the code invalidates both; wrong codes are rate-limited per instance (5 in 10 min → 60 s). At most 2 concurrent downloads per instance. Call level (`level=api` → `endpoint_id = 0`, `endpoint` → `<> 0`) is never mixed in one file. Constitution §6.8 v1.5.0 allows this unlisted page. Spec: `specs/015-export-portal/`.
 - Tests: `dashboard/tests/test_v2_*.py` over the synthetic DB in `tests/v2_fixtures.py`.
 
 ## Key Configuration
@@ -191,5 +193,5 @@ Omitting optional fields in `/api/api-requests` acts as "no filter" — used by 
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan
-at `specs/014-slide-instituicao/plan.md`.
+at `specs/015-export-portal/plan.md`.
 <!-- SPECKIT END -->
