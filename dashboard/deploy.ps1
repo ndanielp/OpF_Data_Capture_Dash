@@ -96,7 +96,9 @@ Write-Step "Fazendo deploy no Cloud Run ($REGION)..."
 # 8 GiB deixa folga para o Python e o cache do Dashboard 2.0 (8 GiB exige 2 CPUs).
 # Nota: gcloud.cmd escreve progresso no stderr; redirecionar com 2>&1 | ForEach-Object
 # evita o falso erro NativeCommandError do PowerShell
+# --timeout 3600: um download grande da exportacao de dados (feature 015) passa de 5 minutos.
 & $GCLOUD run deploy $SERVICE_NAME `
+    --timeout 3600 `
     --image $IMAGE `
     --platform managed `
     --region $REGION `

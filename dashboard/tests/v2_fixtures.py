@@ -68,6 +68,10 @@ CREATE TABLE api_requests (
     receptor_uuid TEXT, receptor TEXT, transmitter_uuid TEXT, transmitter TEXT,
     api TEXT, endpoint_id INTEGER, endpoint TEXT, status INTEGER, date TEXT, total INTEGER DEFAULT 0
 );
+CREATE TABLE payment_api_requests (
+    receptor_uuid TEXT, receptor TEXT, transmitter_uuid TEXT, transmitter TEXT,
+    api TEXT, endpoint_id INTEGER, endpoint TEXT, status INTEGER, date TEXT, total INTEGER DEFAULT 0
+);
 CREATE TABLE api_group_weekly (
     date TEXT, receptor_uuid TEXT, receptor TEXT, grp TEXT,
     req_week INTEGER DEFAULT 0, consents_total INTEGER DEFAULT 0, PRIMARY KEY (date, receptor_uuid, grp)
@@ -166,6 +170,30 @@ def calls_err(uuid: str, i: int) -> int | None:
     return ok // 20 if uuid == "rec-nu" else ok // 10   # Nubank 5%/105, demais 10%/110
 
 
+PAY_FIRST, PAY_LAST = "2026-01-02", "2026-03-27"
+
+
+def _add_raw_api_rows(con: sqlite3.Connection) -> None:
+    """Linhas de chamadas por semana (Nubank e Bradesco) para a exportação (feature 015):
+    total da API (endpoint_id = 0) e um endpoint, com status 200 e 500, mais um zero informado.
+    Pagamentos só entre PAY_FIRST e PAY_LAST."""
+    for i, week in enumerate(WEEKS):
+        for uuid in ("rec-nu", "rec-brad"):
+            name = INSTITUTIONS[uuid][0]
+            ok, err = calls_ok(uuid, i), calls_err(uuid, i)
+            rows = [("accounts", 0, "", 200, ok), ("accounts", 0, "", 500, err),
+                    ("accounts", 1, "Saldos da conta", 200, ok * 6 // 10),
+                    ("loans", 0, "", 200, 0)]            # zero informado pelo portal
+            con.executemany("INSERT INTO api_requests (receptor_uuid, receptor, transmitter_uuid, transmitter, api, "
+                            "endpoint_id, endpoint, status, date, total) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                            [(uuid, name, "txm-1", "ITAÚ UNIBANCO", api, eid, ep, st, week, tot) for api, eid, ep, st, tot in rows])
+            if PAY_FIRST <= week <= PAY_LAST:
+                con.executemany("INSERT INTO payment_api_requests (receptor_uuid, receptor, transmitter_uuid, transmitter, "
+                                "api, endpoint_id, endpoint, status, date, total) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                                [(uuid, name, "txm-1", "ITAÚ UNIBANCO", "payments", 0, "", 200, week, ok // 100),
+                                 (uuid, name, "txm-1", "ITAÚ UNIBANCO", "payments", 5, "Iniciar pagamento", 200, week, ok // 200)])
+
+
 def build_db(path: Path, with_status_table: bool = True, with_signals: bool = True,
              with_endpoint_table: bool = True) -> Path:
     con = sqlite3.connect(str(path))
@@ -199,6 +227,7 @@ def build_db(path: Path, with_status_table: bool = True, with_signals: bool = Tr
                     con.execute("INSERT INTO api_status_weekly (date, receptor_uuid, receptor, transmitter_uuid, "
                                 "transmitter, status, total) VALUES (?,?,?,?,?,?,?)",
                                 (week, uuid, name, "txm-1", "ITAÚ UNIBANCO", status, total))
+    _add_raw_api_rows(con)
     if with_endpoint_table:
         con.executemany("INSERT INTO endpoint_history (fetched_at, api, endpoint_id, endpoint_label) VALUES "
                         "('2026-08-28T00:00:00', ?, ?, ?)", ENDPOINT_CATALOG)

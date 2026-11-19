@@ -257,15 +257,17 @@
   }
 
   /** Busca em meta.institutions; onPick(uuid). `skip` = uuids a esconder.
-   *  opts.list troca o catálogo (ex.: transmissores); opts.first = uuids sugeridos no topo. */
+   *  opts.list troca o catálogo (ex.: transmissores); opts.first = uuids sugeridos no topo;
+   *  opts.placeholder / opts.empty trocam os textos (ex.: seletor de APIs). */
   V2.openInstitutionPicker = function (anchor, onPick, skip, opts) {
     opts = opts || {};
     V2.closePopover();
     const pop = document.createElement('div');
     pop.className = 'v2-popover';
     pop.setAttribute('role', 'dialog');
-    pop.setAttribute('aria-label', 'Buscar instituição');
-    pop.innerHTML = '<input type="search" placeholder="Buscar instituição…" aria-label="Buscar instituição"><div class="v2-results"></div>';
+    const what = opts.placeholder || 'Buscar instituição';
+    pop.setAttribute('aria-label', what);
+    pop.innerHTML = '<input type="search" placeholder="' + what + '…" aria-label="' + what + '"><div class="v2-results"></div>';
     const input = pop.querySelector('input');
     const results = pop.querySelector('.v2-results');
     const norm = s => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
@@ -280,7 +282,7 @@
         .slice(0, 8);
       results.innerHTML = list.length
         ? list.map(i => '<button type="button" data-uuid="' + i.uuid + '"><span class="v2-dot" style="background:' + V2.groupColor(i.group) + '"></span>' + V2.esc(i.short) + '</button>').join('')
-        : '<div class="v2-empty">Nenhuma instituição encontrada</div>';
+        : '<div class="v2-empty">' + (opts.empty || 'Nenhuma instituição encontrada') + '</div>';
     }
     results.addEventListener('click', ev => {
       const b = ev.target.closest('button[data-uuid]');

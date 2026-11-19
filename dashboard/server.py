@@ -454,6 +454,12 @@ def _warm_v2_cache():
         v2_metrics.warm()
     except Exception:
         pass
+    try:   # exportação (feature 015): catálogo e contagem inicial, para a primeira contagem sair rápida
+        from services import export as export_service
+        export_service.catalog()
+        export_service.count_rows(export_service.ExportRequest(tables=["unique"]))
+    except Exception:
+        pass
 
 
 @asynccontextmanager
@@ -472,6 +478,7 @@ from routers import openfinance
 from routers import active_consents as active_consents_router
 from routers import signals as signals_router
 from routers import v2 as v2_router
+from routers import export as export_router
 import services.of_analytics as of_analytics
 
 app = FastAPI(title="OPF Batch Dashboard", lifespan=lifespan)
@@ -479,6 +486,7 @@ app.include_router(openfinance.router, prefix="/api/of")
 app.include_router(active_consents_router.router, prefix="/api/active-consents")
 app.include_router(signals_router.router, prefix="/api/signals")
 app.include_router(v2_router.router, prefix="/api/v2")
+app.include_router(export_router.router, prefix="/api/v2/export")
 
 GUI_DIR = Path(__file__).parent / "gui"
 
@@ -488,6 +496,7 @@ _V2_PAGES = {
     "/v2/evolucao": "evolucao.html",
     "/v2/mudancas": "mudancas.html",
     "/v2/instituicao": "instituicao.html",
+    "/v2/exportar": "exportar.html",
 }
 
 

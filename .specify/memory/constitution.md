@@ -1,6 +1,28 @@
 <!--
 SYNC IMPACT REPORT
 ==================
+Version change: 1.4.0 → 1.5.0
+Bump type: MINOR — Shell v2 gains an unlisted page and an exception to the "Exportar CSV" rule
+(Principle VI §6.8 "Pages and tab order", "Export").
+
+Modified principles:
+  Principle VI §6.8:
+    - "Pages and tab order": `Exportar dados` → `/v2/exportar` (feature 015) is a v2 page that is
+      NOT a tab: it is not listed in the header and is reachable only by its URL. The four
+      tabs stay as they were.
+    - "Export": `/v2/exportar` is exempt from the filter-bar "Exportar CSV" button. Its
+      export button lives in the "Resumo" card (and in a fixed bar on narrow screens), because
+      the whole page is the export. Access is restricted by a fixed code checked only on the server
+      (`EXPORT_CODE` in `services/export.py`); the other tabs stay public.
+    Why: the product owner asked for a new tab where users pick the collected tables and
+    filters and download the data (no collection logs, no derived analyses).
+    Decided by the product owner on 2026-11-19.
+
+Templates reviewed: no template change.
+Follow-up TODOs: none.
+
+Previous report (1.3.0 → 1.4.0)
+-------------------------------
 Version change: 1.3.0 → 1.4.0
 Bump type: MINOR — one Shell v2 rule extended (Principle VI §6.8 "Export").
 
@@ -367,6 +389,8 @@ Canonical reference: `specs/011-dashboard-v2/contracts/v2-ui-shell.md`.
   2. `Como evolui?` → `/v2/evolucao`
   3. `O que mudou?` → `/v2/mudancas`
   4. `Como opera uma instituição?` → `/v2/instituicao`
+  Unlisted: `Exportar dados` → `/v2/exportar` (feature 015) is not a tab; it is reachable only by URL
+  and uses the same skeleton.
 - **Skeleton**: `<header class="v2-header">` (brand · tabs with
   `aria-current` · "Dados até … · atualizado em …" · theme toggle · link
   "Painel atual (legado)") → `<main class="v2-main">` (max-width 1280px) →
@@ -390,6 +414,8 @@ Canonical reference: `specs/011-dashboard-v2/contracts/v2-ui-shell.md`.
   blocks that already export their own CSV (rankings, monthly alerts) keep that icon.
   A page may also offer one "Exportar slide" (PNG 1600×900) next to it, composing the page's
   blocks in the same frame; text never shrinks below the minimum (lists are cut with "+N").
+  `/v2/exportar` is exempt from the filter-bar button: its export button lives in the
+  "Resumo" card (a fixed bottom bar below 720 px), and it needs an access code.
 - **Loading/errors**: visible loading state per card and human-readable error
   messages, as in Principle III.
 
@@ -463,4 +489,4 @@ optional even for "small" changes.
 **Runtime guidance**: See `CLAUDE.md` at the repository root for agent-specific
 development guidance (commands, architecture diagrams, SQL schema reference).
 
-**Version**: 1.4.0 | **Ratified**: 2026-05-18 | **Last Amended**: 2026-10-30
+**Version**: 1.5.0 | **Ratified**: 2026-05-18 | **Last Amended**: 2026-11-19
