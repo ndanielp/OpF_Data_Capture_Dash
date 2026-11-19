@@ -4,13 +4,16 @@
 # Flags opcionais:
 #   -SkipSync   Nao sincroniza dados para o GCS (so build + deploy)
 #   -SyncOnly   So sobe dados para o GCS, sem build nem deploy
+#   -NoExport   Sobe SEM a tela de exportacao (/v2/exportar e /api/v2/export/* respondem 404).
+#               Sem a flag, a exportacao fica ligada. O valor vale ate o proximo deploy.
 #
 # Pre-requisito: gcloud CLI instalado e autenticado (nao requer Docker)
 # =================================================================
 
 param(
     [switch]$SkipSync,
-    [switch]$SyncOnly
+    [switch]$SyncOnly,
+    [switch]$NoExport
 )
 
 # -- Configuracao -----------------------------------------------------------
@@ -23,6 +26,8 @@ $SERVICE_NAME = "opf-dashboard"
 $GCS_BUCKET   = "opf-data-bucket-us"
 $IMAGE        = "us-central1-docker.pkg.dev/$PROJECT_ID/$REPO/${SERVICE_NAME}:latest"
 $GCLOUD       = "$env:LOCALAPPDATA\Google\Cloud SDK\google-cloud-sdk\bin\gcloud.cmd"
+
+$exportEnabled = if ($NoExport) { 0 } else { 1 }
 
 # -- Helpers de output ------------------------------------------------------
 function Write-Step { param($msg) Write-Host "" ; Write-Host ">>> $msg" -ForegroundColor Cyan }
@@ -91,6 +96,7 @@ Write-OK "Build concluido e imagem enviada para o Artifact Registry"
 
 # -- Passo 3: Deploy no Cloud Run -------------------------------------------
 Write-Step "Fazendo deploy no Cloud Run ($REGION)..."
+if ($NoExport) { Write-Warn "Tela de exportacao: DESLIGADA (-NoExport)" } else { Write-Info "Tela de exportacao: LIGADA" }
 
 # Memoria: a base (~3,9 GiB) e baixada para o filesystem em memoria da instancia;
 # 8 GiB deixa folga para o Python e o cache do Dashboard 2.0 (8 GiB exige 2 CPUs).
@@ -105,7 +111,7 @@ Write-Step "Fazendo deploy no Cloud Run ($REGION)..."
     --port 8000 `
     --memory 8Gi `
     --cpu 2 `
-    --set-env-vars "GCS_BUCKET=$GCS_BUCKET,GOOGLE_CLOUD_PROJECT=$PROJECT_ID" `
+    --set-env-vars "GCS_BUCKET=$GCS_BUCKET,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,OPF_EXPORT_ENABLED=$exportEnabled" `
     --allow-unauthenticated `
     --min-instances 0 `
     --max-instances 3 `

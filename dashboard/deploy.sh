@@ -7,6 +7,8 @@
 # Flags opcionais:
 #   --skip-sync   Nao sincroniza dados para o GCS (so build + deploy)
 #   --sync-only   So sobe dados para o GCS, sem build nem deploy
+#   --no-export   Sobe SEM a tela de exportacao (/v2/exportar e /api/v2/export/* respondem 404).
+#                 Sem a flag, a exportacao fica ligada. O valor vale ate o proximo deploy.
 #
 # Pre-requisito: gcloud CLI instalado e autenticado (nao requer Docker)
 #   brew install --cask google-cloud-sdk
@@ -18,16 +20,18 @@ set -euo pipefail
 
 SKIP_SYNC=0
 SYNC_ONLY=0
+EXPORT_ENABLED=1
 for arg in "$@"; do
     case "$arg" in
         --skip-sync) SKIP_SYNC=1 ;;
         --sync-only) SYNC_ONLY=1 ;;
+        --no-export) EXPORT_ENABLED=0 ;;
         -h|--help)
-            sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'
+            sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'
             exit 0
             ;;
         *)
-            echo "Argumento desconhecido: $arg (use --skip-sync, --sync-only ou --help)" >&2
+            echo "Argumento desconhecido: $arg (use --skip-sync, --sync-only, --no-export ou --help)" >&2
             exit 2
             ;;
     esac
@@ -119,6 +123,7 @@ ok "Build concluido e imagem enviada para o Artifact Registry"
 
 # -- Passo 3: Deploy no Cloud Run -------------------------------------------
 step "Fazendo deploy no Cloud Run (${REGION})..."
+if [ "$EXPORT_ENABLED" = "1" ]; then info "Tela de exportacao: LIGADA"; else warn "Tela de exportacao: DESLIGADA (--no-export)"; fi
 
 # Memoria: a base (~3,9 GiB) e baixada para o filesystem em memoria da instancia;
 # 8 GiB deixa folga para o Python e o cache do Dashboard 2.0 (8 GiB exige 2 CPUs).
@@ -132,7 +137,7 @@ gcloud run deploy "$SERVICE_NAME" \
     --port 8000 \
     --memory 8Gi \
     --cpu 2 \
-    --set-env-vars "GCS_BUCKET=${GCS_BUCKET},GOOGLE_CLOUD_PROJECT=${PROJECT_ID}" \
+    --set-env-vars "GCS_BUCKET=${GCS_BUCKET},GOOGLE_CLOUD_PROJECT=${PROJECT_ID},OPF_EXPORT_ENABLED=${EXPORT_ENABLED}" \
     --allow-unauthenticated \
     --min-instances 0 \
     --max-instances 3 \
