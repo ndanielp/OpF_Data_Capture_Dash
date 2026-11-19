@@ -6,6 +6,7 @@ estáticos. As páginas do painel v1 foram removidas (feature 016): `/`, `/profi
 `/active-consents` apenas redirecionam para `/v2`.
 """
 
+import os
 import sqlite3
 import threading
 import uvicorn
@@ -17,6 +18,10 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 import config
+
+# Portal de exportação (feature 015) ligado/desligado por deploy: OPF_EXPORT_ENABLED=0 tira a página
+# /v2/exportar e a API /api/v2/export/* (404). Padrão: ligado. O deploy.sh/deploy.ps1 definem a variável.
+EXPORT_ENABLED = os.environ.get("OPF_EXPORT_ENABLED", "1").strip().lower() not in ("0", "false", "no", "off", "")
 
 def _db_con() -> sqlite3.Connection:
     con = sqlite3.connect(str(config.DB_PATH))
@@ -105,6 +110,8 @@ def _warm_v2_cache():
         v2_metrics.warm()
     except Exception:
         pass
+    if not EXPORT_ENABLED:
+        return
     try:   # exportação (feature 015): catálogo e contagem inicial, para a primeira contagem sair rápida
         from services import export as export_service
         export_service.catalog()
@@ -130,7 +137,8 @@ from routers import export as export_router
 
 app = FastAPI(title="OPF Batch Dashboard", lifespan=lifespan)
 app.include_router(v2_router.router, prefix="/api/v2")
-app.include_router(export_router.router, prefix="/api/v2/export")
+if EXPORT_ENABLED:
+    app.include_router(export_router.router, prefix="/api/v2/export")
 
 GUI_DIR = Path(__file__).parent / "gui"
 
@@ -140,8 +148,9 @@ _V2_PAGES = {
     "/v2/evolucao": "evolucao.html",
     "/v2/mudancas": "mudancas.html",
     "/v2/instituicao": "instituicao.html",
-    "/v2/exportar": "exportar.html",
 }
+if EXPORT_ENABLED:
+    _V2_PAGES["/v2/exportar"] = "exportar.html"
 
 
 def _v2_page(filename: str):
