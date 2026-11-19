@@ -16,6 +16,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 import config
 
@@ -182,6 +183,9 @@ class _RevalidatingStatic(StaticFiles):
     quebrada). Com no-cache ele revalida a cada carga pelo ETag e recebe 304 quando nada mudou."""
 
     async def get_response(self, path, scope):
+        # Com a exportação desligada, a página dela também não sai pelo estático.
+        if not EXPORT_ENABLED and path.lstrip("/") == "v2/exportar.html":
+            raise StarletteHTTPException(status_code=404)
         response = await super().get_response(path, scope)
         response.headers["Cache-Control"] = "no-cache"
         return response
