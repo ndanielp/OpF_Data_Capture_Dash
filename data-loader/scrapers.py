@@ -10,6 +10,7 @@ Workers recebem logger via queue de progresso; main process faz o logging.
 
 import logging
 import multiprocessing as mp
+import os
 import random
 import sqlite3
 import time
@@ -634,6 +635,41 @@ def upsert_api_requests(con: sqlite3.Connection, records: list[dict]) -> int:
     return _upsert_records_into(con, "api_requests", records)
 
 
+# ── Gravação pelos workers ─────────────────────────────────────────────────────
+# Cada worker grava os próprios registros ANTES de marcar a tentativa como
+# 'ok' em fetch_attempts. Antes, o worker marcava 'ok' e mandava os registros
+# pela queue para o processo principal gravar: se o principal morria (kill,
+# crash), a tentativa ficava 'ok' sem dado nenhum e o checkpoint
+# (already_done) pulava o alvo nas execuções seguintes do mesmo dia.
+
+_PERSIST_TIMEOUT_S = 60.0
+
+
+def _persist_records(db_path: str, write_fn, records: list[dict]) -> None:
+    """Grava `records` com `write_fn(con, records)` numa conexão própria e comita.
+
+    Levanta sqlite3.Error se a gravação falhar — o caller marca a tentativa
+    como 'failed' para que ela seja refeita.
+    """
+    if not records:
+        return
+    con = sqlite3.connect(db_path, timeout=_PERSIST_TIMEOUT_S)
+    try:
+        write_fn(con, records)
+        con.commit()
+    finally:
+        con.close()
+
+
+def _parent_gone(parent_pid: int) -> bool:
+    """True se o processo que criou o worker morreu (worker órfão).
+
+    Um worker órfão continuaria chamando o portal em paralelo com uma nova
+    execução; os workers param assim que detectam isso.
+    """
+    return os.getppid() != parent_pid
+
+
 def upsert_payment_api_requests(con: sqlite3.Connection, records: list[dict]) -> int:
     return _upsert_records_into(con, "payment_api_requests", records)
 
@@ -723,6 +759,7 @@ def _worker_run_consents(
     """
     from telemetry import consents_target, log_attempt
 
+    parent_pid = os.getppid()
     date_first, date_last = dates[0][:10], dates[-1][:10]
     queue.put(("log", worker_id, f"W{worker_id}: {len(chunk)} receptores"))
 
@@ -730,6 +767,8 @@ def _worker_run_consents(
         queue.put(("ready", worker_id, len(chunk)))
         with OpFSession(p) as session:
             for i, org in enumerate(chunk, 1):
+                if _parent_gone(parent_pid):
+                    return []
                 t0 = time.time()
                 started_iso = datetime.now(timezone.utc).isoformat()
                 target = consents_target(org["value"], date_first, date_last)
@@ -751,6 +790,18 @@ def _worker_run_consents(
                     queue.put(("log", worker_id,
                                f"consents FALHOU para '{org['label']}': "
                                f"{err_class}: {exc}"))
+
+                try:
+                    _persist_records(
+                        db_path,
+                        lambda con, recs: upsert_consents(con, recs, fetched_at),
+                        records,
+                    )
+                except sqlite3.Error as exc:
+                    status_label = "failed"
+                    err_class = type(exc).__name__
+                    err_msg = f"gravação falhou: {exc}"[:500]
+                    records = []
 
                 duration_ms = int((time.time() - t0) * 1000)
                 log_attempt(
@@ -846,7 +897,7 @@ def run_consents(
                     msg = queue.get_nowait()
                     _handle_queue_msg(msg, log, "Consentimentos")
                     if msg[0] == "org_done" and len(msg) > 5 and msg[5]:
-                        total_upserted += upsert_consents(con, msg[5], fetched_at)
+                        total_upserted += len(msg[5])  # já gravados pelo worker
 
                 for future, wid in list(futures.items()):
                     if future.done() and wid not in completed:
@@ -862,7 +913,7 @@ def run_consents(
                 msg = queue.get_nowait()
                 _handle_queue_msg(msg, log, "Consentimentos")
                 if msg[0] == "org_done" and len(msg) > 5 and msg[5]:
-                    total_upserted += upsert_consents(con, msg[5], fetched_at)
+                    total_upserted += len(msg[5])  # já gravados pelo worker
 
     con.close()
 
@@ -970,6 +1021,7 @@ def _worker_run_active_consents(
     """
     from telemetry import active_consents_target, already_done, log_attempt
 
+    parent_pid = os.getppid()
     queue.put(("log", worker_id, f"W{worker_id} active_consents: {len(chunk)} pares"))
 
     time.sleep((worker_id - 1) * _WORKER_STAGGER)
@@ -978,6 +1030,8 @@ def _worker_run_active_consents(
         queue.put(("ready", worker_id, len(chunk)))
         with OpFSession(p) as session:
             for i, pair in enumerate(chunk, 1):
+                if _parent_gone(parent_pid):
+                    return
                 receptor    = pair["receptor"]
                 transmitter = pair["transmitter"]
                 pair_label  = f"{receptor['label']} x {transmitter['label']}"
@@ -1016,6 +1070,18 @@ def _worker_run_active_consents(
                     queue.put(("log", worker_id,
                                f"active_consents FALHOU para '{pair_label}': "
                                f"{err_class}: {exc}"))
+
+                try:
+                    _persist_records(
+                        db_path,
+                        lambda con, recs: upsert_active_consents(con, recs, fetched_at),
+                        records,
+                    )
+                except sqlite3.Error as exc:
+                    status_label = "failed"
+                    err_class = type(exc).__name__
+                    err_msg = f"gravação falhou: {exc}"[:500]
+                    records = []
 
                 duration_ms = int((time.time() - t0) * 1000)
                 log_attempt(
@@ -1100,10 +1166,7 @@ def run_active_consents(
                     msg = queue.get_nowait()
                     _handle_queue_msg(msg, log, "ConsentAtivos")
                     if msg[0] == "org_done" and len(msg) > 5 and msg[5]:
-                        records = msg[5]
-                        upsert_active_consents(con, records, fetched_at)
-                        con.commit()
-                        total_ok += 1
+                        total_ok += 1  # registros já gravados pelo worker
                     elif msg[0] == "org_done" and len(msg) > 5 and not msg[5]:
                         # empty or failed — counted per log_attempt in worker
                         pass
@@ -1121,10 +1184,6 @@ def run_active_consents(
             while not queue.empty():
                 msg = queue.get_nowait()
                 _handle_queue_msg(msg, log, "ConsentAtivos")
-                if msg[0] == "org_done" and len(msg) > 5 and msg[5]:
-                    records = msg[5]
-                    upsert_active_consents(con, records, fetched_at)
-                    con.commit()
 
     con.close()
 
@@ -1448,6 +1507,7 @@ def _worker_run_api_requests(
     endpoints_map: dict[str, list[dict]],
     phase: str = PHASE_TRANSACTIONAL,
     target_prefix: str = "",
+    target_table: str = "api_requests",
 ) -> list[dict]:
     """
     Roda em processo separado: abre 1 OpFSession e itera combinações
@@ -1460,6 +1520,7 @@ def _worker_run_api_requests(
         probe_transmitter_target, probe_api_target,
     )
 
+    parent_pid = os.getppid()
     date_first, date_last = dates[0][:10], dates[-1][:10]
 
     time.sleep((worker_id - 1) * _WORKER_STAGGER)
@@ -1469,6 +1530,8 @@ def _worker_run_api_requests(
         queue.put(("ready", worker_id, len(chunk)))
         with OpFSession(p) as session:
             for i, receptor in enumerate(chunk, 1):
+                if _parent_gone(parent_pid):
+                    return []
                 t0 = time.time()
                 queue.put(("start", worker_id, receptor["label"], i))
 
@@ -1484,6 +1547,8 @@ def _worker_run_api_requests(
                 transmitter_iter = transmitters if transmitters else [None]
 
                 for transmitter in transmitter_iter:
+                    if _parent_gone(parent_pid):
+                        return []
                     t_uuid  = transmitter["value"] if transmitter else None
                     t_label = transmitter["label"] if transmitter else ""
 
@@ -1579,6 +1644,18 @@ def _worker_run_api_requests(
                                     transmitter=transmitter,
                                     endpoint=endpoint,
                                 )
+                                try:
+                                    _persist_records(
+                                        db_path,
+                                        lambda con, recs: _upsert_records_into(
+                                            con, target_table, recs),
+                                        records,
+                                    )
+                                except sqlite3.Error as exc:
+                                    status_label = "failed"
+                                    err_class = type(exc).__name__
+                                    err_msg = f"gravação falhou: {exc}"[:500]
+                                    records = []
                                 combo_duration_ms = int((time.time() - combo_t0) * 1000)
                                 log_attempt(
                                     db_path, run_id, "api_requests", target,
@@ -1649,9 +1726,6 @@ def run_api_requests(
     con.execute("PRAGMA journal_mode=WAL")
     total_upserted = 0
 
-    def _upsert(records: list[dict]) -> int:
-        return _upsert_records_into(con, target_table, records)
-
     with mp.Manager() as mgr:
         queue = mgr.Queue()
         with ProcessPoolExecutor(max_workers=n) as executor:
@@ -1661,7 +1735,7 @@ def run_api_requests(
                     i + 1, chunk, dates, fetched_at, queue, delay_min, delay_max,
                     transmitters, str(db_path), run_id,
                     apis, endpoints_map,
-                    phase, target_prefix,
+                    phase, target_prefix, target_table,
                 ): i + 1
                 for i, chunk in enumerate(chunks) if chunk
             }
@@ -1672,7 +1746,7 @@ def run_api_requests(
                     msg = queue.get_nowait()
                     _handle_queue_msg(msg, log, "API Requests")
                     if msg[0] == "combo" and len(msg) > 5 and msg[5]:
-                        total_upserted += _upsert(msg[5])
+                        total_upserted += len(msg[5])  # já gravados pelo worker
 
                 for future, wid in list(futures.items()):
                     if future.done() and wid not in completed:
@@ -1688,7 +1762,7 @@ def run_api_requests(
                 msg = queue.get_nowait()
                 _handle_queue_msg(msg, log, "API Requests")
                 if msg[0] == "combo" and len(msg) > 5 and msg[5]:
-                    total_upserted += _upsert(msg[5])
+                    total_upserted += len(msg[5])  # já gravados pelo worker
 
     con.close()
 
