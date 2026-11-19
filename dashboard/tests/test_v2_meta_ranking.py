@@ -174,13 +174,11 @@ async def test_meta_works_without_status_table(client, use_db, db_no_status):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("path", ["/v2", "/v2/evolucao", "/v2/mudancas", "/v2/instituicao", "/"])
-async def test_pages_v2_and_legacy_are_served(client, path):
+@pytest.mark.parametrize("path", ["/v2", "/v2/evolucao", "/v2/mudancas", "/v2/instituicao"])
+async def test_pages_v2_are_served(client, path):
     r = await client.get(path)
     assert r.status_code == 200
     assert "<html" in r.text.lower()
-    if path == "/":
-        assert 'href="/v2"' in r.text
 
 
 # ── /ranking (T017) ───────────────────────────────────────────────────────────

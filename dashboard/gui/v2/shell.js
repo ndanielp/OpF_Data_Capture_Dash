@@ -217,8 +217,7 @@
         '<div class="v2-header-left"><span class="v2-brand">Open Finance · Ecossistema</span>' +
         '<nav class="v2-tabs" aria-label="Perguntas">' + tabs + '</nav></div>' +
         '<div class="v2-header-right"><span>' + dates + '</span>' +
-        '<button type="button" class="v2-icon-btn" id="v2-theme" aria-label="Alternar tema claro/escuro">' + SVG.theme + '</button>' +
-        '<a href="/" title="Painel atual (legado)">Painel legado</a></div>' +
+        '<button type="button" class="v2-icon-btn" id="v2-theme" aria-label="Alternar tema claro/escuro">' + SVG.theme + '</button></div>' +
       '</div>';
     document.getElementById('v2-theme').addEventListener('click', V2.toggleTheme);
   }

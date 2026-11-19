@@ -19,7 +19,7 @@ from cachetools import TTLCache
 
 import config
 from services.constants import GROUP_LABELS_V2, SHORT_NAMES
-from services.of_analytics import resolve_institution_group
+from services.constants import resolve_institution_group
 
 PACE_WINDOW_DAYS = 28        # ritmo: 4 semanas
 TREND_TOLERANCE = 0.10       # ↑/↓ quando o ritmo difere mais de 10% do anterior

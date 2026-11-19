@@ -98,10 +98,10 @@ Telemetry:
 - `run_summary` — 1 row per run_id with aggregated counters (ok/failed/skipped)
 
 Derived (rebuilt by the collector at the end of a run and by `compute_signals.py`):
-- `api_group_weekly` — pre-aggregation by group (Conta, Cartao, Credito, Investimento, Cambio, Identidade, Resource) joined with consents_total. Populated by `scrapers.refresh_api_group_weekly`; consumed by the legacy dashboard and by the 2.0 API mix.
+- `api_group_weekly` — pre-aggregation by group (Conta, Cartao, Credito, Investimento, Cambio, Identidade, Resource) joined with consents_total. Populated by `scrapers.refresh_api_group_weekly`; consumed by the 2.0 API mix.
 - `api_status_weekly` — week × receptor × transmitter × status (200/500), excluding the `consents` API. Populated by `scrapers.refresh_api_status_weekly`; feeds the 2.0 API ranking (status filter) and error rates.
 - `api_endpoint_weekly` — week × receptor × API × endpoint (status 200, no `consents`); `endpoint_id = 0` holds the calls of the API that no endpoint accounts for. Populated by `scrapers.refresh_api_endpoint_weekly`; feeds the 2.0 "Por endpoint" view (feature 012).
-- **`api_requests` has two levels per API**: the API total (`endpoint_id = 0`) and one row per endpoint that splits that same total. `api_group_weekly` and `api_status_weekly` sum only `endpoint_id = 0`; summing both levels counts every call twice (fixed in feature 012). Raw `FROM api_requests` sums elsewhere (e.g. legacy `services/of_analytics.py`) must filter the level themselves.
+- **`api_requests` has two levels per API**: the API total (`endpoint_id = 0`) and one row per endpoint that splits that same total. `api_group_weekly` and `api_status_weekly` sum only `endpoint_id = 0`; summing both levels counts every call twice (fixed in feature 012). Any raw `FROM api_requests` sum must filter the level itself.
 - `behavior_signals` / `behavior_signals_run` — behavior-change alerts and run metadata (feature 010; 30k floor always on unique consents).
 - `behavior_watch` — API alert conditions seen in the latest week, awaiting the confirmation week ("em observação", feature 011).
 
@@ -144,15 +144,15 @@ FROM fetch_attempts WHERE run_id = ? AND status = 'skipped'
 GROUP BY 1, 2;
 ```
 
-### Dashboard API
+### Dashboard
 
-`dashboard/server.py` exposes FastAPI endpoints that read SQLite directly (no ORM). Key filters accepted via query params: `start`, `end` (YYYY-MM-DD), `receptors` (comma-separated substring match). Frontend is two HTML files: `gui/dashboard.html` (Ecossistema) and `gui/receptor_profile.html` (Perfil Receptor), both using Chart.js.
+`dashboard/server.py` serves the Dashboard 2.0 pages and `/api/v2/*`, which read SQLite directly (no ORM). The v1 panel (Ecossistema / Perfil Receptor / Consentimentos Ativos) was removed in feature 016: `/`, `/profile` and `/active-consents` redirect (307) to `/v2`.
 
-**Group metadata is centralized** in `dashboard/services/constants.py::API_GROUPS`, keyed by DB slug (`Conta`, `Cartao`, `Credito`, `Investimento`, `Cambio`, `Identidade`, `Resource`) — same values stored in `api_group_weekly.grp`. Each entry has `{display, color, apis}`. The router `dashboard/routers/openfinance.py` exposes this as `/api/of/api-groups` and `/api/of/brand-colors`; the frontend (`receptor_profile.html`) fetches both at boot to populate `SM_GROUPS`/`SM_LABELS`/`SM_COLORS`/`_TS_STACK_GROUPS`/`GROUP_META`.
+**Group metadata is centralized** in `dashboard/services/constants.py::API_GROUPS`, keyed by DB slug (`Conta`, `Cartao`, `Credito`, `Investimento`, `Cambio`, `Identidade`, `Resource`) — same values stored in `api_group_weekly.grp`. Each entry has `{display, color, apis}`; `GET /api/v2/meta` exposes it (with institution groups and colors) to the frontend. Institution → market-segment classification is `constants.resolve_institution_group`.
 
 ### Dashboard 2.0 (feature 011)
 
-New panel organized by analytical question, served alongside the legacy one (which stays at `/`, untouched apart from a "Dashboard 2.0 →" link). Spec: `specs/011-dashboard-v2/`; shell rules: Constitution §6.8.
+Panel organized by analytical question (the only panel since feature 016). Spec: `specs/011-dashboard-v2/`; shell rules: Constitution §6.8.
 
 | Page | Tab | API |
 |---|---|---|
@@ -193,5 +193,5 @@ Omitting optional fields in `/api/api-requests` acts as "no filter" — used by 
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan
-at `specs/015-export-portal/plan.md`.
+at `specs/016-remove-v1-dashboard/plan.md`.
 <!-- SPECKIT END -->
