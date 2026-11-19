@@ -4,7 +4,7 @@ API_GROUPS is keyed by **DB slug** (same value stored in `api_group_weekly.grp`)
 so analytics code can join DB rows to group metadata directly. Each entry
 carries a `display` label for the UI, a color, and the list of api ids that
 belong to the group (including the virtual `customers-pf`/`customers-pj`
-flavors created by server.py's PF/PJ split).
+flavors created by the PF/PJ split of the `customers` API).
 """
 
 API_GROUPS: dict[str, dict] = {
@@ -18,7 +18,7 @@ API_GROUPS: dict[str, dict] = {
 }
 
 # Long-form labels for the UI (tooltips, lists, tables). Chart axis labels
-# with line breaks live in server.py as _API_LABELS (display-specific).
+# with line breaks no longer exist (they belonged to the removed v1 panel).
 API_LABELS: dict[str, str] = {
     "accounts":                      "Contas",
     "credit-cards-accounts":         "Cartão de Crédito",
@@ -35,35 +35,11 @@ API_LABELS: dict[str, str] = {
     "exchanges":                     "Câmbio",
 }
 
-# APIs excluded from product breakdowns (infra / meta endpoints).
-EXCLUDED_APIS: set[str] = {"consents"}
-RESOURCES_API: str = "resources"
-
-# Canonical brand colors for the top institutions (used by /api/of/brand-colors).
-# Keys are substrings matched case-insensitively against receptor names.
-# Order matters: more specific matches should come first.
-BRAND_COLORS: list[tuple[str, str]] = [
-    ("bradesco",        "#CC092F"),
-    ("nubank",          "#820AD1"),
-    ("itaú",            "#EC7000"),
-    ("itau",            "#EC7000"),
-    ("santander",       "#EC0000"),
-    ("caixa",           "#005CA9"),
-    ("mercado pago",    "#009EE3"),
-    ("picpay",          "#21C25E"),
-    ("banco do brasil", "#FBBA00"),
-    ("belvo",           "#4A9EFF"),
-    ("recargapay",      "#7B68EE"),
-    ("shopee",          "#FF5722"),
-    ("pagseguro",       "#34B7F1"),
-    ("cloudwalk",       "#9C27B0"),
-]
-
 # Institution → market segment classification for the group filter (feature
 # 009-filtro-grupos-instituicoes). Keys are substrings matched case-insensitively
-# against receptor/transmitter names, same lookup pattern as BRAND_COLORS above.
+# against receptor/transmitter names.
 # Order matters: first match wins. Any institution with no match falls back to
-# the "outros" group at lookup time (see of_analytics.resolve_institution_group) —
+# the "outros" group at lookup time (see resolve_institution_group below) —
 # it is intentionally NOT listed here.
 #
 # Full classification rationale (confirmed line-by-line with product owner on
@@ -110,25 +86,9 @@ INSTITUTION_GROUPS: list[tuple[str, str]] = [
 
 INSTITUTION_GROUP_SLUGS: tuple[str, ...] = ("incumbentes", "neo_banks", "itps", "outros")
 
-GROUP_LABELS: dict[str, str] = {
-    "incumbentes": "Incumbentes",
-    "neo_banks":   "Neo Banks",
-    "itps":        "ITPs",
-    "outros":      "Outros/Não classificado",
-}
-
-# Distinct from API_GROUPS colors — the two "group" concepts (API product group vs.
-# institution market segment) can appear side by side on the same page.
-GROUP_COLORS: dict[str, str] = {
-    "incumbentes": "#1E3A8A",
-    "neo_banks":   "#DB2777",
-    "itps":        "#D97706",
-    "outros":      "#8B93A0",
-}
-
 # Dashboard 2.0 (feature 011) — paleta aprovada para o tema claro. Os quatro tons
 # diferem também em luminosidade, para continuarem distinguíveis em print e para
-# quem não distingue cores. O legado continua com GROUP_COLORS.
+# quem não distingue cores.
 GROUP_COLORS_V2: dict[str, str] = {
     "neo_banks":   "#5B2BC4",
     "itps":        "#1F8FD6",
@@ -180,3 +140,14 @@ SHORT_NAMES: list[tuple[str, str]] = [
     ("agibank",            "Agibank"),
     ("iniciador",          "Iniciador"),
 ]
+
+
+def resolve_institution_group(name: str) -> str:
+    """Substring lookup against INSTITUTION_GROUPS (same pattern as the brand-color lookup).
+    Falls back to 'outros' when no pattern matches — every institution gets a
+    group, per feature 009-filtro-grupos-instituicoes FR-002."""
+    lname = (name or "").lower()
+    for key, grp in INSTITUTION_GROUPS:
+        if key in lname:
+            return grp
+    return "outros"
