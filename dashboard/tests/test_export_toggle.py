@@ -38,6 +38,7 @@ async def test_export_on_by_default_and_when_enabled(tmp_path, monkeypatch, valu
     assert server.EXPORT_ENABLED is True
     async with AsyncClient(transport=ASGITransport(app=server.app), base_url="http://test") as c:
         assert (await c.get("/v2/exportar")).status_code == 200
+        assert (await c.get("/static/v2/exportar.html")).status_code == 200
         assert (await c.post("/api/v2/export/session", json={"code": "x"})).status_code == 401
 
 
@@ -48,6 +49,8 @@ async def test_export_off_removes_page_and_api_only(tmp_path, monkeypatch, value
     assert server.EXPORT_ENABLED is False
     async with AsyncClient(transport=ASGITransport(app=server.app), base_url="http://test") as c:
         assert (await c.get("/v2/exportar")).status_code == 404
+        assert (await c.get("/static/v2/exportar.html")).status_code == 404        # nem pelo estático
+        assert (await c.get("/static/v2/shell.js")).status_code == 200
         for r in (await c.post("/api/v2/export/session", json={"code": "EXPORTAR"}),
                   await c.get("/api/v2/export/options"), await c.get("/api/v2/export/file", params={"ticket": "a.b"})):
             assert r.status_code in (404, 405)
