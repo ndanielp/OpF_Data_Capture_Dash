@@ -12,6 +12,8 @@ Nota: o dashboard está em dashboard/ e roda separadamente via uvicorn ou Docker
 """
 
 import argparse
+import multiprocessing as mp
+import signal
 import sys
 import pandas as pd
 from pathlib import Path
@@ -237,7 +239,29 @@ def main():
     parser_preview.set_defaults(func=cmd_preview)
 
     args = parser.parse_args()
+    _install_termination_handler()
     args.func(args)
+
+
+def _install_termination_handler():
+    """Ao receber SIGTERM/SIGHUP (kill, terminal fechado), encerra também os
+    workers e o Manager do multiprocessing antes de sair.
+
+    Sem isso, matar só este processo deixava os filhos órfãos coletando em
+    paralelo com uma nova execução (os workers também param sozinhos ao notar
+    que o pai morreu, mas só entre uma chamada e outra).
+    """
+    def _handler(signum, _frame):
+        for child in mp.active_children():
+            child.terminate()
+        for child in mp.active_children():
+            child.join(timeout=5)
+        print(f"\n{Fore.RED}Interrompido (sinal {signum}).{Style.RESET_ALL}")
+        os._exit(128 + signum)
+
+    for sig in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(sig, _handler)
+
 
 if __name__ == "__main__":
     main()
