@@ -20,6 +20,10 @@
   .pl-row a { color: var(--text); font-weight: 600; text-decoration: none; }
   .pl-row a:hover { color: var(--link); text-decoration: underline; }
   .pl-kpi .v2-kpi-value small { font-size: var(--text-emph); color: var(--text-2); font-weight: 500; }
+  /* 4 indicadores numa linha a partir de 1000 px; 2 × 2 abaixo (nenhum card sozinho numa linha). */
+  #kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  @media (min-width: 1000px) { #kpis { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+  @media (max-width: 560px) { #kpis { grid-template-columns: 1fr; } }
   @media (max-width: 720px) { .pl-scroll { overflow-x: auto; } .pl-row { min-width: 760px; } }
 </style>
 </head>
@@ -29,9 +33,9 @@
   <section class="v2-filterbar" id="filterbar" aria-label="Filtros"></section>
   <div class="v2-title">
     <h1>Quem lidera a iniciação de pagamentos?</h1>
-    <p>Transações aceitas (Criar iniciação com sucesso) nas últimas 4 semanas, normalizadas para 30 dias.</p>
+    <p id="subtitle">Transações aceitas (Criar iniciação com sucesso), normalizadas para 30 dias.</p>
   </div>
-  <section class="v2-grid v2-grid-4" id="kpis" aria-label="Resumo"></section>
+  <section class="v2-grid" id="kpis" aria-label="Resumo"></section>
   <article class="v2-card" id="card-rank"></article>
 </main>
 
@@ -39,12 +43,17 @@
 (function () {
   'use strict';
   const ROLES = { ini: 'Iniciadoras', det: 'Detentoras' };
+  const SHOW = { 10: '10', 25: '25', 500: 'todas' };
   const f0 = V2.getFilters();
   const st = {
     role: ROLES[f0.pay_role] ? f0.pay_role : 'ini',
     api: ['all', 'payments', 'automatic-payments'].includes(f0.pay_api) ? f0.pay_api : 'all',
+    limit: 10, month: null,
   };
-  let data = null;
+  let data = null, scope = null;
+  const isMonth = () => st.month !== V2.pay.WINDOW;
+  const periodTxt = () => isMonth() ? V2.pay.monthName(st.month) : 'últimas 4 semanas';
+  const prevTxt = () => isMonth() ? 'mês anterior' : '4 semanas anteriores';
 
   const apiOptions = () => Object.assign({ all: 'Todas' }, ...V2.pay.APIS.map(a => ({ [a]: V2.pay.label(a) })));
   const roleName = () => st.role === 'ini' ? 'Iniciadora' : 'Detentora';
@@ -59,27 +68,30 @@
     };
     document.getElementById('filterbar').innerHTML =
       '<div class="v2-fb-row"><div class="v2-fb-group">' +
+        V2.pay.monthSelect(st.month, true) +
         '<fieldset class="v2-field"><legend>Ranking de</legend>' + V2.seg('role', ROLES, st.role) + '</fieldset>' +
         '<fieldset class="v2-field"><legend>API</legend>' + V2.seg('api', apiOptions(), st.api) + '</fieldset>' +
         '<fieldset class="v2-field"><legend>Fixar / excluir</legend><div class="v2-chips">' +
           prefs.pinned.map(u => tag(u, 'pinned')).join('') + prefs.excluded.map(u => tag(u, 'excluded')).join('') +
           '<button type="button" class="v2-chip-add" id="f-add">+ instituição</button></div></fieldset>' +
-      '</div><button type="button" class="v2-btn v2-fb-export" id="f-export">Exportar CSV</button></div>';
+        '<fieldset class="v2-field"><legend>Mostrar</legend>' + V2.seg('limit', SHOW, String(st.limit)) + '</fieldset>' +
+      '</div><button type="button" class="v2-btn v2-fb-export" id="f-export">Exportar CSV</button></div>' +
+      (scope && scope.warn ? '<div class="pay-warn">' + scope.warn + '</div>' : '');
   }
 
   function kpis() {
     const e = data.ecosystem, ip = e.payments, pa = e['automatic-payments'];
     const prev = e.ip_share_prev, now = ip.share;
     const dpp = prev != null && now != null ? (now - prev) * 100 : null;
-    const moved = dpp == null ? 'sem base nas 4 semanas anteriores'
-      : 'Iniciação ' + (dpp >= 0 ? 'ganhou ' : 'perdeu ') + V2.fmtDec(Math.abs(dpp), 0) + ' pp vs 4 semanas anteriores (' +
+    const moved = dpp == null ? 'sem base no ' + prevTxt().replace(/^4/, 'período de 4')
+      : 'Iniciação ' + (dpp >= 0 ? 'ganhou ' : 'perdeu ') + V2.fmtDec(Math.abs(dpp), 0) + ' pp vs ' + prevTxt() + ' (' +
         Math.round(prev * 100) + '% → ' + Math.round(now * 100) + '%)';
     const apiCard = (slug, v, note) =>
       '<div class="v2-card pl-kpi"><span class="v2-kpi-label"><span class="v2-dot" style="background:' + V2.pay.color(slug) + '"></span> ' +
       V2.esc(V2.pay.label(slug)) + '</span><span class="v2-kpi-value">' + V2.fmtCompact(v.value) + ' <small>' + V2.fmtShare(v.share) + '</small></span>' +
       '<span class="v2-small v2-muted">Falha na criação: ' + V2.pay.failCell(v.fail) + (note || '') + '</span></div>';
     document.getElementById('kpis').innerHTML =
-      '<div class="v2-card pl-kpi"><span class="v2-kpi-label">Transações · 30 dias</span><span class="v2-kpi-value">' + V2.fmtCompact(e.total) + '</span>' +
+      '<div class="v2-card pl-kpi"><span class="v2-kpi-label">Transações · 30 dias · ' + periodTxt() + '</span><span class="v2-kpi-value">' + V2.fmtCompact(e.total) + '</span>' +
         '<span class="v2-small v2-muted">' + e.initiators + ' iniciadoras · ' + e.holders + ' detentoras</span></div>' +
       apiCard('payments', ip) + apiCard('automatic-payments', pa, ' · inclui novas tentativas') +
       '<div class="v2-card pl-kpi"><span class="v2-kpi-label">Iniciação × Automático</span>' +
@@ -92,14 +104,15 @@
   function rankCard() {
     const card = document.getElementById('card-rank');
     const apiTxt = st.api === 'all' ? '' : ' · ' + V2.pay.label(st.api);
-    const title = (st.role === 'ini' ? 'Top 10 iniciadoras (quem inicia o pagamento)' : 'Top 10 detentoras (banco da conta que paga)') + apiTxt;
+    const n = st.limit >= 500 ? 'Todas as' : 'Top ' + st.limit;
+    const title = n + (st.role === 'ini' ? ' iniciadoras (quem inicia o pagamento)' : ' detentoras (banco da conta que paga)') + apiTxt + ' · ' + periodTxt();
     const max = Math.max(1, ...data.rows.map(r => r.value));
     const ipOn = st.api !== 'automatic-payments', paOn = st.api !== 'payments';
     const rows = data.rows.map((r, i) => {
       const ip = ipOn ? r.payments : 0, pa = paOn ? r['automatic-payments'] : 0;
       const g = r.growth;
       return '<div class="pl-row' + (r.pinned ? ' pinned' : '') + (r.cut ? ' cut' : '') + '">' +
-        '<span class="v2-muted">' + (r.cut || i >= 10 ? '' : i + 1) + '</span>' +
+        '<span class="v2-muted">' + (r.cut || i >= st.limit ? '' : i + 1) + '</span>' +
         '<a href="/v2/pagamentos/instituicao?uuid=' + encodeURIComponent(r.uuid) + '&role=' + st.role + '">' + V2.esc(r.name) + '</a>' +
         '<div class="pay-split" style="height:14px"><div style="width:' + (ip / max * 100).toFixed(1) + '%;background:' + V2.pay.color('payments') + '"></div>' +
           '<div style="width:' + (pa / max * 100).toFixed(1) + '%;background:' + V2.pay.color('automatic-payments') + '"></div></div>' +
@@ -108,20 +121,26 @@
         '<span class="r ' + (g == null ? 'v2-flat' : g >= 0 ? 'v2-up' : 'v2-down') + '">' + V2.fmtPct(g) + '</span>' +
         '<button type="button" class="v2-row-menu" data-row="' + r.uuid + '" aria-label="Opções de ' + V2.esc(r.name) + '">⋯</button></div>';
     }).join('');
-    card.innerHTML = V2.pay.head(title, 'Transações por 30 dias · 4 semanas até ' + V2.fmtDate(data.week), 'rank') +
+    const sub = isMonth() ? 'Transações por 30 dias · ' + V2.fmtDate(data.window.start) + ' a ' + V2.fmtDate(data.window.end) + (V2.pay.isPartial(st.month) ? ' (mês parcial)' : '')
+      : 'Transações por 30 dias · 4 semanas até ' + V2.fmtDate(data.week);
+    card.innerHTML = V2.pay.head(title, sub, 'rank') +
       '<div class="pl-scroll"><div class="pl-row head"><span>#</span><span>' + roleName() + '</span><span>Transações</span>' +
         '<span class="r">Volume</span><span class="r">Fatia</span><span class="r" title="Falha na criação · Iniciação de Pagamento">Falha Inic.</span>' +
         '<span class="r" title="Falha na criação · Pagamento Automático">Falha Autom.</span><span class="r">Cresc.</span><span></span></div>' +
         (rows || '<div class="v2-placeholder">Nenhuma instituição com transações nesta API.</div>') + '</div>' +
       V2.pay.legend(false, '<span><span class="pay-bad">≥ 20%</span> falha alta</span>') +
-      V2.pay.foot(V2.pay.RULE + ' · ' + V2.pay.FAIL_RULE + ' · Cresc. = 4 semanas vs as 4 anteriores');
+      V2.pay.foot(V2.pay.RULE + ' · ' + V2.pay.FAIL_RULE + ' · Cresc. = ' + (isMonth() ? 'mês vs mês anterior' : '4 semanas vs as 4 anteriores'));
   }
 
   async function load() {
     const cards = [document.getElementById('card-rank')];
     cards.forEach(c => V2.setLoading(c, true));
     const prefs = V2.pay.getPrefs();
-    const q = new URLSearchParams({ role: st.role, api: st.api, limit: 10, pinned: prefs.pinned.join(','), excluded: prefs.excluded.join(',') });
+    const q = new URLSearchParams({ role: st.role, api: st.api, limit: st.limit, pinned: prefs.pinned.join(','), excluded: prefs.excluded.join(',') });
+    if (isMonth()) q.set('month', st.month);
+    V2.pay.saveState(scope, {}, ['month']);
+    document.getElementById('subtitle').textContent = 'Transações aceitas (Criar iniciação com sucesso) ' +
+      (isMonth() ? 'em ' + V2.pay.monthName(st.month) : 'nas últimas 4 semanas') + ', normalizadas para 30 dias.';
     try {
       data = await V2.fetchJSON('/api/v2/payments/ranking?' + q);
       if (V2.pay.unavailable(data)) {
@@ -145,7 +164,8 @@
   document.getElementById('filterbar').addEventListener('click', ev => {
     const seg = ev.target.closest('[data-seg] button');
     if (seg) {
-      st[seg.parentElement.dataset.seg] = seg.dataset.v;
+      const k = seg.parentElement.dataset.seg;
+      st[k] = k === 'limit' ? Number(seg.dataset.v) : seg.dataset.v;
       V2.setFilters({ pay_role: st.role, pay_api: st.api });
       renderFilterbar();
       load();
@@ -199,7 +219,16 @@
   });
 
   V2.onThemeChange(() => { if (data && !V2.pay.unavailable(data)) { kpis(); rankCard(); } });
-  V2.initShell('p-lidera').then(() => { renderFilterbar(); load(); })
+  document.getElementById('filterbar').addEventListener('change', ev => {
+    if (ev.target.matches('[data-month-select]')) { st.month = scope.month = ev.target.value; renderFilterbar(); load(); }
+  });
+
+  V2.initShell('p-lidera').then(() => {
+    scope = V2.pay.readState(true);
+    st.month = scope.month;
+    renderFilterbar();
+    load();
+  })
     .catch(e => { document.getElementById('card-rank').innerHTML = V2.errorBox(e.message); });
 })();
 </script>

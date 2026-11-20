@@ -454,3 +454,28 @@ button, input, select { font: inherit; color: inherit; }
   .pay-scroll > * { min-width: 520px; }
   .pay-bars, .pay-xlabels { gap: var(--sp-1); }
 }
+
+/* ── Tema Pagamentos: mês, recorte por inclusão, dica e gráficos interativos (feature 019) ────────── */
+.v2-results-all { max-height: 320px; overflow-y: auto; }
+.v2-popover button .v2-pick-detail { margin-left: auto; padding-left: var(--sp-3); font-size: var(--text-caption); color: var(--text-2); white-space: nowrap; }
+.pay-month { min-width: 190px; }
+.pay-scope-side { display: flex; flex-direction: column; gap: var(--sp-1h); min-width: 0; }
+.pay-all { display: inline-flex; align-items: center; min-height: 36px; padding: 0 var(--sp-3); border-radius: var(--r-pill); background: var(--surface-2); font-size: var(--text-small); font-weight: 600; }
+.pay-tag { background: var(--surface-2); }
+.pay-warn { font-size: var(--text-caption); color: var(--osc); }
+.pay-tip {
+  position: absolute; z-index: 60; display: none; max-width: 280px; padding: var(--sp-2) var(--sp-2h); border-radius: var(--r-md);
+  background: var(--text); color: var(--surface); font-size: var(--text-caption); line-height: 1.45; pointer-events: none; box-shadow: var(--popover-shadow);
+}
+/* Barras-botão: o botão ocupa a coluna inteira; o mês escolhido ganha contorno. */
+button.pay-bar { border: 0; background: transparent; padding: 0; cursor: pointer; color: inherit; font: inherit; border-radius: var(--r-sm); }
+button.pay-bar:hover .pay-stack { filter: brightness(1.08); }
+button.pay-bar.sel { background: var(--surface-2); outline: 2px solid var(--text); outline-offset: 1px; }
+button.pay-bar.sel > span:first-child { color: var(--text); font-weight: 700; }
+.pay-stack > span { display: block; }
+.pay-stack > span:first-child { border-radius: var(--r-xs) var(--r-xs) 0 0; }
+.pay-xlabels span.sel { color: var(--text); font-weight: 700; }
+.pay-share-row.sel { font-weight: 700; }
+.pay-share-row.sel > span { color: var(--text); }
+.pay-lines .pay-hit { cursor: default; }
+.pay-compare { display: flex; gap: var(--sp-3); flex-wrap: wrap; align-items: flex-end; }

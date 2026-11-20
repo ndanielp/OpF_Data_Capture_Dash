@@ -19,6 +19,18 @@
   .pc-row .ba { text-align: right; font-weight: 600; }
   .pc-role { display: block; font-size: var(--text-caption); color: var(--text-2); }
   .v2-card.pc-watch { border-style: dashed; border-color: var(--control-border); }
+  .pc-months { display: flex; gap: var(--sp-1h); flex-wrap: wrap; }
+  .pc-month { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 2px; min-width: 56px; min-height: 64px;
+              padding: var(--sp-1h) var(--sp-2); border: 1px solid var(--control-border); border-radius: var(--r-md); background: var(--surface); cursor: pointer; }
+  .pc-month b { font-size: var(--text-metric); line-height: 1; }
+  .pc-month span { font-size: var(--text-caption); color: var(--text-2); }
+  .pc-month[aria-pressed="true"] { background: var(--text); border-color: var(--text); color: var(--surface); }
+  .pc-month[aria-pressed="true"] span { color: var(--surface); }
+  .pc-group { display: grid; grid-template-columns: minmax(160px, 220px) minmax(0, 1fr); gap: var(--sp-4); padding: var(--sp-3) 0; border-top: 1px solid var(--divider); }
+  .pc-items { display: flex; flex-direction: column; gap: var(--sp-2); }
+  .pc-item { display: grid; grid-template-columns: 120px minmax(0, 1fr) 150px; gap: var(--sp-3); align-items: center; font-size: var(--text-small); }
+  .pc-search { min-height: 44px; width: 200px; border-radius: var(--r-md); border: 1px solid var(--control-border); background: var(--surface); padding: 0 var(--sp-3); }
+  @media (max-width: 720px) { .pc-group { grid-template-columns: 1fr; gap: var(--sp-2); } .pc-item { grid-template-columns: minmax(0, 1fr) auto; } .pc-item > :nth-child(2) { grid-column: 1 / -1; order: 3; } }
   @media (max-width: 720px) {
     .pc-row { grid-template-columns: minmax(0, 1fr) auto; gap: var(--sp-2) var(--sp-3); }
     .pc-row > :nth-child(3) { grid-column: 1 / -1; order: 3; }
@@ -34,6 +46,7 @@
     <h1>O que mudou na iniciação de pagamentos?</h1>
     <p>Mudanças de volume, de falha e de conversão do vínculo por iniciadora e por detentora. Mesma regra dos alertas do painel: só vira alerta o que se confirma na semana seguinte.</p>
   </div>
+  <article class="v2-card" id="card-months"></article>
   <article class="v2-card" id="card-alerts"></article>
   <article class="v2-card pc-watch" id="card-watch"></article>
 </main>
@@ -43,10 +56,12 @@
   'use strict';
   const TYPES = { all: 'Todas', volume: 'Volume', fail: 'Falha', conversion: 'Conversão' };
   const ROLES = { all: 'Todos', ini: 'Iniciadoras', det: 'Detentoras' };
-  const st = { type: 'all', role: 'all' };
-  let data = null;
+  const st = { type: 'all', role: 'all', q: '', month: null };
+  let data = null, scope = null;
 
   const pp = x => V2.fmtPp(x * 100);
+  const norm = s => (s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+  const isLast = () => data && data.months.length && data.month === data.months[data.months.length - 1].month;
 
   function renderFilterbar() {
     const floor = data && data.floor ? data.floor : { transactions: 30000, enrollments: 1000 };
@@ -54,16 +69,16 @@
       '<div class="v2-fb-row"><div class="v2-fb-group">' +
         '<fieldset class="v2-field"><legend>Tipo de mudança</legend>' + V2.seg('type', TYPES, st.type) + '</fieldset>' +
         '<fieldset class="v2-field"><legend>Papel</legend>' + V2.seg('role', ROLES, st.role) + '</fieldset>' +
-        '<span class="v2-note">Piso: ' + V2.fmtInt(floor.transactions) + ' transações por 30 dias (na falha, nas duas janelas) e ' +
-          V2.fmtInt(floor.enrollments) + ' vínculos iniciados nas duas janelas (na conversão).</span>' +
-      '</div><button type="button" class="v2-btn v2-fb-export" id="f-export">Exportar CSV</button></div>';
+        '<label class="v2-field"><span class="v2-label">Instituição</span><input type="search" class="pc-search" id="f-q" placeholder="Buscar…" value="' + V2.esc(st.q) + '"></label>' +
+      '</div><button type="button" class="v2-btn v2-fb-export" id="f-export">Exportar CSV</button></div>' +
+      '<div class="v2-note" style="padding:0">Piso: ' + V2.fmtInt(floor.transactions) + ' transações por 30 dias (na falha, nas duas janelas) e ' +
+        V2.fmtInt(floor.enrollments) + ' vínculos iniciados nas duas janelas (na conversão).' + (scope && scope.warn ? ' · <span class="pay-warn">' + scope.warn + '</span>' : '') + '</div>';
   }
 
   /** Selo, frase e "antes → agora" de uma mudança. Cair é bom só na falha. */
   function describe(a) {
     const up = a.direction === 'up';
     const good = a.kind === 'fail' ? !up : up;
-    const arrow = up ? ' ↑' : ' ↓';
     const api = a.api ? V2.pay.label(a.api) : null;
     let text, ba;
     if (a.kind === 'volume') {
@@ -73,63 +88,81 @@
       text = 'Falha na criação de ' + api + (up ? ' subiu ' : ' caiu ') + pp(Math.abs(a.change)).replace(/^[+−]/, '') + '.';
       ba = V2.fmtShare(a.before) + ' → ' + V2.fmtShare(a.after);
     } else {
-      text = 'Conversão do vínculo ' + (up ? 'subiu ' : 'caiu ') + pp(Math.abs(a.change)).replace(/^[+−]/, '') +
-        (a.role === 'det' ? (up ? ': mais clientes concluem a autorização.' : ': menos clientes concluem a autorização.') : '.');
+      text = 'Conversão do vínculo (JSR) ' + (up ? 'subiu ' : 'caiu ') + pp(Math.abs(a.change)).replace(/^[+−]/, '') + '.';
       ba = V2.fmtShare(a.before) + ' → ' + V2.fmtShare(a.after);
     }
-    return { badge: TYPES[a.kind] + arrow, cls: good ? 'new_entrant' : 'decrease', text, ba,
-             role: (a.role === 'ini' ? 'Iniciadora' : 'Detentora') + (api ? ' · ' + api : a.kind === 'conversion' ? ' · vínculo de conta (JSR)' : '') };
+    return { badge: TYPES[a.kind] + (up ? ' ↑' : ' ↓'), cls: good ? 'new_entrant' : 'decrease', text, ba };
   }
 
-  const keep = a => (st.type === 'all' || a.kind === st.type) && (st.role === 'all' || a.role === st.role);
+  const keep = a => (st.type === 'all' || a.kind === st.type) && (st.role === 'all' || a.role === st.role) && (!st.q || norm(a.name).includes(norm(st.q)));
 
-  function rows(list, watch) {
-    if (!list.length) return '<p class="v2-muted" style="margin:0">' + (watch ? 'Nada aguardando confirmação.' : 'Nenhuma mudança deste tipo no mês.') + '</p>';
-    return '<div class="pc-row head"><span>Mudança</span><span>Instituição</span><span>O que aconteceu</span><span class="ba">Antes → agora</span></div>' +
-      list.map(a => {
-        const d = describe(a);
-        return '<div class="pc-row"><span><span class="v2-badge ' + (watch ? 'oscillation' : d.cls) + '">' + d.badge + '</span></span>' +
-          '<span><a href="/v2/pagamentos/instituicao?uuid=' + encodeURIComponent(a.uuid) + '&role=' + a.role + '">' + V2.esc(a.name) + '</a>' +
-          '<span class="pc-role">' + V2.esc(d.role) + '</span></span><span>' + V2.esc(d.text) + (watch ? ' Falta a semana de confirmação.' : '') + '</span>' +
-          '<span class="ba">' + d.ba + '</span></div>';
-      }).join('');
+  /** Uma linha por instituição e papel, com as mudanças dela (FR-044). */
+  function groups(list, watch) {
+    const by = new Map();
+    list.forEach(a => { const k = a.uuid + '|' + a.role; if (!by.has(k)) by.set(k, []); by.get(k).push(a); });
+    if (!by.size) return '<p class="v2-muted" style="margin:0">' + (watch ? 'Nada aguardando confirmação.' : 'Nenhuma mudança deste tipo no mês.') + '</p>';
+    return [...by.values()].map(items => {
+      const a = items[0];
+      return '<div class="pc-group"><div><a href="/v2/pagamentos/instituicao?uuid=' + encodeURIComponent(a.uuid) + '&role=' + a.role + '" style="font-weight:700;color:var(--text);text-decoration:none">' +
+        V2.esc(a.name) + '</a><span class="pc-role">' + (a.role === 'ini' ? 'Iniciadora' : 'Detentora') + ' · ' + items.length + ' mudança(s)</span></div><div class="pc-items">' +
+        items.map(x => {
+          const d = describe(x);
+          return '<div class="pc-item"><span><span class="v2-badge ' + (watch ? 'oscillation' : d.cls) + '">' + d.badge + '</span></span><span>' + V2.esc(d.text) +
+            (x.api ? ' <span class="v2-small v2-muted">· ' + V2.esc(V2.pay.label(x.api)) + '</span>' : '') + (watch ? ' <span class="v2-small v2-muted">Falta a semana de confirmação.</span>' : '') +
+            '</span><span class="ba">' + d.ba + '</span></div>';
+        }).join('') + '</div></div>';
+    }).join('');
   }
 
   function render() {
-    const w = data.window;
+    const w = data.window, monthTxt = V2.pay.monthName(data.month);
     const rule = '4 semanas contra as 4 anteriores · volume −10% / +20% · falha e conversão ±5 pp';
+    const max = Math.max(1, ...data.months.map(m => m.alerts));
+    document.getElementById('card-months').innerHTML =
+      V2.pay.head('Mudanças confirmadas por mês', 'Clique num mês para ver as mudanças dele', 'months') +
+      '<div class="pc-months" role="group" aria-label="Meses">' + data.months.map(m =>
+        '<button type="button" class="pc-month" data-pick-month="' + m.month + '" data-keep aria-pressed="' + (m.month === data.month) + '" title="' + m.alerts + ' mudança(s)">' +
+        '<b>' + m.alerts + '</b><span style="display:block;width:100%;height:' + Math.round(m.alerts / max * 24) + 'px;background:' +
+        (m.month === data.month ? 'var(--surface)' : 'var(--control-border)') + ';border-radius:2px"></span><span>' + V2.pay.mon(m.month) + '</span></button>').join('') + '</div>' +
+      V2.pay.foot('Mudanças confirmadas com a janela que termina na última semana de cada mês');
     const al = data.alerts.filter(keep), wa = data.watching.filter(keep);
+    const filt = [st.type !== 'all' ? TYPES[st.type] : '', st.role !== 'all' ? ROLES[st.role] : '', st.q ? '"' + st.q + '"' : ''].filter(Boolean).join(' · ');
     document.getElementById('card-alerts').innerHTML =
-      V2.pay.head(V2.pay.monthLong(data.month) + (st.type === 'all' ? '' : ' · ' + TYPES[st.type]) + (st.role === 'all' ? '' : ' · ' + ROLES[st.role]),
+      V2.pay.head(monthTxt.charAt(0).toUpperCase() + monthTxt.slice(1) + (filt ? ' · ' + V2.esc(filt) : ''),
         al.length + ' mudança(s) confirmada(s) · 4 semanas até ' + V2.fmtDate(w.end) + ' vs ' + V2.fmtDate(w.prev_start) + ' a ' + V2.fmtDate(w.prev_end), 'alerts') +
-      rows(al, false) + V2.pay.foot(rule + ' · confirmada também com a janela da semana anterior');
-    document.getElementById('card-watch').innerHTML =
-      V2.pay.head('Em observação', 'Condição vista na última semana, aguardando a semana de confirmação', 'watch') +
-      rows(wa, true) + V2.pay.foot(rule);
+      groups(al, false) + V2.pay.foot(rule + ' · confirmada também com a janela da semana anterior');
+    const watch = document.getElementById('card-watch');
+    watch.hidden = !isLast();
+    if (isLast()) watch.innerHTML = V2.pay.head('Em observação', 'Condição vista na última semana, aguardando a semana de confirmação', 'watch') + groups(wa, true) + V2.pay.foot(rule);
   }
 
   async function load() {
-    const cards = ['card-alerts', 'card-watch'].map(id => document.getElementById(id));
+    const cards = ['card-months', 'card-alerts', 'card-watch'].map(id => document.getElementById(id));
     cards.forEach(c => V2.setLoading(c, true));
     try {
-      data = await V2.fetchJSON('/api/v2/payments/changes');
-      if (V2.pay.unavailable(data)) { cards[0].innerHTML = V2.errorBox(V2.pay.UNAVAILABLE); cards[1].innerHTML = ''; return; }
+      data = await V2.fetchJSON('/api/v2/payments/changes' + (st.month ? '?month=' + st.month : ''));
+      if (V2.pay.unavailable(data)) { cards[1].innerHTML = V2.errorBox(V2.pay.UNAVAILABLE); cards[0].innerHTML = cards[2].innerHTML = ''; return; }
+      st.month = data.month;
+      scope.month = data.month;
+      V2.pay.saveState(scope, {}, ['month']);
       renderFilterbar();
       render();
     } catch (e) {
-      cards[0].innerHTML = V2.errorBox(e.message);
+      cards[1].innerHTML = V2.errorBox(e.message);
     } finally {
       cards.forEach(c => V2.setLoading(c, false));
     }
   }
 
-  document.getElementById('filterbar').addEventListener('click', ev => {
+  const fb = document.getElementById('filterbar');
+  fb.addEventListener('click', ev => {
     const seg = ev.target.closest('[data-seg] button');
     if (seg) { st[seg.parentElement.dataset.seg] = seg.dataset.v; renderFilterbar(); if (data && data.alerts) render(); return; }
     if (ev.target.closest('#f-export') && data && data.alerts) {
       const list = data.alerts.filter(keep).map(a => Object.assign({ state: 'alerta' }, a))
         .concat(data.watching.filter(keep).map(a => Object.assign({ state: 'em observação' }, a)));
       V2.exportCSV('pagamentos-mudancas-' + data.month + '.csv', [
+        { label: 'Mês', value: () => data.month },
         { label: 'Estado', value: a => a.state },
         { label: 'Instituição', value: a => a.name },
         { label: 'Papel', value: a => a.role === 'ini' ? 'Iniciadora' : 'Detentora' },
@@ -141,8 +174,15 @@
       ], list);
     }
   });
+  fb.addEventListener('input', ev => {
+    if (ev.target.id !== 'f-q') return;
+    st.q = ev.target.value.trim();
+    if (data && data.alerts) render();
+  });
 
   document.querySelector('.v2-main').addEventListener('click', ev => {
+    const m = ev.target.closest('[data-pick-month]');
+    if (m) { st.month = m.dataset.pickMonth; load(); return; }
     const b = ev.target.closest('[data-img]');
     if (b) {
       const card = document.getElementById('card-' + b.dataset.img);
@@ -151,8 +191,12 @@
     }
   });
 
-  V2.initShell('p-mudancas').then(() => { renderFilterbar(); load(); })
-    .catch(e => { document.getElementById('card-alerts').innerHTML = V2.errorBox(e.message); });
+  V2.initShell('p-mudancas').then(() => {
+    scope = V2.pay.readState(false);
+    st.month = scope.month;
+    renderFilterbar();
+    load();
+  }).catch(e => { document.getElementById('card-alerts').innerHTML = V2.errorBox(e.message); });
 })();
 </script>
 </body>

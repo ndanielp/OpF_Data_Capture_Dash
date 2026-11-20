@@ -126,8 +126,17 @@ def meta() -> dict:
         for u in tx[_KEY[role]].unique():
             roles.setdefault(u, []).append(role)
     in_data = _data_uuids()
+    months = b["months"]
+    mtx = b["tx"][b["tx"]["month"].isin(months)]
+    vol = {role: mtx.groupby([_KEY[role], "month"])["ok"].sum() for role in ROLES}
+
+    def volume(u: str, role: str) -> list[float]:
+        """Transações por 30 dias em cada mês, para a busca ordenar pelo mês escolhido."""
+        return [round(float(vol[role].get((u, m), 0.0)) * b["factor"][m], 1) for m in months]
+
     insts = sorted(({"uuid": u, "name": b["names"].get(u, u), "short": short(u),
-                     "group": resolve_institution_group(b["names"].get(u, "")), "roles": rs, "in_data": u in in_data}
+                     "group": resolve_institution_group(b["names"].get(u, "")), "roles": rs, "in_data": u in in_data,
+                     "volume": {role: volume(u, role) for role in ROLES}}
                     for u, rs in roles.items()), key=lambda i: i["short"].lower())
     return {
         "data_through": b["week"].strftime("%Y-%m-%d") if b["week"] is not None else None,
@@ -148,29 +157,52 @@ def _by_api(frame: pd.DataFrame, key: str) -> pd.DataFrame:
     return t.reindex(columns=cols, fill_value=0.0)
 
 
-def ranking(role: str, api: str, limit: int, pinned: list[str], excluded: list[str]) -> dict:
+def _period(month: str | None) -> tuple[pd.DataFrame, pd.DataFrame, float, float, dict]:
+    """Recorte atual e anterior do ranking, com o fator para 30 dias de cada um.
+    Sem mês: últimas 4 semanas contra as 4 anteriores. Com mês: o mês contra o anterior."""
     b = base()
-    week, tx, key = b["week"], b["tx"], _KEY[role]
-    cur = tx[_in_window(tx["date"], week)]
-    prev = tx[_in_window(tx["date"], week - pd.Timedelta(days=WINDOW_DAYS))]
+    tx, week = b["tx"], b["week"]
+    if month is None:
+        cur = tx[_in_window(tx["date"], week)]
+        prev = tx[_in_window(tx["date"], week - pd.Timedelta(days=WINDOW_DAYS))]
+        k = 30 / WINDOW_DAYS
+        return cur, prev, k, k, {"kind": "window", "window": _window(week)}
+    i = b["months"].index(month)
+    prev_m = b["months"][i - 1] if i > 0 else None
+    cur = tx[tx["month"] == month]
+    prev = tx[tx["month"] == prev_m] if prev_m else tx.iloc[0:0]
+    last_day = (pd.Timestamp(month + "-01") + pd.offsets.MonthEnd(0)).strftime("%Y-%m-%d")
+    return cur, prev, b["factor"][month], b["factor"].get(prev_m, 0.0), {
+        "kind": "month", "month": month, "prev_month": prev_m,
+        "window": {"start": month + "-01", "end": last_day}}
+
+
+def ranking(role: str, api: str, limit: int, pinned: list[str], excluded: list[str],
+            month: str | None = None) -> dict:
+    """ValueError quando `month` não está entre os meses da base."""
+    b = base()
+    week, key = b["week"], _KEY[role]
+    if month is not None and month not in b["months"]:
+        raise ValueError(month)
+    cur, prev, k, kp, period = _period(month)
     apis = list(APIS) if api == "all" else [api]
 
-    tot_ok = {a: float(cur.loc[cur["api"] == a, "ok"].sum()) for a in APIS}
-    tot_fail = {a: float(cur.loc[cur["api"] == a, "fail"].sum()) for a in APIS}
+    tot_ok = {a: float(cur.loc[cur["api"] == a, "ok"].sum()) * k for a in APIS}
+    tot_fail = {a: float(cur.loc[cur["api"] == a, "fail"].sum()) * k for a in APIS}
     total = sum(tot_ok.values())
-    prev_ok = {a: float(prev.loc[prev["api"] == a, "ok"].sum()) for a in APIS}
+    prev_ok = {a: float(prev.loc[prev["api"] == a, "ok"].sum()) * kp for a in APIS}
     prev_total = sum(prev_ok.values())
     eco = {
-        "total": _per30(total),
+        "total": total,
         "initiators": int(cur.loc[cur["ok"] > 0, "r"].nunique()),
         "holders": int(cur.loc[cur["ok"] > 0, "t"].nunique()),
         "ip_share_prev": prev_ok["payments"] / prev_total if prev_total else None,
     }
     for a in APIS:
-        eco[a] = {"value": _per30(tot_ok[a]), "share": tot_ok[a] / total if total else None,
+        eco[a] = {"value": tot_ok[a], "share": tot_ok[a] / total if total else None,
                   "fail": _rate(tot_fail[a], tot_ok[a])}
 
-    c, p = _by_api(cur, key), _by_api(prev, key)
+    c, p = _by_api(cur, key) * k, _by_api(prev, key) * kp
     value = c["ok"][apis].sum(axis=1)
     prev_value = p["ok"][apis].sum(axis=1).reindex(value.index, fill_value=0.0)
     api_total = sum(tot_ok[a] for a in apis)
@@ -180,21 +212,20 @@ def ranking(role: str, api: str, limit: int, pinned: list[str], excluded: list[s
         return {
             "uuid": u, "name": short(u), "group": resolve_institution_group(b["names"].get(u, "")),
             "pinned": u in pinned, "cut": False,
-            **{a: _per30(c.at[u, ("ok", a)]) if u in c.index else 0.0 for a in APIS},
-            "value": _per30(v), "share": v / api_total if api_total else None,
+            **{a: float(c.at[u, ("ok", a)]) if u in c.index else 0.0 for a in APIS},
+            "value": v, "share": v / api_total if api_total else None,
             "fail": {a: _rate(c.at[u, ("fail", a)], c.at[u, ("ok", a)]) if u in c.index else None for a in APIS},
             "growth": v / pv - 1 if pv > 0 else None,
         }
 
     ranked = [u for u in value[value > 0].sort_values(ascending=False).index if u not in excluded]
-    top = ranked[:limit]
-    rows = [row(u) for u in top]
+    rows = [row(u) for u in ranked[:limit]]
     extra = [row(u) for u in ranked[limit:] if u in pinned]
     if extra:
         extra[0]["cut"] = True
     return {
-        "week": week.strftime("%Y-%m-%d"), "window": _window(week), "role": role, "api": api,
-        "ecosystem": eco, "rows": rows + extra,
+        "week": week.strftime("%Y-%m-%d"), "window": period.pop("window"), "period": period,
+        "role": role, "api": api, "ecosystem": eco, "rows": rows + extra,
         "excluded": [{"uuid": u, "name": short(u)} for u in excluded if u in b["names"]],
     }
 
@@ -227,16 +258,28 @@ def _monthly_cells(frame: pd.DataFrame, b: dict, rows: list, cols: list,
     return out
 
 
-def flows(size: int) -> dict:
+MAX_PICK = 12
+
+
+def _others(n: int, label: str) -> dict:
+    return {"uuid": None, "name": label, "others_count": n}
+
+
+def flows(size: int, rows: list[str] | None = None, cols: list[str] | None = None) -> dict:
+    """Linhas e colunas: as escolhidas (na ordem dada) ou as `size` maiores; o resto vai para "Outras"."""
     b = base()
     tx, week = b["tx"], b["week"]
     cur = tx[_in_window(tx["date"], week)]
-    top_r, top_t = _top(cur, "r", size), _top(cur, "t", size)
-    rows = [{"uuid": u, "name": short(u)} for u in top_r] + [{"uuid": None, "name": "Outras iniciadoras"}]
-    cols = [{"uuid": u, "name": short(u)} for u in top_t] + [{"uuid": None, "name": "Outras detentoras"}]
-    ri, ci = {u: i for i, u in enumerate(top_r)}, {u: j for j, u in enumerate(top_t)}
-    data = _monthly_cells(tx, b, rows, cols, lambda u: ri.get(u, len(top_r)), lambda u: ci.get(u, len(top_t)))
-    return {"months": b["months"], "week": week.strftime("%Y-%m-%d"), "rows": rows, "cols": cols, "data": data}
+    known = b["names"]
+    pick_r = [u for u in dict.fromkeys(rows or []) if u in known] or _top(cur, "r", size)
+    pick_t = [u for u in dict.fromkeys(cols or []) if u in known] or _top(cur, "t", size)
+    n_r = int(tx.loc[tx["ok"] > 0, "r"].nunique()) - len(set(pick_r) & set(tx.loc[tx["ok"] > 0, "r"]))
+    n_t = int(tx.loc[tx["ok"] > 0, "t"].nunique()) - len(set(pick_t) & set(tx.loc[tx["ok"] > 0, "t"]))
+    out_r = [{"uuid": u, "name": short(u)} for u in pick_r] + [_others(n_r, "Outras iniciadoras")]
+    out_c = [{"uuid": u, "name": short(u)} for u in pick_t] + [_others(n_t, "Outras detentoras")]
+    ri, ci = {u: i for i, u in enumerate(pick_r)}, {u: j for j, u in enumerate(pick_t)}
+    data = _monthly_cells(tx, b, out_r, out_c, lambda u: ri.get(u, len(pick_r)), lambda u: ci.get(u, len(pick_t)))
+    return {"months": b["months"], "week": week.strftime("%Y-%m-%d"), "rows": out_r, "cols": out_c, "data": data}
 
 
 # ── /enrollment ───────────────────────────────────────────────────────────────
@@ -317,30 +360,50 @@ def _conditions(end: pd.Timestamp) -> dict[tuple, dict]:
 _KIND_ORDER = {"fail": 0, "volume": 1, "conversion": 2}
 
 
-def changes() -> dict:
+def _cond_at(w: pd.Timestamp) -> dict[tuple, dict]:
+    return _cached("cond-" + w.strftime("%Y-%m-%d"), lambda: _conditions(w))
+
+
+def _split(w: pd.Timestamp, prev: pd.Timestamp | None) -> tuple[list[dict], list[dict]]:
+    """Confirmadas (condição em w e na semana anterior, mesma direção) e em observação (só em w)."""
+    last, before = _cond_at(w), (_cond_at(prev) if prev is not None else {})
+    same = lambda k, v: k in before and before[k]["direction"] == v["direction"]   # noqa: E731
+    return [v for k, v in last.items() if same(k, v)], [v for k, v in last.items() if not same(k, v)]
+
+
+def _month_week(m: str) -> tuple[pd.Timestamp, pd.Timestamp | None]:
+    weeks = base()["weeks"]
+    i = max(k for k, w in enumerate(weeks) if w.strftime("%Y-%m") == m)
+    return weeks[i], (weeks[i - 1] if i > 0 else None)
+
+
+def changes(month: str | None = None) -> dict:
+    """Mudanças confirmadas no mês (W = última semana do mês). ValueError para mês fora da base."""
     b = base()
-    weeks, week = b["weeks"], b["week"]
-    last = _conditions(week)
-    before = _conditions(weeks[-2]) if len(weeks) > 1 else {}
+    months = b["months"]
+    month = month or months[-1]
+    if month not in months:
+        raise ValueError(month)
+    week, prev = _month_week(month)
 
     def out(items: list[dict]) -> list[dict]:
         items = [dict(i, name=short(i["uuid"])) for i in items]
         return sorted(items, key=lambda i: (_KIND_ORDER[i["kind"]], -abs(i["change"])))
 
-    confirmed = [v for k, v in last.items() if k in before and before[k]["direction"] == v["direction"]]
-    watching = [v for k, v in last.items() if not (k in before and before[k]["direction"] == v["direction"])]
+    confirmed, watching = _split(week, prev)
+    counts = _cached("changes-months", lambda: [{"month": m, "alerts": len(_split(*_month_week(m))[0])} for m in months])
     prev_end = week - pd.Timedelta(days=WINDOW_DAYS)
     return {
-        "week": week.strftime("%Y-%m-%d"), "month": week.strftime("%Y-%m"),
+        "week": week.strftime("%Y-%m-%d"), "month": month, "months": counts,
         "window": {**_window(week), "prev_start": _window(prev_end)["start"], "prev_end": prev_end.strftime("%Y-%m-%d")},
         "floor": {"transactions": TX_FLOOR, "enrollments": ENROLL_FLOOR},
-        "alerts": out(confirmed), "watching": out(watching),
+        "alerts": out(confirmed), "watching": out(watching) if month == months[-1] else [],
     }
 
 
 # ── /institution ──────────────────────────────────────────────────────────────
 
-def institution(uuid: str, role: str | None) -> dict:
+def institution(uuid: str, role: str | None, counterparts: list[str] | None = None) -> dict:
     """KeyError quando o uuid não aparece em pagamentos."""
     b = base()
     tx, week = b["tx"], b["week"]
@@ -357,9 +420,10 @@ def institution(uuid: str, role: str | None) -> dict:
     key, other = _KEY[role], _OTHER[role]
     mine = tx[tx[key] == uuid]
 
-    top = _top(mine[_in_window(mine["date"], week)], other, TOP_N) or _top(mine, other, TOP_N)
-    rest = set(mine[other].unique()) - set(top)
-    cps = [{"uuid": u, "name": short(u)} for u in top] + ([{"uuid": None, "name": _OTHER_LABEL[role]}] if rest else [])
+    chosen = [u for u in dict.fromkeys(counterparts or []) if u in b["names"] and u != uuid]
+    top = chosen or _top(mine[_in_window(mine["date"], week)], other, TOP_N) or _top(mine, other, TOP_N)
+    rest = set(mine[other].unique()) - set(top)   # toda contraparte fora da lista cai em "Outras"
+    cps = [{"uuid": u, "name": short(u)} for u in top] + ([_others(len(rest), _OTHER_LABEL[role])] if rest or chosen else [])
     idx = {u: i for i, u in enumerate(top)}
     pos = lambda u: idx.get(u, len(top))   # noqa: E731
     if role == "ini":

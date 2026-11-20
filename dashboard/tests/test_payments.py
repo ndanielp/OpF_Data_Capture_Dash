@@ -201,3 +201,73 @@ async def test_pages_are_served(client):
                  "/v2/pagamentos/mudancas", "/v2/pagamentos/instituicao"):
         r = await client.get(path)
         assert r.status_code == 200 and "/static/v2/shell.js" in r.text, path
+
+
+# ── Feature 019: mês específico, listas escolhidas ───────────────────────────
+
+WEEK = 30 / 7   # um mês com 1 semana de 10 mil vira 10 mil × 30/7
+
+
+@pytest.mark.asyncio
+async def test_meta_monthly_volume_per_role(client):
+    d = await _get(client, "/meta")
+    nu = next(i for i in d["institutions"] if i["uuid"] == "ini-n")
+    assert nu["volume"]["det"] == [pytest.approx(5_000 * WEEK, abs=0.1)] * 3
+    assert nu["volume"]["ini"][-1] == pytest.approx(3_000 * WEEK, abs=0.1)
+    g = next(i for i in d["institutions"] if i["uuid"] == "ini-g")
+    assert g["volume"]["det"] == [0, 0, 0]
+
+
+@pytest.mark.asyncio
+async def test_ranking_of_a_month_compares_with_previous_month(client):
+    d = await _get(client, "/ranking", month="2026-09")
+    assert d["period"] == {"kind": "month", "month": "2026-09", "prev_month": "2026-08"}
+    assert d["window"] == {"start": "2026-09-01", "end": "2026-09-30"}
+    top = d["rows"][0]
+    assert top["uuid"] == "ini-a" and top["value"] == pytest.approx(25_000 * WEEK, abs=0.1)
+    assert top["growth"] == pytest.approx(0.0, abs=1e-9)
+    first = await _get(client, "/ranking", month="2026-08")
+    assert first["rows"][0]["growth"] is None and first["ecosystem"]["ip_share_prev"] is None
+    window = await _get(client, "/ranking")
+    assert window["period"] == {"kind": "window"}
+    await _get(client, "/ranking", status=422, month="2025-01")
+
+
+@pytest.mark.asyncio
+async def test_ranking_limit_all(client):
+    d = await _get(client, "/ranking", limit=500)
+    assert len(d["rows"]) == 3
+    await _get(client, "/ranking", status=422, limit=501)
+
+
+@pytest.mark.asyncio
+async def test_flows_with_chosen_rows_and_cols(client):
+    d = await _get(client, "/flows", rows="ini-n", cols="det-s")
+    assert [r["name"] for r in d["rows"]] == ["Nubank", "Outras iniciadoras"]
+    assert d["rows"][1]["others_count"] == 2 and d["cols"][1]["others_count"] == 3
+    oct_ip = d["data"]["payments"]["2026-10"]["ok"]
+    assert oct_ip[0][0] == 0 and oct_ip[1][0] == pytest.approx(20_000 * WEEK, abs=0.1)
+    many = ",".join(f"x{i}" for i in range(13))
+    await _get(client, "/flows", status=422, rows=many)
+
+
+@pytest.mark.asyncio
+async def test_institution_with_chosen_counterparts(client):
+    d = await _get(client, "/institution/ini-n", role="det", counterparts="ini-g")
+    assert [c["name"] for c in d["counterparts"]] == ["Google Pay", "Outras iniciadoras"]
+    assert d["counterparts"][1]["others_count"] == 1
+    ok = d["data"]["automatic-payments"]["2026-10"]["ok"]
+    assert ok[0] == 0 and ok[1] == pytest.approx(5_000 * WEEK, abs=0.1)
+    many = ",".join(f"x{i}" for i in range(13))
+    await _get(client, "/institution/ini-n", status=422, counterparts=many)
+
+
+@pytest.mark.asyncio
+async def test_changes_by_month(client):
+    d = await _get(client, "/changes")
+    assert [m["month"] for m in d["months"]] == ["2026-08", "2026-09", "2026-10"]
+    assert d["months"][-1]["alerts"] == len(d["alerts"])
+    sep = await _get(client, "/changes", month="2026-09")
+    assert sep["month"] == "2026-09" and sep["week"] == "2026-09-25" and sep["watching"] == []
+    assert not any(a["uuid"] == "det-s" and a["kind"] == "fail" for a in sep["alerts"])
+    await _get(client, "/changes", status=422, month="2025-01")

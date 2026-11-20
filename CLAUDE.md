@@ -180,6 +180,7 @@ The header carries a "Dados | Pagamentos" selector (Constitution §6.8 v2.1.0). 
 - Rules: transaction = 200 in Criar iniciação (65 `payments` "Iniciação de Pagamento", 129 `automatic-payments` "Pagamento Automático"); failure = 500 ÷ (200 + 500), 500 includes 4xx; initiator = `receptor`, holder = `transmitter`; last 4 weeks × 30/28; month = sum ÷ weeks of the month in the table × 30/7. The vínculo funnel (133 → 139 → 136 → 137, JSR only) is always a collapsed detail.
 - Code: `services/payments.py` (loads `payment_weekly` once per DB mtime), `routers/payments.py` (`/api/v2/payments/{meta,ranking,flows,enrollment,changes,institution/{uuid}}`); the pages do the "recorte" (include/exclude chips) and the reading sentences in the browser with the shared `V2.pay` helpers in `shell.js`. Colors: `constants.PAYMENT_APIS` / `PAYMENT_HEAT`.
 - Changes: last 4 weeks vs the 4 before, per institution × role; volume −10%/+20%, failure and vínculo conversion ±5 pp; floor 30 mil transações/30 dias (rates: in both windows) and 1.000 vínculos; alert when it also holds with the window ending the week before, else "em observação". Computed on request, no table.
+- Month, scope and any institution (feature 019, `specs/019-pagamentos-polish/`): every payments tab has a month selector ("Últimas 4 semanas" only in Quem lidera?); bars are buttons (hover/focus tooltip, click picks the month) and failure lines have points and a per-month tooltip. The "recorte" is by inclusion: "todas" or chips added with "+ Adicionar" (any institution, search sorted by the month's volume); with picks on a side, that side's "Outras" leaves the sums. Month and picks are shared across tabs in `opf:v2:filters` (`pay_month`, `pay_r`, `pay_c`) and mirrored in the URL (`?month=&r=&c=`; the institution tab keeps its counterparts in `?cp=`). API params: `/ranking?month=`, `/flows?rows=&cols=` (≤ 12, "Outras" carries `others_count`), `/institution/{uuid}?counterparts=`, `/changes?month=` (+ `months` counts); `/meta` institutions carry `volume` per role and month. Image export keeps `button[data-keep]` (matrix cells, bars).
 - Tests: `dashboard/tests/test_payments.py` (synthetic DB `tests/pay_fixtures.py`), `data-loader/tests/test_payment_weekly.py`.
 
 ## Key Configuration
@@ -204,5 +205,5 @@ Omitting optional fields in `/api/api-requests` acts as "no filter" — used by 
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan
-at `specs/018-pagamentos-dash/plan.md`.
+at `specs/019-pagamentos-polish/plan.md`.
 <!-- SPECKIT END -->
