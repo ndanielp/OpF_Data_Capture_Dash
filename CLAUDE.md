@@ -34,7 +34,8 @@ python main.py last-run     # tail of latest log
 python main.py preview consents --rows 20
 
 # After collection, before sync: rebuild behavior alerts (feature 010) and the
-# "em observação" conditions (behavior_watch, feature 011). Also refreshes
+# "em observação" conditions (behavior_watch, feature 011), and payment_weekly
+# (Pagamentos subject, feature 018). Also refreshes
 # api_group_weekly and api_status_weekly, which the collector only refreshes when a
 # run finishes — an interrupted run leaves them stale until this is run.
 python compute_signals.py
@@ -104,6 +105,7 @@ Derived (rebuilt by the collector at the end of a run and by `compute_signals.py
 - **`api_requests` has two levels per API**: the API total (`endpoint_id = 0`) and one row per endpoint that splits that same total. `api_group_weekly` and `api_status_weekly` sum only `endpoint_id = 0`; summing both levels counts every call twice (fixed in feature 012). Any raw `FROM api_requests` sum must filter the level itself.
 - `behavior_signals` / `behavior_signals_run` — behavior-change alerts and run metadata (feature 010; 30k floor always on unique consents).
 - `behavior_watch` — API alert conditions seen in the latest week, awaiting the confirmation week ("em observação", feature 011).
+- `payment_weekly` — week × initiator (`receptor`) × holder (`transmitter`) × endpoint × status, only the endpoints the payments subject reads (65/129 Criar iniciação, 66/130 consultas, 133/135/136/137/139 vínculo). Populated by `scrapers.refresh_payment_weekly` at the end of `run-pi` and in `compute_signals.py`; feeds `/api/v2/payments/*` (feature 018).
 
 ### Session & HTTP
 
@@ -171,6 +173,15 @@ Panel organized by analytical question (the only panel since feature 016). Spec:
 - Export portal (feature 015): `/v2/exportar` lets a user with the access code pick 1–4 of the *collected* tables (`unique`, `active`, `api`, `pay` — the closed list `EXPORT_TABLES` in `services/export.py`; logs and derived tables have no path out), filter, see rows/size and download a streamed CSV (one table) or ZIP with `LEIAME.txt` (several). `routers/export.py` is read-only; the access code is fixed in the server (`EXPORT_CODE` in `services/export.py`, checked only there and never sent to the page; `deploy.sh`/`deploy.ps1` pass `--timeout 3600`). Session token (12 h) and download ticket (60 s) are HMAC-signed with a key derived from the code, so changing the code invalidates both; wrong codes are rate-limited per instance (5 in 10 min → 60 s). At most 2 concurrent downloads per instance. Call level (`level=api` → `endpoint_id = 0`, `endpoint` → `<> 0`) is never mixed in one file. Constitution §6.8 v1.5.0 allows this unlisted page. The portal is switched per deploy: `OPF_EXPORT_ENABLED=0` (set by `./deploy.sh --no-export` / `.\deploy.ps1 -NoExport`; default on) makes `/v2/exportar` and `/api/v2/export/*` answer 404 and leaves the rest untouched. Spec: `specs/015-export-portal/`.
 - Tests: `dashboard/tests/test_v2_*.py` over the synthetic DB in `tests/v2_fixtures.py`.
 
+### Tema Pagamentos (feature 018)
+
+The header carries a "Dados | Pagamentos" selector (Constitution §6.8 v2.1.0). Pagamentos has five tabs: `/v2/pagamentos` (Quem lidera?), `/v2/pagamentos/matriz` (Quem paga com quem?, initiator × holder by month with a timeline), `/v2/pagamentos/evolucao`, `/v2/pagamentos/mudancas`, `/v2/pagamentos/instituicao?uuid=&role=ini|det`. Spec and UX: `specs/018-pagamentos-dash/` (`ux-handoff.md`, contract in `contracts/payments-api.md`).
+
+- Rules: transaction = 200 in Criar iniciação (65 `payments` "Iniciação de Pagamento", 129 `automatic-payments` "Pagamento Automático"); failure = 500 ÷ (200 + 500), 500 includes 4xx; initiator = `receptor`, holder = `transmitter`; last 4 weeks × 30/28; month = sum ÷ weeks of the month in the table × 30/7. The vínculo funnel (133 → 139 → 136 → 137, JSR only) is always a collapsed detail.
+- Code: `services/payments.py` (loads `payment_weekly` once per DB mtime), `routers/payments.py` (`/api/v2/payments/{meta,ranking,flows,enrollment,changes,institution/{uuid}}`); the pages do the "recorte" (include/exclude chips) and the reading sentences in the browser with the shared `V2.pay` helpers in `shell.js`. Colors: `constants.PAYMENT_APIS` / `PAYMENT_HEAT`.
+- Changes: last 4 weeks vs the 4 before, per institution × role; volume −10%/+20%, failure and vínculo conversion ±5 pp; floor 30 mil transações/30 dias (rates: in both windows) and 1.000 vínculos; alert when it also holds with the window ending the week before, else "em observação". Computed on request, no table.
+- Tests: `dashboard/tests/test_payments.py` (synthetic DB `tests/pay_fixtures.py`), `data-loader/tests/test_payment_weekly.py`.
+
 ## Key Configuration
 
 **`data-loader/config.py`**: `DB_PATH`, `LOG_DIR`, `DATA_DIR`, `META_CACHE_PATH` (API/endpoint discovery cache, 24h TTL), `DEFAULT_WORKERS=4`.
@@ -193,5 +204,5 @@ Omitting optional fields in `/api/api-requests` acts as "no filter" — used by 
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan
-at `specs/016-remove-v1-dashboard/plan.md`.
+at `specs/018-pagamentos-dash/plan.md`.
 <!-- SPECKIT END -->

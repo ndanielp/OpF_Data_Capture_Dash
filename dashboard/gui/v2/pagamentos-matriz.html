@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Quem paga com quem? · Pagamentos · Open Finance 2.0</title>
+<script>try{document.documentElement.dataset.theme=localStorage.getItem('opf:v2:theme')||'light'}catch(e){document.documentElement.dataset.theme='light'}</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" crossorigin="anonymous">
+<link rel="stylesheet" href="/static/v2/v2.css">
+<script src="/static/v2/shell.js"></script>
+<style>
+  .pm-layout { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: var(--sp-4); align-items: start; }
+  @media (max-width: 1100px) { .pm-layout { grid-template-columns: 1fr; } }
+  .pm-side { display: flex; flex-direction: column; gap: var(--sp-4); }
+  .pm-time { display: flex; align-items: center; gap: var(--sp-2h); flex-wrap: wrap; }
+  .pm-time input[type="range"] { flex: 1; min-width: 200px; accent-color: var(--text); min-height: 44px; }
+  .pm-ticks { display: flex; justify-content: space-between; font-size: var(--text-caption); color: var(--text-2); padding: 0 52px 0 52px; }
+  .pm-ticks b { color: var(--text); }
+  .pm-scroll { overflow-x: auto; }
+  .pm-table { border-collapse: separate; border-spacing: 3px; width: 100%; font-size: var(--text-caption); }
+  .pm-table th { font-weight: 600; color: var(--text-2); text-align: center; padding: var(--sp-1); vertical-align: bottom; }
+  .pm-table th.row { text-align: right; white-space: nowrap; color: var(--text); }
+  .pm-table td { padding: 0; }
+  /* Valor e cor ficam no div; o botão é só a área de clique por cima (a exportação de imagem tira os botões). */
+  .pm-cell { position: relative; display: flex; align-items: center; justify-content: center; min-width: 64px; min-height: 44px;
+             border: 1px solid transparent; border-radius: var(--r-sm); font-weight: 600; font-size: var(--text-caption);
+             background: var(--track); color: var(--text); }
+  .pm-cell.sel { outline: 2px solid var(--text); outline-offset: 1px; }
+  .pm-hit { position: absolute; inset: 0; width: 100%; border: 0; border-radius: inherit; background: transparent; cursor: pointer; padding: 0; }
+  .pm-cell.zero { color: var(--text-2); background: transparent; border-color: var(--divider); font-weight: 400; }
+  .pm-tot { text-align: center; font-weight: 700; color: var(--text); padding: var(--sp-1) var(--sp-2); }
+  .pm-kv { display: flex; justify-content: space-between; gap: var(--sp-2); font-size: var(--text-small); padding: var(--sp-1h) 0; border-top: 1px solid var(--divider); }
+  .pm-insights { margin: 0; padding-left: var(--sp-5); display: flex; flex-direction: column; gap: var(--sp-2); }
+</style>
+</head>
+<body>
+<header id="v2-header" class="v2-header"></header>
+<main class="v2-main">
+  <section class="v2-filterbar" id="filterbar" aria-label="Filtros"></section>
+  <div class="v2-title">
+    <h1>Quem paga com quem?</h1>
+    <p>Transações por 30 dias entre as maiores iniciadoras (linhas) e detentoras (colunas), mês a mês. Clique numa célula para ver o par.</p>
+  </div>
+  <div class="pm-layout">
+    <article class="v2-card" id="card-matrix"></article>
+    <aside class="pm-side">
+      <article class="v2-card" id="card-cell"></article>
+      <article class="v2-card" id="card-insights"></article>
+    </aside>
+  </div>
+</main>
+
+<script>
+(function () {
+  'use strict';
+  const COLORS = { vol: 'Volume', fail: 'Falha', grow: 'Crescimento' };
+  const SIZES = { 8: 'Top 8', 4: 'Top 4' };
+  const st = { color: 'vol', api: 'all', size: window.innerWidth < 760 ? '4' : '8', t: null, sel: null };
+  let flows = null, timer = null;
+
+  const fM = V2.fmtCompact;
+  const apis = () => st.api === 'all' ? V2.pay.APIS : [st.api];
+
+  /** Matriz do mês m no tamanho escolhido: com Top 4, as posições 5–8 entram em "Outras". */
+  function view(mi) {
+    const m = flows.months[mi], n = flows.rows.length - 1, k = Number(st.size);
+    const map = i => (i < k ? i : k);
+    const rows = flows.rows.slice(0, k).concat(flows.rows[n]), cols = flows.cols.slice(0, k).concat(flows.cols[flows.cols.length - 1]);
+    const ok = rows.map(() => cols.map(() => 0)), fail = rows.map(() => cols.map(() => 0));
+    apis().forEach(a => {
+      const g = flows.data[a][m];
+      g.ok.forEach((row, i) => row.forEach((v, j) => {
+        ok[map(i)][map(j)] += v;
+        fail[map(i)][map(j)] += g.fail[i][j];
+      }));
+    });
+    return { m, rows, cols, ok, fail };
+  }
+  const total = v => v.ok.reduce((s, r) => s + r.reduce((a, b) => a + b, 0), 0);
+  const rowSum = (v, i, kind) => v[kind][i].reduce((a, b) => a + b, 0);
+  const colSum = (v, j, kind) => v[kind].reduce((a, r) => a + r[j], 0);
+  const growth = (now, before) => before > 0 ? now / before - 1 : null;
+
+  function renderFilterbar() {
+    const apiOpts = Object.assign({ all: 'Todas' }, ...V2.pay.APIS.map(a => ({ [a]: V2.pay.label(a) })));
+    document.getElementById('filterbar').innerHTML =
+      '<div class="v2-fb-row"><div class="v2-fb-group">' +
+        '<fieldset class="v2-field"><legend>Cor da célula</legend>' + V2.seg('color', COLORS, st.color) + '</fieldset>' +
+        '<fieldset class="v2-field"><legend>API</legend>' + V2.seg('api', apiOpts, st.api) + '</fieldset>' +
+        '<fieldset class="v2-field"><legend>Tamanho</legend>' + V2.seg('size', SIZES, st.size) + '</fieldset>' +
+      '</div><button type="button" class="v2-btn v2-fb-export" id="f-export">Exportar CSV</button></div>';
+  }
+
+  function cellStyle(v, vPrev, i, j, maxOk, maxRate) {
+    const ok = v.ok[i][j], fl = v.fail[i][j];
+    if (!ok && !fl) return { cls: 'zero', txt: '—', bg: '' };
+    let p, color, txt;
+    if (st.color === 'vol') {
+      p = Math.sqrt(ok / maxOk); color = V2.pay.meta.heat.volume; txt = fM(ok);
+    } else if (st.color === 'fail') {
+      const r = V2.pay.rate(fl, ok); p = maxRate ? r / maxRate : 0; color = V2.pay.meta.heat.fail; txt = V2.fmtShare(r);
+    } else {
+      const g = vPrev ? growth(ok, vPrev.ok[i][j]) : null;
+      if (g == null) return { cls: '', txt: vPrev ? 'novo' : '—', bg: '' };
+      p = Math.min(1, Math.abs(g)); color = g >= 0 ? 'var(--up)' : 'var(--down)'; txt = V2.fmtPct(g);
+    }
+    const pct = Math.round(10 + p * 75);
+    return { cls: '', txt, bg: 'background:color-mix(in srgb, ' + color + ' ' + pct + '%, transparent);' + (pct > 50 ? 'color:var(--surface);' : '') };
+  }
+
+  function render() {
+    const mi = st.t, v = view(mi), vPrev = mi > 0 ? view(mi - 1) : null;
+    const maxOk = Math.max(1, ...v.ok.flat());
+    const tot = total(v);
+    const rates = v.ok.flat().map((o, x) => { const f = v.fail.flat()[x]; return o + f > 0 && o >= tot * 0.001 ? f / (o + f) : 0; });
+    const maxRate = Math.max(0.01, ...rates);
+    const n = flows.months.length;
+    const totCell = (now, before, okSum, failSum) => st.color === 'fail' ? V2.fmtShare(V2.pay.rate(failSum, okSum))
+      : st.color === 'grow' ? (before == null ? '—' : V2.fmtPct(growth(now, before))) : fM(now);
+
+    const head = '<tr><th></th>' + v.cols.map(c => '<th scope="col">' + V2.esc(c.name) + '</th>').join('') + '<th scope="col">Total</th></tr>';
+    const body = v.rows.map((r, i) => '<tr><th scope="row" class="row">' + V2.esc(r.name) + '</th>' +
+      v.cols.map((c, j) => {
+        const s = cellStyle(v, vPrev, i, j, maxOk, maxRate);
+        const sel = st.sel && st.sel.i === i && st.sel.j === j;
+        return '<td><div class="pm-cell ' + s.cls + (sel ? ' sel' : '') + '" style="' + s.bg + '"><span aria-hidden="true">' + s.txt + '</span>' +
+          '<button type="button" class="pm-hit" data-i="' + i + '" data-j="' + j + '" aria-pressed="' + !!sel + '" aria-label="' +
+          V2.esc(r.name + ' para ' + c.name + ': ' + s.txt) + '"></button></div></td>';
+      }).join('') +
+      '<td class="pm-tot">' + totCell(rowSum(v, i, 'ok'), vPrev ? rowSum(vPrev, i, 'ok') : null, rowSum(v, i, 'ok'), rowSum(v, i, 'fail')) + '</td></tr>').join('');
+    const foot = '<tr><th scope="row" class="row">Total</th>' + v.cols.map((c, j) =>
+      '<td class="pm-tot">' + totCell(colSum(v, j, 'ok'), vPrev ? colSum(vPrev, j, 'ok') : null, colSum(v, j, 'ok'), colSum(v, j, 'fail')) + '</td>').join('') +
+      '<td class="pm-tot">' + totCell(tot, vPrev ? total(vPrev) : null, tot, v.fail.flat().reduce((a, b) => a + b, 0)) + '</td></tr>';
+
+    const legend = st.color === 'vol' ? 'Cor mais forte = mais transações' : st.color === 'fail' ? 'Cor mais forte = mais falha · ' + V2.pay.FAIL_RULE
+      : 'Contra o mês anterior · azul = cresceu, laranja = caiu';
+    const apiTxt = st.api === 'all' ? '' : ' · ' + V2.pay.label(st.api);
+    document.getElementById('card-matrix').innerHTML =
+      V2.pay.head('Iniciadora × detentora em ' + V2.pay.monthLong(v.m).toLowerCase() + apiTxt, COLORS[st.color] + ' · transações por 30 dias · ' + SIZES[st.size] + ' + outras', 'matrix') +
+      '<div class="pm-time v2-noexport"><button type="button" class="v2-icon-btn" id="t-prev" aria-label="Mês anterior"' + (mi === 0 ? ' disabled' : '') + '>‹</button>' +
+        '<input type="range" id="t-range" min="0" max="' + (n - 1) + '" value="' + mi + '" aria-label="Mês" aria-valuetext="' + V2.pay.monthLong(v.m) + '">' +
+        '<button type="button" class="v2-icon-btn" id="t-next" aria-label="Próximo mês"' + (mi === n - 1 ? ' disabled' : '') + '>›</button>' +
+        '<button type="button" class="v2-btn" id="t-play">' + (timer ? 'Pausar' : 'Reproduzir') + '</button></div>' +
+      '<div class="pm-ticks v2-noexport">' + flows.months.map((m, k) => k === mi ? '<b>' + V2.pay.mon(m) + '</b>' : '<span>' + V2.pay.mon(m) + '</span>').join('') + '</div>' +
+      '<div class="pm-scroll"><table class="pm-table"><thead>' + head + '</thead><tbody>' + body + foot + '</tbody></table></div>' +
+      '<div class="v2-legend"><span>Linhas: iniciadoras · colunas: detentoras</span><span>' + legend + '</span></div>' +
+      V2.pay.foot(V2.pay.RULE + ' · ' + V2.pay.MONTH_RULE + ' · as maiores pelas últimas 4 semanas');
+    renderCell(v, vPrev);
+    renderInsights(v);
+  }
+
+  function renderCell(v, vPrev) {
+    const el = document.getElementById('card-cell');
+    if (!st.sel) {
+      el.innerHTML = '<div class="v2-card-head"><div><h2>Par selecionado</h2><span class="v2-sub">Clique numa célula da matriz</span></div></div>' +
+        '<p class="v2-small v2-muted" style="margin:0">O detalhe mostra transações, falha, divisão por API e o peso do par na linha e na coluna.</p>';
+      return;
+    }
+    const { i, j } = st.sel, ok = v.ok[i][j], fl = v.fail[i][j];
+    const parts = V2.pay.APIS.map(a => {
+      const g = flows.data[a][v.m];
+      let s = 0;
+      const k = Number(st.size), map = x => (x < k ? x : k);
+      g.ok.forEach((row, x) => row.forEach((val, y) => { if (map(x) === i && map(y) === j) s += val; }));
+      return apis().includes(a) ? s : 0;
+    });
+    const before = vPrev ? vPrev.ok[i][j] : null;
+    const row = rowSum(v, i, 'ok'), col = colSum(v, j, 'ok');
+    const kv = (k, val) => '<div class="pm-kv"><span class="v2-muted">' + k + '</span><b>' + val + '</b></div>';
+    el.innerHTML = '<div class="v2-card-head"><div><h2>' + V2.esc(v.rows[i].name) + ' → ' + V2.esc(v.cols[j].name) + '</h2><span class="v2-sub">' +
+      V2.pay.monthLong(v.m) + ' · por 30 dias</span></div></div>' +
+      kv('Transações', fM(ok)) + kv('Falha', V2.pay.failCell(V2.pay.rate(fl, ok))) +
+      '<div class="pay-split" style="height:14px">' + V2.pay.APIS.map((a, x) => '<div style="width:' + (ok ? parts[x] / ok * 100 : 0).toFixed(1) +
+        '%;background:' + V2.pay.color(a) + '"></div>').join('') + '</div>' +
+      V2.pay.legend(false) +
+      kv('Fatia na linha (' + V2.esc(v.rows[i].name) + ')', row ? V2.fmtShare(ok / row) : '—') +
+      kv('Fatia na coluna (' + V2.esc(v.cols[j].name) + ')', col ? V2.fmtShare(ok / col) : '—') +
+      kv('Vs mês anterior', before == null ? '—' : V2.fmtPct(growth(ok, before)));
+  }
+
+  function renderInsights(v) {
+    const v0 = view(0), tot = total(v), named = [];
+    v.rows.forEach((r, i) => v.cols.forEach((c, j) => {
+      if (r.uuid && c.uuid) named.push({ pair: r.name + ' → ' + c.name, ok: v.ok[i][j], fail: v.fail[i][j], first: v0.ok[i][j] });
+    }));
+    const out = [];
+    const big = named.slice().sort((a, b) => b.ok - a.ok)[0];
+    if (big && big.ok) out.push(big.pair + ' é o maior par: ' + fM(big.ok) + ' por 30 dias (' + V2.fmtShare(big.ok / tot) + ' do total).');
+    const risky = named.filter(x => x.ok >= tot * 0.01).map(x => Object.assign(x, { r: V2.pay.rate(x.fail, x.ok) }))
+      .filter(x => x.r != null).sort((a, b) => b.r - a.r)[0];
+    if (risky) out.push(risky.pair + ' tem a maior falha entre os pares com ao menos 1% do volume: ' + V2.fmtShare(risky.r) + '.');
+    if (st.t > 0) {
+      const grew = named.slice().sort((a, b) => (b.ok - b.first) - (a.ok - a.first))[0];
+      if (grew && grew.ok > grew.first) out.push(grew.pair + ' foi o par que mais cresceu desde ' + V2.pay.mon(flows.months[0]) + ': ' + fM(grew.first) + ' → ' + fM(grew.ok) + '.');
+    }
+    document.getElementById('card-insights').innerHTML = V2.pay.head('O que a matriz mostra', V2.pay.monthLong(v.m) + (st.api === 'all' ? '' : ' · ' + V2.pay.label(st.api)), 'insights') +
+      (out.length ? '<ul class="pm-insights">' + out.map(t => '<li>' + V2.esc(t) + '</li>').join('') + '</ul>' : '<p class="v2-muted" style="margin:0">Sem transações neste mês.</p>') +
+      V2.pay.foot('Pares entre as maiores iniciadoras e detentoras');
+  }
+
+  function stop() { if (timer) { clearInterval(timer); timer = null; } }
+  function go(t) { st.t = Math.max(0, Math.min(flows.months.length - 1, t)); render(); }
+
+  async function load() {
+    const card = document.getElementById('card-matrix');
+    V2.setLoading(card, true);
+    try {
+      flows = await V2.fetchJSON('/api/v2/payments/flows?size=8');
+      if (V2.pay.unavailable(flows) || !flows.months.length) { card.innerHTML = V2.errorBox(V2.pay.UNAVAILABLE); return; }
+      st.t = flows.months.length - 1;
+      render();
+    } catch (e) {
+      card.innerHTML = V2.errorBox(e.message);
+    } finally {
+      V2.setLoading(card, false);
+    }
+  }
+
+  document.getElementById('filterbar').addEventListener('click', ev => {
+    const seg = ev.target.closest('[data-seg] button');
+    if (seg) {
+      st[seg.parentElement.dataset.seg] = seg.dataset.v;
+      st.sel = null;
+      renderFilterbar();
+      if (flows) render();
+      return;
+    }
+    if (ev.target.closest('#f-export') && flows) {
+      const v = view(st.t), rows = [];
+      v.rows.forEach((r, i) => v.cols.forEach((c, j) => { if (v.ok[i][j] || v.fail[i][j]) rows.push({ r: r.name, c: c.name, ok: v.ok[i][j], fail: v.fail[i][j] }); }));
+      V2.exportCSV('pagamentos-matriz-' + v.m + '-' + st.api + '.csv', [
+        { label: 'Mês', value: () => v.m },
+        { label: 'Iniciadora', value: x => x.r },
+        { label: 'Detentora', value: x => x.c },
+        { label: 'Transações (30 dias)', value: x => Math.round(x.ok) },
+        { label: 'Falhas (30 dias)', value: x => Math.round(x.fail) },
+        { label: 'Falha', value: x => V2.pay.rate(x.fail, x.ok) },
+      ], rows);
+    }
+  });
+
+  const main = document.querySelector('.v2-main');
+  main.addEventListener('click', ev => {
+    const cell = ev.target.closest('.pm-hit');
+    if (cell) {
+      const i = Number(cell.dataset.i), j = Number(cell.dataset.j);
+      st.sel = st.sel && st.sel.i === i && st.sel.j === j ? null : { i, j };
+      render();
+      return;
+    }
+    if (ev.target.closest('#t-prev')) { stop(); go(st.t - 1); return; }
+    if (ev.target.closest('#t-next')) { stop(); go(st.t + 1); return; }
+    if (ev.target.closest('#t-play')) {
+      if (timer) { stop(); render(); return; }
+      if (st.t >= flows.months.length - 1) st.t = 0;
+      timer = setInterval(() => {
+        if (st.t >= flows.months.length - 1) { stop(); render(); return; }
+        go(st.t + 1);
+      }, 1200);
+      render();
+      return;
+    }
+    const b = ev.target.closest('[data-img]');
+    if (b) {
+      const card = document.getElementById(b.dataset.img === 'matrix' ? 'card-matrix' : 'card-insights');
+      V2.exportImage(card, { title: card.querySelector('h2').textContent, subtitle: 'Pagamentos · quem paga com quem',
+        note: V2.pay.RULE, filename: 'pagamentos-matriz-' + b.dataset.img + '.png' }).catch(e => alert(e.message));
+    }
+  });
+  main.addEventListener('input', ev => { if (ev.target.id === 't-range') { stop(); go(Number(ev.target.value)); } });
+
+  V2.onThemeChange(() => { if (flows && st.t != null) render(); });
+  V2.initShell('p-matriz').then(() => { renderFilterbar(); load(); })
+    .catch(e => { document.getElementById('card-matrix').innerHTML = V2.errorBox(e.message); });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Como opera uma instituição? · Pagamentos · Open Finance 2.0</title>
+<script>try{document.documentElement.dataset.theme=localStorage.getItem('opf:v2:theme')||'light'}catch(e){document.documentElement.dataset.theme='light'}</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" crossorigin="anonymous">
+<link rel="stylesheet" href="/static/v2/v2.css">
+<script src="/static/v2/shell.js"></script>
+<style>
+  .pi-role { display: flex; gap: var(--sp-2); flex-wrap: wrap; }
+  .pi-role button { min-height: 44px; padding: 0 var(--sp-4); border-radius: var(--r-pill); border: 1px solid var(--control-border); background: var(--surface); cursor: pointer; }
+  .pi-role button[aria-pressed="true"] { background: var(--text); border-color: var(--text); color: var(--surface); font-weight: 600; }
+  .pi-role button:disabled { border-style: dashed; color: var(--text-2); cursor: not-allowed; }
+  .pi-pick { min-width: 220px; text-align: left; font-weight: 600; }
+  .pi-fail { display: grid; grid-template-columns: minmax(110px, 150px) minmax(120px, 1fr) 70px 80px; gap: var(--sp-3); align-items: center;
+             min-height: 36px; border-bottom: 1px solid var(--divider); font-size: var(--text-small); }
+  .pi-fail.head { min-height: 26px; font-size: var(--text-caption); font-weight: 600; color: var(--text-2); }
+  .pi-fail .r { text-align: right; }
+  @media (max-width: 720px) { .pi-fail { grid-template-columns: minmax(80px, 1fr) minmax(50px, 1fr) 44px 64px; gap: var(--sp-2); } }
+</style>
+</head>
+<body>
+<header id="v2-header" class="v2-header"></header>
+<main class="v2-main">
+  <section class="v2-filterbar" id="filterbar" aria-label="Filtros"></section>
+  <div class="v2-title" id="page-title"></div>
+  <article class="v2-card" id="card-1"></article>
+  <article class="v2-card" id="card-2"></article>
+  <section class="v2-grid v2-grid-2">
+    <article class="v2-card" id="card-3"></article>
+    <article class="v2-card" id="card-4"></article>
+  </section>
+  <section class="pay-detail" id="detail" aria-label="Detalhes"></section>
+</main>
+
+<script>
+(function () {
+  'use strict';
+  const url = new URLSearchParams(location.search);
+  const f0 = V2.getFilters();
+  const st = { uuid: url.get('uuid') || f0.pay_inst || null, role: url.get('role') || null, off: {}, jsr: false };
+  let d = null;
+
+  const fM = V2.fmtCompact;
+  const pc = x => Math.round(x * 100) + '%';
+  const p1 = x => x == null ? '—' : V2.fmtShare(x);
+  const isIni = () => d.role === 'ini';
+  const name = () => d.institution.short;
+
+  function save() {
+    V2.setFilters({ pay_inst: st.uuid });
+    history.replaceState(null, '', '/v2/pagamentos/instituicao?uuid=' + encodeURIComponent(st.uuid) + '&role=' + d.role);
+  }
+
+  /** Soma do recorte no mês; `only` = índice de uma contraparte. */
+  function sum(api, m, kind, only) {
+    const v = d.data[api][m][kind];
+    let s = 0;
+    v.forEach((x, k) => { if (!st.off[k] && (only == null || only === k)) s += x; });
+    return s;
+  }
+  const eco = (api, m, kind) => d.ecosystem[api][m][kind];
+
+  function renderFilterbar() {
+    const roleBtn = (r, label) => '<button type="button" data-role="' + r + '" aria-pressed="' + (d && d.role === r) + '"' +
+      (d && !d.roles.includes(r) ? ' disabled title="Sem transações neste papel"' : '') + '>' + label + '</button>';
+    const me = d ? d.institution : null;
+    const n = Object.values(st.off).filter(Boolean).length;
+    const kind = d && isIni() ? 'detentora(s)' : 'iniciadora(s)';
+    document.getElementById('filterbar').innerHTML =
+      '<div class="v2-fb-row"><div class="v2-fb-group">' +
+        '<div class="v2-field"><span class="v2-label">Instituição</span><button type="button" class="v2-btn pi-pick" id="f-inst">' +
+          V2.esc(me ? me.short : 'Escolher…') + ' ▾</button></div>' +
+        '<fieldset class="v2-field"><legend>Papel em pagamentos</legend><div class="pi-role">' + roleBtn('ini', 'Iniciadora') + roleBtn('det', 'Detentora') + '</div></fieldset>' +
+      '</div><button type="button" class="v2-btn v2-fb-export" id="f-export">Exportar CSV</button></div>' +
+      (d ? '<div class="v2-fb-row"><div class="pay-scope"><div class="pay-scope-head"><span class="v2-label" style="font-weight:600">' +
+        (isIni() ? 'Detentoras' : 'Iniciadoras') + ' na análise</span><button type="button" class="pay-link" id="f-all">todas</button>' +
+        '<span class="v2-small v2-muted">· clique para incluir ou remover da análise</span></div>' +
+        V2.pay.chips(d.counterparts.map(c => c.name), st.off, 'k') +
+        '<span class="v2-small v2-muted">' + (n ? 'Fora da análise: ' + n + ' ' + kind + '. Os 4 passos seguem este recorte; a fatia do ecossistema compara com o ecossistema inteiro.'
+          : 'Todas as contrapartes. Os 4 passos seguem este recorte.') +
+        (me.in_data ? ' · ' + V2.esc(me.short) + ' também é receptora de dados: <a href="/v2/instituicao?uuid=' + encodeURIComponent(me.uuid) + '">ver no tema Dados →</a>' : '') +
+        '</span></div></div>' : '');
+  }
+
+  function render() {
+    const M = d.months, L = M.length - 1, first = V2.pay.mon(M[0]), last = V2.pay.mon(M[L]);
+    const IP = M.map(m => sum('payments', m, 'ok')), PA = M.map(m => sum('automatic-payments', m, 'ok'));
+    const T = IP.map((v, i) => v + PA[i]);
+    const ECO = M.map(m => eco('payments', m, 'ok') + eco('automatic-payments', m, 'ok'));
+    const empty = 'Sem transações no recorte escolhido.';
+    const roleTxt = isIni() ? 'iniciadoras' : 'detentoras';
+    document.getElementById('page-title').innerHTML = '<h1>' + V2.esc(name()) + ' · como ' + (isIni() ? 'iniciadora' : 'detentora') + '</h1><p>' +
+      (isIni() ? 'Pagamentos que ' + V2.esc(name()) + ' inicia, em contas de outros bancos.' : 'Pagamentos iniciados por outras instituições a partir de contas ' + V2.esc(name()) + '.') +
+      ' ' + V2.pay.monthLong(M[0]).replace(/\/.*/, '') + ' a ' + V2.pay.monthLong(M[L]).toLowerCase() + ', por mês e normalizado para 30 dias. Leia de cima para baixo: quanto opera, com quem, com que mix e com que qualidade.</p>';
+
+    // 1. Quanto opera?
+    const g = T[0] ? T[L] / T[0] - 1 : null, ge = ECO[0] ? ECO[L] / ECO[0] - 1 : null;
+    const share = ECO[L] ? T[L] / ECO[L] : null;
+    const t1 = !T[L] ? empty : 'Em ' + last + ', ' + name() + (isIni() ? ' iniciou ' : ' recebeu ') + fM(T[L]) + ' transações por 30 dias, ' + p1(share) + ' do ecossistema.' +
+      (g == null ? '' : ' De ' + first + ' a ' + last + (g >= 0 ? ' cresceu ' + pc(g) : ' caiu ' + pc(-g)) + (ge == null ? '.' : ', ' + (g < ge ? 'abaixo' : 'acima') + ' do ecossistema (' + V2.fmtPct(ge) + ').'));
+    document.getElementById('card-1').innerHTML = V2.pay.head('Quanto opera?', 'Transações por 30 dias · ' + V2.pay.monthLong(M[0]) + ' a ' + V2.pay.monthLong(M[L]), '1', 1) + V2.pay.take(t1) +
+      '<div class="pay-kpis"><div class="pay-kcol">' +
+        '<div><div class="v2-kpi-label">Transações ' + (isIni() ? 'iniciadas' : 'recebidas') + ' em ' + last + ' · 30 dias</div><div class="v2-kpi-value">' + fM(T[L]) + '</div>' +
+          '<div class="v2-small v2-muted">' + first + ': ' + fM(T[0]) + '</div></div>' +
+        '<div><div class="v2-kpi-label">Fatia do ecossistema em ' + last + '</div><div style="font-size:var(--text-metric);font-weight:700">' + p1(share) + '</div>' +
+          '<div class="v2-small v2-muted">' + (d.rank.position ? d.rank.position + 'ª de ' + d.rank.of + ' ' + roleTxt : 'sem transações em ' + last) + '</div></div>' +
+      '</div><div class="pay-scroll"><div>' + V2.pay.stackBars(M, IP, PA) + '</div></div></div>' +
+      V2.pay.legend(false, '<span>· ' + V2.pay.unitOf(Math.max(...T)) + '</span>') + V2.pay.foot(V2.pay.RULE + ' · ' + V2.pay.MONTH_RULE);
+
+    // 2. Com quem?
+    const per = d.counterparts.map((c, k) => {
+      const ip = sum('payments', M[L], 'ok', k), pa = sum('automatic-payments', M[L], 'ok', k);
+      const a = sum('payments', M[0], 'ok', k) + sum('automatic-payments', M[0], 'ok', k);
+      return { n: c.name, k, ip, pa, t: ip + pa, dl: ip + pa - a, other: c.uuid == null };
+    }).filter(x => !st.off[x.k]).sort((a, b) => b.t - a.t);
+    const maxC = Math.max(1, ...per.map(x => x.t));
+    const named = per.filter(x => !x.other), top = named[0];
+    const gain = per.slice().sort((a, b) => b.dl - a.dl)[0], loss = per.slice().sort((a, b) => a.dl - b.dl)[0];
+    const t2 = top && T[L] ? top.n + ' concentra ' + pc(top.t / T[L]) + ' do volume' + (named[1] ? ', seguido de ' + named[1].n + ' (' + pc(named[1].t / T[L]) + ')' : '') +
+      '. Maior ganho desde ' + first + ': ' + gain.n + ' (' + (gain.dl >= 0 ? '+' : '−') + fM(Math.abs(gain.dl)) + ').' +
+      (loss && loss.dl < 0 ? ' Maior perda: ' + loss.n + ' (−' + fM(-loss.dl) + ').' : '') : empty;
+    const q2 = isIni() ? 'Em quais detentoras opera?' : 'Quais iniciadoras usam contas ' + name() + '?';
+    document.getElementById('card-2').innerHTML = V2.pay.head(V2.esc(q2), 'Transações por 30 dias em ' + last + ' e variação desde ' + first, '2', 2) + V2.pay.take(t2) +
+      '<div class="pay-scroll"><div><div class="pay-row head"><span>' + (isIni() ? 'Detentora' : 'Iniciadora') + '</span><span>Transações em ' + last + '</span>' +
+        '<span class="r">Volume</span><span class="r">vs ' + first + '</span></div>' +
+      per.map(x => '<div class="pay-row"><b>' + V2.esc(x.n) + '</b><div class="pay-split" style="height:12px">' +
+        '<div style="width:' + (x.ip / maxC * 100).toFixed(1) + '%;background:' + V2.pay.color('payments') + '"></div>' +
+        '<div style="width:' + (x.pa / maxC * 100).toFixed(1) + '%;background:' + V2.pay.color('automatic-payments') + '"></div></div>' +
+        '<span class="r"><b>' + fM(x.t) + '</b></span><span class="r ' + (x.dl >= 0 ? 'v2-up' : 'v2-down') + '">' + (x.dl >= 0 ? '+' : '−') + fM(Math.abs(x.dl)) + '</span></div>').join('') +
+      '</div></div>' + V2.pay.legend(false) + V2.pay.foot(V2.pay.RULE + ' · ' + V2.pay.MONTH_RULE);
+
+    // 3. Com que mix?
+    const s0 = T[0] ? IP[0] / T[0] : 0, sL = T[L] ? IP[L] / T[L] : 0;
+    const eL = ECO[L] ? eco('payments', M[L], 'ok') / ECO[L] : 0;
+    const t3 = !T[L] ? empty : sL < 0.01 && s0 < 0.02
+      ? 'Praticamente 100% Pagamento Automático em todo o período: ' + name() + ' não usa a Iniciação de Pagamento' + (isIni() ? ' como iniciadora.' : ' neste recorte.')
+      : 'A Iniciação de Pagamento foi de ' + pc(s0) + ' para ' + pc(sL) + ' do total (' + V2.fmtPp((sL - s0) * 100) + '). No ecossistema, ela é ' + pc(eL) + '.';
+    document.getElementById('card-3').innerHTML = V2.pay.head('Com que mix?', '% da Iniciação de Pagamento no total do mês', '3', 3) + V2.pay.take(t3) +
+      V2.pay.shareRows(M, IP, PA) + V2.pay.legend(false) + V2.pay.foot(V2.pay.RULE);
+
+    // 4. Com que qualidade?
+    const fr = api => M.map(m => V2.pay.rate(sum(api, m, 'fail'), sum(api, m, 'ok')));
+    const FIP = fr('payments'), FPA = fr('automatic-payments');
+    const EPA = M.map(m => V2.pay.rate(eco('automatic-payments', m, 'fail'), eco('automatic-payments', m, 'ok')));
+    const fl = d.counterparts.map((c, k) => {
+      const ok = sum('payments', M[L], 'ok', k) + sum('automatic-payments', M[L], 'ok', k);
+      const f = sum('payments', M[L], 'fail', k) + sum('automatic-payments', M[L], 'fail', k);
+      return { n: c.name, k, f, rate: V2.pay.rate(f, ok) };
+    }).filter(x => !st.off[x.k] && x.f > 0).sort((a, b) => b.f - a.f);
+    const totF = fl.reduce((s, x) => s + x.f, 0), fs = fl.slice(0, 5), w = fs[0];
+    const anyPa = PA.some(v => v > 0), anyIp = IP.some(v => v > 0);
+    const t4 = !T[L] ? empty : (anyPa ? 'Falha do Pagamento Automático: ' + p1(FPA[0]) + ' em ' + first + ' → ' + p1(FPA[L]) + ' em ' + last + ' (ecossistema: ' + p1(EPA[L]) + ').'
+      : 'Falha da Iniciação de Pagamento: ' + p1(FIP[0]) + ' em ' + first + ' → ' + p1(FIP[L]) + ' em ' + last + '.') +
+      (w ? ' ' + w.n + ' responde por ' + pc(w.f / totF) + ' das falhas, com taxa de ' + p1(w.rate) + '.' : '');
+    const lines = [{ values: EPA, color: V2.pay.color('automatic-payments', false), dash: true, label: 'Automático no ecossistema' }];
+    if (anyPa) lines.push({ values: FPA, color: V2.pay.color('automatic-payments', true), label: V2.pay.label('automatic-payments') });
+    if (anyIp) lines.push({ values: FIP, color: V2.pay.color('payments', true), label: V2.pay.label('payments') });
+    document.getElementById('card-4').innerHTML = V2.pay.head('Com que qualidade?', 'Taxa de falha na criação, por mês', '4', 4) + V2.pay.take(t4) +
+      V2.pay.lines(M, lines) +
+      V2.pay.legend(true, '<span><span class="v2-dot" style="background:' + V2.pay.color('automatic-payments') + '"></span> Automático no ecossistema (tracejada)</span>') +
+      '<div><div class="v2-label" style="font-weight:600;padding-bottom:var(--sp-1h)">Onde falha em ' + last + '</div>' +
+        '<div class="pi-fail head"><span>' + (isIni() ? 'Detentora' : 'Iniciadora') + '</span><span>Parte das falhas</span><span class="r">Parte</span><span class="r">Falha</span></div>' +
+        (fs.length ? fs.map(x => '<div class="pi-fail"><b>' + V2.esc(x.n) + '</b><div class="pay-split" style="height:12px"><div style="width:' +
+          (x.f / fs[0].f * 100).toFixed(1) + '%;background:var(--down)"></div></div><span class="r">' + pc(x.f / totF) + '</span><span class="r">' +
+          V2.pay.failCell(x.rate) + '</span></div>').join('') : '<div class="v2-small v2-muted" style="padding:var(--sp-2) 0">Nenhuma falha em ' + last + '.</div>') +
+      '</div>' + V2.pay.foot(V2.pay.FAIL_RULE);
+  }
+
+  function renderDetail() {
+    const el = document.getElementById('detail');
+    const e = d.enrollment, ee = d.enrollment_ecosystem || {};
+    const line = e
+      ? 'Conversão do vínculo ' + (isIni() ? 'iniciado por ' : 'com contas ') + V2.esc(name()) + ': <b>' + p1(e.conversion) + '</b> (ecossistema ' + p1(ee.conversion) + ')' +
+        (isIni() ? '' : ' · autorização no ' + V2.esc(name()) + ': <b>' + p1(e.authorization) + '</b> (' + p1(ee.authorization) + ')')
+      : (isIni() ? 'Como iniciadora, ' + V2.esc(name()) + ' não usa a JSR no período: não há vínculos de conta iniciados por ela.'
+                 : 'Nenhum vínculo de conta com contas ' + V2.esc(name()) + ' no período.');
+    const p = d.polls || {};
+    const polls = V2.pay.APIS.filter(a => p[a] != null).map(a => V2.fmtDec(p[a], 1) + (a === 'payments' ? ' na ' : ' no ') + V2.pay.label(a));
+    el.innerHTML = '<div class="pay-detail-head"><div><div class="v2-label" style="font-weight:600">Detalhe · só Jornada sem Redirecionamento (JSR)</div><span>' + line + '</span></div>' +
+      (e ? '<button type="button" class="v2-btn" id="jsr-toggle" aria-expanded="' + st.jsr + '">' + (st.jsr ? 'Ocultar funil' : 'Ver funil do vínculo') + '</button>' : '') + '</div>' +
+      (e && st.jsr ? '<div class="pay-detail-body">' + V2.pay.funnel(e.steps.map(s => s.endpoint === 136 && !isIni() ? Object.assign({}, s, { label: 'Autorizado no ' + name() }) : s)) +
+        '<div class="v2-small v2-muted" style="display:flex;flex-direction:column;gap:var(--sp-2)"><span>' +
+        (isIni() ? 'Vínculos iniciados por ' + V2.esc(name()) : 'Vínculos com contas ' + V2.esc(name()) + '. Como detentora, controla a autorização (sinais de risco → parâmetros FIDO2), a etapa que mais perde no ecossistema') +
+        ', últimas 4 semanas, por 30 dias.</span><span>Pagamentos com redirecionamento não entram. A autorização no detentor não gera chamada: é inferida pelo pedido de parâmetros FIDO2. Não segue o recorte acima.</span>' +
+        '<span>Vínculos encerrados (revogados ou rejeitados): <b>' + fM(e.ended) + '</b>.</span></div></div>' : '') +
+      '<span class="v2-small v2-muted" style="border-top:1px solid var(--divider);padding-top:var(--sp-2h)">Detalhe operacional · consultas por iniciação: ' +
+        (polls.length ? polls.join(' e ') : '—') + ' (últimas 4 semanas).</span>';
+  }
+
+  function show() { renderFilterbar(); render(); renderDetail(); }
+
+  async function load() {
+    const cards = ['card-1', 'card-2', 'card-3', 'card-4'].map(id => document.getElementById(id));
+    cards.forEach(c => V2.setLoading(c, true));
+    try {
+      const q = st.role ? '?role=' + st.role : '';
+      d = await V2.fetchJSON('/api/v2/payments/institution/' + encodeURIComponent(st.uuid) + q);
+      if (V2.pay.unavailable(d)) { d = null; renderFilterbar(); cards[0].innerHTML = V2.errorBox(V2.pay.UNAVAILABLE); return; }
+      st.role = d.role;
+      save();
+      show();
+    } catch (e) {
+      d = null;
+      renderFilterbar();
+      cards[0].innerHTML = V2.errorBox(e.message);
+      ['card-2', 'card-3', 'card-4', 'detail'].forEach(id => { document.getElementById(id).innerHTML = ''; });
+      openPicker();
+    } finally {
+      cards.forEach(c => V2.setLoading(c, false));
+    }
+  }
+
+  function openPicker() {
+    const anchor = document.getElementById('f-inst');
+    if (!anchor) return;
+    V2.openInstitutionPicker(anchor, u => { st.uuid = u; st.role = null; st.off = {}; st.jsr = false; load(); },
+      st.uuid ? [st.uuid] : [], { list: V2.pay.meta.institutions });
+  }
+
+  document.getElementById('filterbar').addEventListener('click', ev => {
+    if (ev.target.closest('#f-inst')) return openPicker();
+    const r = ev.target.closest('[data-role]');
+    if (r && !r.disabled && d && r.dataset.role !== d.role) { st.role = r.dataset.role; st.off = {}; st.jsr = false; load(); return; }
+    const k = ev.target.closest('[data-k]');
+    if (k) { st.off[k.dataset.k] = !st.off[k.dataset.k]; renderFilterbar(); render(); return; }
+    if (ev.target.closest('#f-all')) { st.off = {}; renderFilterbar(); render(); return; }
+    if (ev.target.closest('#f-export') && d) {
+      const rows = [];
+      d.months.forEach(m => d.counterparts.forEach((c, i) => V2.pay.APIS.forEach(a =>
+        rows.push({ m, c: c.name, a, ok: d.data[a][m].ok[i], fail: d.data[a][m].fail[i] }))));
+      V2.exportCSV('pagamentos-' + name().toLowerCase().replace(/\W+/g, '-') + '-' + d.role + '.csv', [
+        { label: 'Mês', value: r => r.m },
+        { label: isIni() ? 'Detentora' : 'Iniciadora', value: r => r.c },
+        { label: 'API', value: r => V2.pay.label(r.a) },
+        { label: 'Transações (30 dias)', value: r => Math.round(r.ok) },
+        { label: 'Falhas (30 dias)', value: r => Math.round(r.fail) },
+        { label: 'Falha', value: r => V2.pay.rate(r.fail, r.ok) },
+      ], rows.filter(r => r.ok || r.fail));
+    }
+  });
+
+  document.querySelector('.v2-main').addEventListener('click', ev => {
+    if (ev.target.closest('#jsr-toggle')) { st.jsr = !st.jsr; renderDetail(); return; }
+    const b = ev.target.closest('[data-img]');
+    if (b) {
+      const card = document.getElementById('card-' + b.dataset.img);
+      V2.exportImage(card, { title: name() + ' · ' + card.querySelector('h2').textContent, subtitle: 'Pagamentos · como ' + (isIni() ? 'iniciadora' : 'detentora'),
+        note: card.querySelector('.pay-take').textContent, filename: 'pagamentos-instituicao-' + b.dataset.img + '.png' }).catch(e => alert(e.message));
+    }
+  });
+
+  V2.onThemeChange(() => { if (d) show(); });
+  V2.initShell('p-instituicao').then(() => {
+    if (!st.uuid) {
+      const list = V2.pay.meta.institutions || [];
+      st.uuid = (list.find(i => i.short === 'Nubank') || list[0] || {}).uuid || null;
+    }
+    if (!st.uuid) { document.getElementById('card-1').innerHTML = V2.errorBox(V2.pay.UNAVAILABLE); return; }
+    load();
+  }).catch(e => { document.getElementById('card-1').innerHTML = V2.errorBox(e.message); });
+})();
+</script>
+</body>
+</html>

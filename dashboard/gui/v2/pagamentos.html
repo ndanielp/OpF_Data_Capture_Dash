@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Quem lidera? · Pagamentos · Open Finance 2.0</title>
+<script>try{document.documentElement.dataset.theme=localStorage.getItem('opf:v2:theme')||'light'}catch(e){document.documentElement.dataset.theme='light'}</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" crossorigin="anonymous">
+<link rel="stylesheet" href="/static/v2/v2.css">
+<script src="/static/v2/shell.js"></script>
+<style>
+  .pl-row { display: grid; grid-template-columns: 28px minmax(120px, 1.1fr) minmax(140px, 2fr) 80px 64px 84px 84px 64px 44px;
+            gap: var(--sp-3); align-items: center; min-height: 44px; border-bottom: 1px solid var(--divider); font-size: var(--text-small); }
+  .pl-row.head { min-height: 32px; font-size: var(--text-caption); font-weight: 600; color: var(--text-2); }
+  .pl-row.pinned { background: var(--pinned-bg); }
+  .pl-row.cut { border-top: 2px dashed var(--control-border); }
+  .pl-row .r { text-align: right; }
+  .pl-row a { color: var(--text); font-weight: 600; text-decoration: none; }
+  .pl-row a:hover { color: var(--link); text-decoration: underline; }
+  .pl-kpi .v2-kpi-value small { font-size: var(--text-emph); color: var(--text-2); font-weight: 500; }
+  @media (max-width: 720px) { .pl-scroll { overflow-x: auto; } .pl-row { min-width: 760px; } }
+</style>
+</head>
+<body>
+<header id="v2-header" class="v2-header"></header>
+<main class="v2-main">
+  <section class="v2-filterbar" id="filterbar" aria-label="Filtros"></section>
+  <div class="v2-title">
+    <h1>Quem lidera a iniciação de pagamentos?</h1>
+    <p>Transações aceitas (Criar iniciação com sucesso) nas últimas 4 semanas, normalizadas para 30 dias.</p>
+  </div>
+  <section class="v2-grid v2-grid-4" id="kpis" aria-label="Resumo"></section>
+  <article class="v2-card" id="card-rank"></article>
+</main>
+
+<script>
+(function () {
+  'use strict';
+  const ROLES = { ini: 'Iniciadoras', det: 'Detentoras' };
+  const f0 = V2.getFilters();
+  const st = {
+    role: ROLES[f0.pay_role] ? f0.pay_role : 'ini',
+    api: ['all', 'payments', 'automatic-payments'].includes(f0.pay_api) ? f0.pay_api : 'all',
+  };
+  let data = null;
+
+  const apiOptions = () => Object.assign({ all: 'Todas' }, ...V2.pay.APIS.map(a => ({ [a]: V2.pay.label(a) })));
+  const roleName = () => st.role === 'ini' ? 'Iniciadora' : 'Detentora';
+
+  function renderFilterbar() {
+    const prefs = V2.pay.getPrefs();
+    const tag = (u, kind) => {
+      const i = V2.pay.inst(u);
+      const name = i ? i.short : u;
+      return '<span class="v2-chip-tag ' + kind + '"><span class="v2-chip-name">' + V2.esc(name) + (kind === 'pinned' ? ' · fixada' : ' · excluída') +
+        '</span><button type="button" data-drop-' + kind + '="' + u + '" aria-label="Remover ' + V2.esc(name) + '">×</button></span>';
+    };
+    document.getElementById('filterbar').innerHTML =
+      '<div class="v2-fb-row"><div class="v2-fb-group">' +
+        '<fieldset class="v2-field"><legend>Ranking de</legend>' + V2.seg('role', ROLES, st.role) + '</fieldset>' +
+        '<fieldset class="v2-field"><legend>API</legend>' + V2.seg('api', apiOptions(), st.api) + '</fieldset>' +
+        '<fieldset class="v2-field"><legend>Fixar / excluir</legend><div class="v2-chips">' +
+          prefs.pinned.map(u => tag(u, 'pinned')).join('') + prefs.excluded.map(u => tag(u, 'excluded')).join('') +
+          '<button type="button" class="v2-chip-add" id="f-add">+ instituição</button></div></fieldset>' +
+      '</div><button type="button" class="v2-btn v2-fb-export" id="f-export">Exportar CSV</button></div>';
+  }
+
+  function kpis() {
+    const e = data.ecosystem, ip = e.payments, pa = e['automatic-payments'];
+    const prev = e.ip_share_prev, now = ip.share;
+    const dpp = prev != null && now != null ? (now - prev) * 100 : null;
+    const moved = dpp == null ? 'sem base nas 4 semanas anteriores'
+      : 'Iniciação ' + (dpp >= 0 ? 'ganhou ' : 'perdeu ') + V2.fmtDec(Math.abs(dpp), 0) + ' pp vs 4 semanas anteriores (' +
+        Math.round(prev * 100) + '% → ' + Math.round(now * 100) + '%)';
+    const apiCard = (slug, v, note) =>
+      '<div class="v2-card pl-kpi"><span class="v2-kpi-label"><span class="v2-dot" style="background:' + V2.pay.color(slug) + '"></span> ' +
+      V2.esc(V2.pay.label(slug)) + '</span><span class="v2-kpi-value">' + V2.fmtCompact(v.value) + ' <small>' + V2.fmtShare(v.share) + '</small></span>' +
+      '<span class="v2-small v2-muted">Falha na criação: ' + V2.pay.failCell(v.fail) + (note || '') + '</span></div>';
+    document.getElementById('kpis').innerHTML =
+      '<div class="v2-card pl-kpi"><span class="v2-kpi-label">Transações · 30 dias</span><span class="v2-kpi-value">' + V2.fmtCompact(e.total) + '</span>' +
+        '<span class="v2-small v2-muted">' + e.initiators + ' iniciadoras · ' + e.holders + ' detentoras</span></div>' +
+      apiCard('payments', ip) + apiCard('automatic-payments', pa, ' · inclui novas tentativas') +
+      '<div class="v2-card pl-kpi"><span class="v2-kpi-label">Iniciação × Automático</span>' +
+        '<div class="pay-split" style="height:18px" role="img" aria-label="' + V2.fmtShare(ip.share) + ' Iniciação de Pagamento">' +
+          '<div style="width:' + (ip.share * 100).toFixed(1) + '%;background:' + V2.pay.color('payments') + '"></div>' +
+          '<div style="width:' + (pa.share * 100).toFixed(1) + '%;background:' + V2.pay.color('automatic-payments') + '"></div></div>' +
+        '<span class="v2-small v2-muted">' + moved + '</span></div>';
+  }
+
+  function rankCard() {
+    const card = document.getElementById('card-rank');
+    const apiTxt = st.api === 'all' ? '' : ' · ' + V2.pay.label(st.api);
+    const title = (st.role === 'ini' ? 'Top 10 iniciadoras (quem inicia o pagamento)' : 'Top 10 detentoras (banco da conta que paga)') + apiTxt;
+    const max = Math.max(1, ...data.rows.map(r => r.value));
+    const ipOn = st.api !== 'automatic-payments', paOn = st.api !== 'payments';
+    const rows = data.rows.map((r, i) => {
+      const ip = ipOn ? r.payments : 0, pa = paOn ? r['automatic-payments'] : 0;
+      const g = r.growth;
+      return '<div class="pl-row' + (r.pinned ? ' pinned' : '') + (r.cut ? ' cut' : '') + '">' +
+        '<span class="v2-muted">' + (r.cut || i >= 10 ? '' : i + 1) + '</span>' +
+        '<a href="/v2/pagamentos/instituicao?uuid=' + encodeURIComponent(r.uuid) + '&role=' + st.role + '">' + V2.esc(r.name) + '</a>' +
+        '<div class="pay-split" style="height:14px"><div style="width:' + (ip / max * 100).toFixed(1) + '%;background:' + V2.pay.color('payments') + '"></div>' +
+          '<div style="width:' + (pa / max * 100).toFixed(1) + '%;background:' + V2.pay.color('automatic-payments') + '"></div></div>' +
+        '<span class="r"><b>' + V2.fmtCompact(r.value) + '</b></span><span class="r">' + V2.fmtShare(r.share) + '</span>' +
+        '<span class="r">' + V2.pay.failCell(r.fail.payments) + '</span><span class="r">' + V2.pay.failCell(r.fail['automatic-payments']) + '</span>' +
+        '<span class="r ' + (g == null ? 'v2-flat' : g >= 0 ? 'v2-up' : 'v2-down') + '">' + V2.fmtPct(g) + '</span>' +
+        '<button type="button" class="v2-row-menu" data-row="' + r.uuid + '" aria-label="Opções de ' + V2.esc(r.name) + '">⋯</button></div>';
+    }).join('');
+    card.innerHTML = V2.pay.head(title, 'Transações por 30 dias · 4 semanas até ' + V2.fmtDate(data.week), 'rank') +
+      '<div class="pl-scroll"><div class="pl-row head"><span>#</span><span>' + roleName() + '</span><span>Transações</span>' +
+        '<span class="r">Volume</span><span class="r">Fatia</span><span class="r" title="Falha na criação · Iniciação de Pagamento">Falha Inic.</span>' +
+        '<span class="r" title="Falha na criação · Pagamento Automático">Falha Autom.</span><span class="r">Cresc.</span><span></span></div>' +
+        (rows || '<div class="v2-placeholder">Nenhuma instituição com transações nesta API.</div>') + '</div>' +
+      V2.pay.legend(false, '<span><span class="pay-bad">≥ 20%</span> falha alta</span>') +
+      V2.pay.foot(V2.pay.RULE + ' · ' + V2.pay.FAIL_RULE + ' · Cresc. = 4 semanas vs as 4 anteriores');
+  }
+
+  async function load() {
+    const cards = [document.getElementById('card-rank')];
+    cards.forEach(c => V2.setLoading(c, true));
+    const prefs = V2.pay.getPrefs();
+    const q = new URLSearchParams({ role: st.role, api: st.api, limit: 10, pinned: prefs.pinned.join(','), excluded: prefs.excluded.join(',') });
+    try {
+      data = await V2.fetchJSON('/api/v2/payments/ranking?' + q);
+      if (V2.pay.unavailable(data)) {
+        document.getElementById('kpis').innerHTML = '';
+        cards[0].innerHTML = V2.errorBox(V2.pay.UNAVAILABLE);
+        return;
+      }
+      kpis();
+      rankCard();
+    } catch (e) {
+      cards[0].innerHTML = V2.errorBox(e.message);
+    } finally {
+      cards.forEach(c => V2.setLoading(c, false));
+    }
+  }
+
+  function setPrefs(fn) { const p = V2.pay.getPrefs(); fn(p); V2.pay.setPrefs(p); renderFilterbar(); load(); }
+  const pin = u => setPrefs(p => { p.excluded = p.excluded.filter(x => x !== u); if (!p.pinned.includes(u)) p.pinned.push(u); });
+  const exclude = u => setPrefs(p => { p.pinned = p.pinned.filter(x => x !== u); if (!p.excluded.includes(u)) p.excluded.push(u); });
+
+  document.getElementById('filterbar').addEventListener('click', ev => {
+    const seg = ev.target.closest('[data-seg] button');
+    if (seg) {
+      st[seg.parentElement.dataset.seg] = seg.dataset.v;
+      V2.setFilters({ pay_role: st.role, pay_api: st.api });
+      renderFilterbar();
+      load();
+      return;
+    }
+    const dp = ev.target.closest('[data-drop-pinned]'), de = ev.target.closest('[data-drop-excluded]');
+    if (dp) return setPrefs(p => { p.pinned = p.pinned.filter(x => x !== dp.dataset.dropPinned); });
+    if (de) return setPrefs(p => { p.excluded = p.excluded.filter(x => x !== de.dataset.dropExcluded); });
+    if (ev.target.closest('#f-add')) {
+      const prefs = V2.pay.getPrefs();
+      const list = V2.pay.meta.institutions.filter(i => i.roles.includes(st.role));
+      V2.openInstitutionPicker(ev.target.closest('#f-add'), pin, prefs.pinned.concat(prefs.excluded), { list });
+      return;
+    }
+    if (ev.target.closest('#f-export') && data && data.rows) {
+      V2.exportCSV('pagamentos-ranking-' + st.role + '-' + st.api + '.csv', [
+        { label: 'Posição', value: r => r.cut ? '' : data.rows.indexOf(r) + 1 },
+        { label: roleName(), value: r => r.name },
+        { label: 'Iniciação de Pagamento (30 dias)', value: r => Math.round(r.payments) },
+        { label: 'Pagamento Automático (30 dias)', value: r => Math.round(r['automatic-payments']) },
+        { label: 'Volume na API escolhida (30 dias)', value: r => Math.round(r.value) },
+        { label: 'Fatia', value: r => r.share },
+        { label: 'Falha Iniciação', value: r => r.fail.payments },
+        { label: 'Falha Automático', value: r => r.fail['automatic-payments'] },
+        { label: 'Crescimento vs 4 semanas anteriores', value: r => r.growth },
+      ], data.rows);
+    }
+  });
+
+  document.querySelector('.v2-main').addEventListener('click', ev => {
+    const m = ev.target.closest('[data-row]');
+    if (m) {
+      const u = m.dataset.row, prefs = V2.pay.getPrefs();
+      V2.openMenu(m, 'Opções', [
+        prefs.pinned.includes(u) ? { label: 'Desafixar', onClick: () => setPrefs(p => { p.pinned = p.pinned.filter(x => x !== u); }) }
+                                 : { label: 'Fixar no ranking', onClick: () => pin(u) },
+        { label: 'Excluir do ranking', onClick: () => exclude(u) },
+        { label: 'Ver como opera →', link: true,
+          onClick: () => { location.href = '/v2/pagamentos/instituicao?uuid=' + encodeURIComponent(u) + '&role=' + st.role; } },
+      ]);
+      return;
+    }
+    const b = ev.target.closest('[data-img]');
+    if (b) {
+      V2.exportImage(document.getElementById('card-rank'), {
+        title: document.querySelector('#card-rank h2').textContent,
+        subtitle: 'Pagamentos · transações por 30 dias',
+        note: V2.pay.RULE, filename: 'pagamentos-ranking.png',
+      }).catch(e => alert(e.message));
+    }
+  });
+
+  V2.onThemeChange(() => { if (data && !V2.pay.unavailable(data)) { kpis(); rankCard(); } });
+  V2.initShell('p-lidera').then(() => { renderFilterbar(); load(); })
+    .catch(e => { document.getElementById('card-rank').innerHTML = V2.errorBox(e.message); });
+})();
+</script>
+</body>
+</html>

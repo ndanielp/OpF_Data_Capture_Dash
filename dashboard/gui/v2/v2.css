@@ -378,3 +378,79 @@ button, input, select { font: inherit; color: inherit; }
   .ex-mobilebar[hidden] { display: none; }
   .v2-main { padding-bottom: 96px; }
 }
+
+/* ── Tema Pagamentos (feature 018; specs/018-pagamentos-dash/ux-handoff.md) ────────────────────── */
+/* Seletor Dados | Pagamentos no cabeçalho: links com o mesmo desenho do controle segmentado. */
+.v2-subject { display: flex; background: var(--surface-2); border-radius: var(--r-lg); padding: 3px; gap: 2px; }
+.v2-subject a {
+  display: inline-flex; align-items: center; min-height: 36px; padding: 0 var(--sp-3h); border-radius: var(--r-md);
+  color: var(--text-2); text-decoration: none; font-size: var(--text-small); font-weight: 500;
+}
+.v2-subject a[aria-current="page"] { background: var(--text); color: var(--surface); font-weight: 600; }
+.v2-subject a:hover { color: var(--text); }
+.v2-subject a[aria-current="page"]:hover { color: var(--surface); }
+
+.pay-head { display: flex; align-items: flex-start; gap: var(--sp-3); }
+.pay-num {
+  display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; flex-shrink: 0;
+  border-radius: var(--r-pill); background: var(--text); color: var(--surface); font-weight: 700;
+}
+.pay-take { margin: 0; font-size: var(--text-body-lg); }
+.pay-bad { display: inline-block; padding: 2px var(--sp-2); border-radius: var(--r-pill); background: var(--down-bg); color: var(--down); font-weight: 600; }
+.v2-chip.pay-pick[aria-pressed="false"] { opacity: 1; color: var(--text-2); text-decoration: line-through; }
+.pay-link { min-height: 40px; border: 0; background: transparent; color: var(--link); font-weight: 600; cursor: pointer; padding: 0 var(--sp-1h); }
+.pay-scope { display: flex; flex-direction: column; gap: var(--sp-1h); min-width: 0; }
+.pay-scope-head { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
+
+/* Barras mensais empilhadas e rótulos dos meses */
+.pay-bars { display: flex; align-items: flex-end; gap: var(--sp-2h); height: 210px; border-bottom: 1px solid var(--border); padding-top: var(--sp-4); }
+.pay-bar { flex: 1 1 0; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; gap: var(--sp-1); min-width: 0; }
+.pay-bar > span { font-size: 11px; color: var(--text-2); }
+.pay-stack { width: 100%; max-width: 44px; display: flex; flex-direction: column; justify-content: flex-end; }
+.pay-stack > div:first-child { border-radius: var(--r-xs) var(--r-xs) 0 0; }
+.pay-xlabels { display: flex; gap: var(--sp-2h); }
+.pay-xlabels span { flex: 1 1 0; text-align: center; font-size: var(--text-caption); color: var(--text-2); min-width: 0; }
+.pay-kpis { display: grid; grid-template-columns: minmax(200px, 1fr) minmax(0, 3fr); gap: var(--sp-6); align-items: end; }
+.pay-kpis .pay-kcol { display: flex; flex-direction: column; gap: var(--sp-3h); }
+.pay-kpis > * { min-width: 0; }   /* sem isso a coluna das barras cresce até a largura mínima do gráfico e a página rola */
+
+/* Fatia por mês */
+.pay-share { display: flex; flex-direction: column; gap: 7px; }
+.pay-share-row { display: grid; grid-template-columns: 34px 1fr 44px; gap: var(--sp-2h); align-items: center; font-size: var(--text-caption); }
+.pay-share-row > span { color: var(--text-2); }
+.pay-share-row b { text-align: right; }
+.pay-split { display: flex; height: 14px; border-radius: var(--r-sm); overflow: hidden; background: var(--track); }
+.pay-lines { width: 100%; height: auto; }
+
+/* Barras divergentes (quem puxou) e linhas de contraparte */
+.pay-div { display: grid; grid-template-columns: 150px 1fr 1fr 90px; gap: var(--sp-2h); align-items: center; min-height: 32px; }
+.pay-div .neg { display: flex; justify-content: flex-end; }
+.pay-div .pos { display: flex; border-left: 1px solid var(--control-border); }
+.pay-div .neg > div, .pay-div .pos > div { height: 16px; }
+.pay-row {
+  display: grid; grid-template-columns: minmax(110px, 160px) minmax(120px, 1fr) 90px 90px; gap: var(--sp-3);
+  align-items: center; min-height: 36px; border-bottom: 1px solid var(--divider); font-size: var(--text-small);
+}
+.pay-row.head { min-height: 28px; font-size: var(--text-caption); font-weight: 600; color: var(--text-2); }
+.pay-row .r { text-align: right; }
+.pay-row b { font-weight: 600; }
+
+/* Detalhe recolhido (JSR, consultas) */
+.pay-detail { background: var(--surface); border: 1px dashed var(--control-border); border-radius: var(--r-xl); padding: var(--sp-3h) var(--sp-5); display: flex; flex-direction: column; gap: var(--sp-3); }
+.pay-detail-head { display: flex; justify-content: space-between; align-items: center; gap: var(--sp-3); flex-wrap: wrap; }
+.pay-detail-body { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: var(--sp-6); align-items: center; }
+.pay-funnel { display: flex; flex-direction: column; gap: var(--sp-1); }
+.pay-fstep { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.pay-fbar {
+  height: 32px; background: var(--up); color: var(--surface); font-weight: 700; font-size: var(--text-small);
+  display: flex; align-items: center; justify-content: center; clip-path: polygon(0 0, 100% 0, 96% 100%, 4% 100%);
+}
+.pay-flabel { font-size: var(--text-small); font-weight: 600; text-align: center; }
+
+@media (max-width: 720px) {
+  .pay-kpis { grid-template-columns: 1fr; }
+  .pay-div { grid-template-columns: 96px 1fr 1fr 70px; }
+  .pay-scroll { overflow-x: auto; }
+  .pay-scroll > * { min-width: 520px; }
+  .pay-bars, .pay-xlabels { gap: var(--sp-1); }
+}

@@ -1,7 +1,8 @@
 """
 server.py — FastAPI backend do Dashboard 2.0
 ============================================
-Serve as páginas `/v2*`, a API `/api/v2/*` (inclusive a exportação de dados) e os arquivos
+Serve as páginas `/v2*` (temas Dados e Pagamentos), a API `/api/v2/*` (inclusive a exportação de dados
+e os pagamentos) e os arquivos
 estáticos. As páginas do painel v1 foram removidas (feature 016): `/`, `/profile` e
 `/active-consents` apenas redirecionam para `/v2`.
 """
@@ -111,6 +112,11 @@ def _warm_v2_cache():
         v2_metrics.warm()
     except Exception:
         pass
+    try:   # tema Pagamentos (feature 018)
+        from services import payments
+        payments.warm()
+    except Exception:
+        pass
     if not EXPORT_ENABLED:
         return
     try:   # exportação (feature 015): catálogo e contagem inicial, para a primeira contagem sair rápida
@@ -135,9 +141,11 @@ async def lifespan(app: FastAPI):
 
 from routers import v2 as v2_router
 from routers import export as export_router
+from routers import payments as payments_router
 
 app = FastAPI(title="OPF Batch Dashboard", lifespan=lifespan)
 app.include_router(v2_router.router, prefix="/api/v2")
+app.include_router(payments_router.router, prefix="/api/v2/payments")
 if EXPORT_ENABLED:
     app.include_router(export_router.router, prefix="/api/v2/export")
 
@@ -149,6 +157,12 @@ _V2_PAGES = {
     "/v2/evolucao": "evolucao.html",
     "/v2/mudancas": "mudancas.html",
     "/v2/instituicao": "instituicao.html",
+    # Tema Pagamentos (feature 018).
+    "/v2/pagamentos": "pagamentos.html",
+    "/v2/pagamentos/matriz": "pagamentos-matriz.html",
+    "/v2/pagamentos/evolucao": "pagamentos-evolucao.html",
+    "/v2/pagamentos/mudancas": "pagamentos-mudancas.html",
+    "/v2/pagamentos/instituicao": "pagamentos-instituicao.html",
 }
 if EXPORT_ENABLED:
     _V2_PAGES["/v2/exportar"] = "exportar.html"

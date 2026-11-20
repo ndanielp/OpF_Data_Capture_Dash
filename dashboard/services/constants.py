@@ -17,6 +17,19 @@ API_GROUPS: dict[str, dict] = {
     "Resource":     {"display": "Resource",          "color": "#14B8A6", "apis": ["resources"]},
 }
 
+# Tema Pagamentos (feature 018). Transação = 200 em "Criar iniciação" de cada API.
+# `line` é o tom da linha fina (o lilás claro some numa linha de 2 px); as variantes `_dark`
+# mantêm 3:1 sobre a superfície escura (#1B1F2E), onde o #1F4FD1 dá menos que isso.
+PAYMENT_APIS: dict[str, dict] = {
+    "payments": {"label": "Iniciação de Pagamento", "short": "Inic.", "endpoint": 65, "poll_endpoint": 66,
+                 "color": "#1F4FD1", "line": "#1F4FD1", "color_dark": "#7B9BFF", "line_dark": "#7B9BFF"},
+    "automatic-payments": {"label": "Pagamento Automático", "short": "Autom.", "endpoint": 129, "poll_endpoint": 130,
+                           "color": "#9B8FE3", "line": "#6B5BC4", "color_dark": "#9B8FE3", "line_dark": "#B3A8F0"},
+}
+
+# Cores-base das escalas da matriz iniciadora × detentora (o crescimento usa --up/--down).
+PAYMENT_HEAT: dict[str, str] = {"volume": "#1A3F9E", "fail": "#C2410C"}
+
 # Long-form labels for the UI (tooltips, lists, tables). Chart axis labels
 # with line breaks no longer exist (they belonged to the removed v1 panel).
 API_LABELS: dict[str, str] = {
@@ -139,6 +152,8 @@ SHORT_NAMES: list[tuple[str, str]] = [
     ("banrisul",           "Banrisul"),
     ("agibank",            "Agibank"),
     ("iniciador",          "Iniciador"),
+    ("google pay",         "Google Pay"),
+    ("lina inst",          "Lina"),
 ]
 
 

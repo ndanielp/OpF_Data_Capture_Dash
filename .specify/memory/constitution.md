@@ -1,6 +1,27 @@
 <!--
 SYNC IMPACT REPORT
 ==================
+Version change: 2.0.0 → 2.1.0
+Bump type: MINOR — Shell v2 gains a subject selector and a second set of tabs (Principle VI §6.8);
+Principle III names the payment colors.
+
+Modified principles:
+  Principle III: payment API colors (`PAYMENT_APIS`, `PAYMENT_HEAT` in `services/constants.py`,
+    served by `GET /api/v2/payments/meta`) join the allowed color sources.
+  Principle VI §6.8: the header carries a "Dados | Pagamentos" selector. "Dados" keeps the four
+    tabs; "Pagamentos" (feature 018) has five, in this order: Quem lidera? (`/v2/pagamentos`),
+    Quem paga com quem? (`/v2/pagamentos/matriz`), Como evolui? (`/v2/pagamentos/evolucao`),
+    O que mudou? (`/v2/pagamentos/mudancas`), Como opera uma instituição?
+    (`/v2/pagamentos/instituicao`). Switching subject keeps the same question when it exists.
+    Why: the product owner chose "Opção A" (same questions under a subject selector) and asked
+    for the payer × holder matrix as its own tab.
+    Decided by the product owner on 2026-11-20.
+
+Templates reviewed: no template change.
+Follow-up TODOs: none.
+
+Previous report (1.5.0 → 2.0.0)
+-------------------------------
 Version change: 1.5.0 → 2.0.0
 Bump type: MAJOR — a UI principle is removed: the legacy shell (Principle VI §6.1–6.7) and
 the rules that existed only for the v1 pages.
@@ -192,7 +213,8 @@ structural shell is defined in Principle VI below; the data/behavior rules are:
 
 - **Color palette**: All chart colors MUST be sourced from
   `dashboard/services/constants.py` — `API_GROUPS` for API groups,
-  `GROUP_COLORS_V2` for institution groups. Hardcoded hex values for data series in HTML or
+  `GROUP_COLORS_V2` for institution groups, `PAYMENT_APIS` / `PAYMENT_HEAT` for the
+  payment subject. Hardcoded hex values for data series in HTML or
   JavaScript are PROHIBITED; theme tokens live in CSS variables.
 - **Filter behavior**: Date range (`start`/`end`) and receptor filter
   (`receptors`) MUST behave identically across all dashboard pages. A filter
@@ -282,15 +304,24 @@ references in specs and history stay valid.) Deviations require an explicit amen
 
 Canonical reference: `specs/011-dashboard-v2/contracts/v2-ui-shell.md`.
 
-- **Pages and tab order** (all four MUST appear on every v2 page):
+- **Subjects**: the header carries a "Dados | Pagamentos" selector (links). Each subject
+  has its own tabs; switching keeps the same question, or goes to `Quem lidera?` when the
+  question does not exist in the other subject.
+- **Pages and tab order** — subject `Dados` (all four MUST appear on every Dados page):
   1. `Quem lidera?` → `/v2`
   2. `Como evolui?` → `/v2/evolucao`
   3. `O que mudou?` → `/v2/mudancas`
   4. `Como opera uma instituição?` → `/v2/instituicao`
+  Subject `Pagamentos` (all five MUST appear on every Pagamentos page; feature 018):
+  1. `Quem lidera?` → `/v2/pagamentos`
+  2. `Quem paga com quem?` → `/v2/pagamentos/matriz`
+  3. `Como evolui?` → `/v2/pagamentos/evolucao`
+  4. `O que mudou?` → `/v2/pagamentos/mudancas`
+  5. `Como opera uma instituição?` → `/v2/pagamentos/instituicao`
   Unlisted: `Exportar dados` → `/v2/exportar` (feature 015) is not a tab; it is reachable only by URL
   and uses the same skeleton.
 - **Skeleton**: `<header class="v2-header">` (brand · tabs with
-  `aria-current` · "Dados até … · atualizado em …" · theme toggle) → `<main class="v2-main">` (max-width 1280px) →
+  `aria-current` · "Dados até … · atualizado em …" · subject selector · theme toggle) → `<main class="v2-main">` (max-width 1280px) →
   `.v2-filterbar` first → page title → `.v2-card` blocks. No sidebar.
 - **Filter bar**: shows only the controls that apply to the open tab; any
   change reloads immediately (no "Aplicar", no "Recarregar dados").
@@ -386,4 +417,4 @@ optional even for "small" changes.
 **Runtime guidance**: See `CLAUDE.md` at the repository root for agent-specific
 development guidance (commands, architecture diagrams, SQL schema reference).
 
-**Version**: 2.0.0 | **Ratified**: 2026-05-18 | **Last Amended**: 2026-11-19
+**Version**: 2.1.0 | **Ratified**: 2026-05-18 | **Last Amended**: 2026-11-20
