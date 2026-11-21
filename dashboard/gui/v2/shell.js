@@ -12,6 +12,21 @@
     { id: 'mudancas', label: 'O que mudou?', href: '/v2/mudancas' },
     { id: 'instituicao', label: 'Como opera uma instituição?', href: '/v2/instituicao' },
   ];
+  // Tema Pagamentos (feature 018; Constituição §6.8 "Subjects"): mesmas perguntas, mais a matriz.
+  const PAY_TABS = [
+    { id: 'p-lidera', label: 'Quem lidera?', href: '/v2/pagamentos' },
+    { id: 'p-matriz', label: 'Quem paga com quem?', href: '/v2/pagamentos/matriz' },
+    { id: 'p-evolucao', label: 'Como evolui?', href: '/v2/pagamentos/evolucao' },
+    { id: 'p-mudancas', label: 'O que mudou?', href: '/v2/pagamentos/mudancas' },
+    { id: 'p-instituicao', label: 'Como opera uma instituição?', href: '/v2/pagamentos/instituicao' },
+  ];
+  const isPay = tabId => /^p-/.test(tabId || '');
+  /** Mesma pergunta no outro tema; a que não existe lá leva a "Quem lidera?". */
+  function subjectHref(tabId, toPay) {
+    const list = toPay ? PAY_TABS : TABS;
+    const want = toPay ? 'p-' + String(tabId).replace(/^p-/, '') : String(tabId).replace(/^p-/, '');
+    return (list.find(t => t.id === want) || list[0]).href;
+  }
   const KEY_FILTERS = 'opf:v2:filters';
   const KEY_PREFS = 'opf:v2:ranking';
   const KEY_THEME = 'opf:v2:theme';
@@ -53,6 +68,15 @@
   V2.periodShort = function (key) {
     return key === 'ytd' ? ((V2.meta && V2.meta.data_through) || '').slice(0, 4) : V2.PERIODS[key][2];
   };
+
+  /** Preferências do ranking do tema Pagamentos: fixar e excluir, sem padrão (feature 018). */
+  const KEY_PAY_PREFS = 'opf:v2:pay-ranking';
+  V2.pay = {};
+  V2.pay.getPrefs = function () {
+    const p = readJSON('localStorage', KEY_PAY_PREFS);
+    return p && p.initialized ? p : { pinned: [], excluded: [], initialized: true };
+  };
+  V2.pay.setPrefs = function (prefs) { writeJSON('localStorage', KEY_PAY_PREFS, Object.assign({}, prefs, { initialized: true })); };
 
   /** Preferências do ranking. Primeiro acesso: Bradesco em "Sempre mostrar". */
   V2.getPrefs = function () {
@@ -207,7 +231,8 @@
   function renderHeader(tabId) {
     const el = document.getElementById('v2-header');
     const m = V2.meta || {};
-    const tabs = TABS.map(t => '<a href="' + t.href + '"' + (t.id === tabId ? ' aria-current="page"' : '') + '>' + t.label + '</a>').join('');
+    const pay = isPay(tabId);
+    const tabs = (pay ? PAY_TABS : TABS).map(t => '<a href="' + t.href + '"' + (t.id === tabId ? ' aria-current="page"' : '') + '>' + t.label + '</a>').join('');
     const dates = m.data_through
       ? 'Dados até ' + V2.fmtDate(m.data_through) + (m.updated_at ? ' · atualizado em ' + V2.fmtDate(m.updated_at).slice(0, 5) : '')
       : '';
@@ -217,6 +242,9 @@
         '<div class="v2-header-left"><span class="v2-brand">Open Finance · Ecossistema</span>' +
         '<nav class="v2-tabs" aria-label="Perguntas">' + tabs + '</nav></div>' +
         '<div class="v2-header-right"><span>' + dates + '</span>' +
+        '<nav class="v2-subject" aria-label="Tema dos dados">' +
+          '<a href="' + subjectHref(tabId, false) + '"' + (pay ? '' : ' aria-current="page"') + '>Dados</a>' +
+          '<a href="' + subjectHref(tabId, true) + '"' + (pay ? ' aria-current="page"' : '') + '>Pagamentos</a></nav>' +
         '<button type="button" class="v2-icon-btn" id="v2-theme" aria-label="Alternar tema claro/escuro">' + SVG.theme + '</button></div>' +
       '</div>';
     document.getElementById('v2-theme').addEventListener('click', V2.toggleTheme);
@@ -227,8 +255,13 @@
     document.documentElement.dataset.theme = V2.getTheme();
     try {
       V2.meta = await V2.fetchJSON('/api/v2/meta');
+      if (isPay(tabId)) {
+        // No tema Pagamentos a data do cabeçalho (e das imagens) é a da tabela de pagamentos.
+        V2.pay.meta = await V2.fetchJSON('/api/v2/payments/meta');
+        V2.meta = Object.assign({}, V2.meta, { data_through: V2.pay.meta.data_through, updated_at: null });
+      }
     } catch (e) {
-      V2.meta = { groups: [], api_groups: [], institutions: [] };
+      V2.meta = V2.meta || { groups: [], api_groups: [], institutions: [] };
       renderHeader(tabId);
       throw e;
     }
@@ -256,6 +289,8 @@
   }
 
   /** Busca em meta.institutions; onPick(uuid). `skip` = uuids a esconder.
+   *  opts.all = lista inteira com rolagem; opts.sort(a, b) = ordem com a busca vazia; opts.detail(i) = texto
+   *  à direita do nome; opts.note = aviso no topo (feature 019).
    *  opts.list troca o catálogo (ex.: transmissores); opts.first = uuids sugeridos no topo;
    *  opts.placeholder / opts.empty trocam os textos (ex.: seletor de APIs). */
   V2.openInstitutionPicker = function (anchor, onPick, skip, opts) {
@@ -275,13 +310,15 @@
       const first = opts.first || [];
       const rank = i => { const k = first.indexOf(i.uuid); return k < 0 ? first.length : k; };
       const list = (opts.list || V2.meta.institutions || []).slice()
-        .sort((a, b) => q ? 0 : rank(a) - rank(b))
+        .sort((a, b) => q ? 0 : (opts.sort ? opts.sort(a, b) : rank(a) - rank(b)))
         .filter(i => !(skip || []).includes(i.uuid))
         .filter(i => !q || norm(i.short).includes(q) || norm(i.name).includes(q))
-        .slice(0, 8);
-      results.innerHTML = list.length
-        ? list.map(i => '<button type="button" data-uuid="' + i.uuid + '"><span class="v2-dot" style="background:' + V2.groupColor(i.group) + '"></span>' + V2.esc(i.short) + '</button>').join('')
-        : '<div class="v2-empty">' + (opts.empty || 'Nenhuma instituição encontrada') + '</div>';
+        .slice(0, opts.all ? Infinity : 8);
+      results.classList.toggle('v2-results-all', !!opts.all);
+      results.innerHTML = (opts.note ? '<div class="v2-empty">' + V2.esc(opts.note) + '</div>' : '') + (list.length
+        ? list.map(i => '<button type="button" data-uuid="' + i.uuid + '"><span class="v2-dot" style="background:' + V2.groupColor(i.group) + '"></span>' +
+            V2.esc(i.short) + (opts.detail ? '<span class="v2-pick-detail">' + V2.esc(opts.detail(i)) + '</span>' : '') + '</button>').join('')
+        : '<div class="v2-empty">' + (opts.empty || 'Nenhuma instituição encontrada') + '</div>');
     }
     results.addEventListener('click', ev => {
       const b = ev.target.closest('button[data-uuid]');
@@ -426,7 +463,7 @@
     const W = FRAME_W, PAD = FRAME_PAD;
     const { frame, body } = newFrame(opts);
     const inner = card.cloneNode(true);
-    inner.querySelectorAll('.v2-card-head, .v2-card-actions, .v2-row-menu, button, .v2-card-foot, .v2-noexport').forEach(n => n.remove());
+    inner.querySelectorAll('.v2-card-head, .v2-card-actions, .v2-row-menu, button:not([data-keep]), .v2-card-foot, .v2-noexport').forEach(n => n.remove());
     inner.style.cssText = 'border:0;padding:0;background:transparent;box-shadow:none;';
     const origCanvases = card.querySelectorAll('canvas');
     inner.querySelectorAll('canvas').forEach((c, i) => {
@@ -467,7 +504,7 @@
     const cells = [];
     const makeCell = def => {
       const c = def.el.cloneNode(true);
-      c.querySelectorAll('.v2-card-head, .v2-card-actions, .v2-row-menu, button, .v2-card-foot, .v2-noexport, .v2-noslide, .v2-field, .v2-seg, select').forEach(n => n.remove());
+      c.querySelectorAll('.v2-card-head, .v2-card-actions, .v2-row-menu, button:not([data-keep]), .v2-card-foot, .v2-noexport, .v2-noslide, .v2-field, .v2-seg, select').forEach(n => n.remove());
       c.querySelectorAll(':scope > div:empty').forEach(n => n.remove());
       c.removeAttribute('id');
       c.classList.remove('loading');
@@ -557,5 +594,270 @@
     document.body.appendChild(a);
     a.click();
     setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 0);
+  };
+
+  // ── Tema Pagamentos: blocos comuns às abas (feature 018; specs/018-pagamentos-dash/ux-handoff.md) ──
+  V2.pay.APIS = ['payments', 'automatic-payments'];
+  V2.pay.SOURCE = 'Fonte: dashboard Open Finance Brasil';
+  V2.pay.RULE = 'Transação = Criar iniciação com sucesso (200)';
+  V2.pay.FAIL_RULE = 'Falha = 500 ÷ tentativas de Criar iniciação, inclui 4xx e novas tentativas';
+  V2.pay.MONTH_RULE = 'Mês normalizado para 30 dias (soma ÷ semanas com dado × 30/7)';
+  V2.pay.UNAVAILABLE = 'Dados de pagamento ainda não processados. Rode compute_signals.py no coletor e sincronize a base.';
+  V2.pay.unavailable = function (d) { return !!(d && (d.unavailable || []).includes('payments')); };
+  V2.pay.api = function (slug) { return ((V2.pay.meta && V2.pay.meta.apis) || []).find(a => a.slug === slug) || {}; };
+  V2.pay.label = function (slug) { return V2.pay.api(slug).label || slug; };
+  /** Cor da API no tema atual; `line` = tom da linha fina. */
+  V2.pay.color = function (slug, line) {
+    const a = V2.pay.api(slug), dark = document.documentElement.dataset.theme === 'dark';
+    return (line ? (dark ? a.line_dark : a.line) : (dark ? a.color_dark : a.color)) || 'var(--text-2)';
+  };
+  V2.pay.inst = function (uuid) { return ((V2.pay.meta && V2.pay.meta.institutions) || []).find(i => i.uuid === uuid); };
+  V2.pay.rate = function (fail, ok) { return ok + fail > 0 ? fail / (ok + fail) : null; };
+  V2.pay.mon = function (ym) { return V2.fmtMonth(ym).split('/')[0]; };
+  const MONTHS_LONG = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+  V2.pay.monthLong = function (ym) {
+    const [y, m] = ym.split('-');
+    return MONTHS_LONG[Number(m) - 1].replace(/^./, c => c.toUpperCase()) + '/' + y;
+  };
+  /** Taxa de falha com destaque a partir de 20%. */
+  V2.pay.failCell = function (r) {
+    if (r == null) return '—';
+    const t = V2.fmtShare(r);
+    return r >= 0.2 ? '<span class="pay-bad">' + t + '</span>' : t;
+  };
+  /** Cabeçalho de card; `num` = passo da história (1–4). */
+  V2.pay.head = function (title, sub, key, num) {
+    return '<div class="v2-card-head"><div class="pay-head">' + (num ? '<span class="pay-num" aria-hidden="true">' + num + '</span>' : '') +
+      '<div><h2>' + title + '</h2><span class="v2-sub">' + sub + '</span></div></div>' +
+      '<div class="v2-card-actions"><button type="button" class="v2-icon-btn" data-img="' + key + '" aria-label="Copiar como imagem">' +
+      SVG.image + '</button></div></div>';
+  };
+  V2.pay.foot = function (text) { return '<div class="v2-card-foot"><span>' + text + ' · ' + V2.pay.SOURCE + '</span></div>'; };
+  V2.pay.take = function (text) { return '<p class="pay-take">' + V2.esc(text) + '</p>'; };
+  /** Chips de incluir/remover: ligado = escuro; desligado = riscado. `attr` vira data-<attr>="i". */
+  V2.pay.chips = function (names, off, attr) {
+    return '<div class="v2-chips">' + names.map((n, i) =>
+      '<button type="button" class="v2-chip pay-pick" data-' + attr + '="' + i + '" aria-pressed="' + !off[i] + '">' + V2.esc(n) + '</button>').join('') + '</div>';
+  };
+  /** Rótulo curto em milhões (ou mil) para o topo das barras. */
+  function barLabel(v, max) {
+    if (!v) return '0';
+    return max >= 1e6 ? V2.fmtDec(v / 1e6, 1) : V2.fmtDec(v / 1e3, 0);
+  }
+  V2.pay.unitOf = function (max) { return max >= 1e6 ? 'milhões por 30 dias' : 'mil por 30 dias'; };
+
+  // ── Mês escolhido e recorte, compartilhados entre as abas (feature 019; research R1, R6) ──
+  V2.pay.WINDOW = 'w4';   // "Últimas 4 semanas"
+  const MONTHS_FULL = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+  V2.pay.monthName = function (m) {
+    if (m === V2.pay.WINDOW) return 'últimas 4 semanas';
+    const [y, mm] = m.split('-');
+    return MONTHS_FULL[Number(mm) - 1] + '/' + y;
+  };
+  /** Mês ainda incompleto na base: a última semana com dado não fecha o mês. */
+  V2.pay.isPartial = function (m) {
+    const t = V2.pay.meta && V2.pay.meta.data_through;
+    if (!t || t.slice(0, 7) !== m) return false;
+    const d = new Date(t + 'T00:00:00Z');
+    d.setUTCDate(d.getUTCDate() + 7);
+    return d.toISOString().slice(0, 7) === m;
+  };
+  /** Estado da aba: URL primeiro, depois a sessão. `withWindow` = a aba aceita "Últimas 4 semanas".
+   *  Devolve { month, r, c, warn } com uuids e mês já validados. */
+  V2.pay.readState = function (withWindow) {
+    const url = new URLSearchParams(location.search), f = V2.getFilters();
+    const months = V2.pay.meta.months || [];
+    const insts = V2.pay.meta.institutions || [];
+    const role = u => (insts.find(i => i.uuid === u) || { roles: [] }).roles;
+    let bad = 0;
+    const list = (raw, r) => {
+      const all = (raw == null ? [] : Array.isArray(raw) ? raw : String(raw).split(',')).filter(Boolean);
+      const ok = all.filter(u => role(u).includes(r)).slice(0, 12);
+      bad += all.length - ok.length;
+      return ok;
+    };
+    let month = url.get('month') || f.pay_month || null;
+    if (month && month !== V2.pay.WINDOW && !months.includes(month)) { bad += 1; month = null; }
+    if (month === V2.pay.WINDOW && !withWindow) month = null;
+    if (!month) month = withWindow ? V2.pay.WINDOW : months[months.length - 1];
+    const r = list(url.has('r') ? url.get('r') : f.pay_r, 'ini'), c = list(url.has('c') ? url.get('c') : f.pay_c, 'det');
+    return { month, r, c, warn: bad ? 'Parte do endereço não existe nesta base e foi ignorada.' : '' };
+  };
+  /** Grava mês e recorte na sessão e, das chaves em `urlKeys`, na URL (outros parâmetros da URL ficam). */
+  V2.pay.saveState = function (st, extra, urlKeys) {
+    V2.setFilters({ pay_month: st.month, pay_r: st.r, pay_c: st.c });
+    const q = new URLSearchParams(location.search);
+    const set = (k, v) => { if (v) q.set(k, v); else q.delete(k); };
+    const keys = urlKeys || ['month', 'r', 'c'];
+    if (keys.includes('month')) set('month', st.month);
+    if (keys.includes('r')) set('r', (st.r || []).join(','));
+    if (keys.includes('c')) set('c', (st.c || []).join(','));
+    Object.entries(extra || {}).forEach(([k, v]) => set(k, v));
+    history.replaceState(null, '', location.pathname + (q.toString() ? '?' + q.toString().replace(/%2C/g, ',') : ''));
+  };
+  /** Seletor de mês da barra de filtros. */
+  V2.pay.monthSelect = function (current, withWindow) {
+    const months = (V2.pay.meta.months || []).slice().reverse();
+    const opt = (v, l) => '<option value="' + v + '"' + (v === current ? ' selected' : '') + '>' + l + '</option>';
+    const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
+    return '<label class="v2-field"><span class="v2-label">Mês</span><select class="v2-select pay-month" data-month-select>' +
+      (withWindow ? opt(V2.pay.WINDOW, 'Últimas 4 semanas') : '') +
+      months.map(m => opt(m, cap(V2.pay.monthName(m)) + (V2.pay.isPartial(m) ? ' (parcial)' : ''))).join('') + '</select></label>';
+  };
+
+  /** Barra de recorte por inclusão: "todas" ou chips com ×, "+ Adicionar" e "Limpar".
+   *  sides = [{ key, label, role, picks }]. */
+  V2.pay.scope = function (sides) {
+    return sides.map(sd => '<div class="pay-scope-side"><span class="v2-label">' + sd.label + '</span><div class="v2-chips">' +
+      (sd.picks.length ? sd.picks.map(u => {
+        const i = V2.pay.inst(u), n = i ? i.short : u;
+        return '<span class="v2-chip-tag pay-tag"><span class="v2-chip-name">' + V2.esc(n) + '</span><button type="button" data-scope-drop="' + sd.key +
+          '" data-uuid="' + u + '" aria-label="Remover ' + V2.esc(n) + '">×</button></span>';
+      }).join('') : '<span class="pay-all">todas</span>') +
+      '<button type="button" class="v2-chip-add" data-scope-add="' + sd.key + '">+ Adicionar</button>' +
+      (sd.picks.length ? '<button type="button" class="pay-link" data-scope-clear="' + sd.key + '">Limpar</button>' : '') +
+      '</div></div>').join('');
+  };
+  /** Trata cliques da barra de recorte. Devolve true se tratou. onChange(key, picks) recebe a lista nova. */
+  V2.pay.scopeClick = function (ev, sides, month, onChange) {
+    const side = k => sides.find(s => s.key === k);
+    const add = ev.target.closest('[data-scope-add]'), drop = ev.target.closest('[data-scope-drop]'), clear = ev.target.closest('[data-scope-clear]');
+    if (drop) { const sd = side(drop.dataset.scopeDrop); onChange(sd.key, sd.picks.filter(u => u !== drop.dataset.uuid)); return true; }
+    if (clear) { onChange(clear.dataset.scopeClear, []); return true; }
+    if (!add) return false;
+    const sd = side(add.dataset.scopeAdd);
+    const full = sd.picks.length >= 12;
+    V2.pay.openPicker(add, sd.role, month, u => { if (!full) onChange(sd.key, sd.picks.concat(u)); }, sd.picks,
+      full ? 'Limite de 12 instituições: remova uma para adicionar outra.' : '');
+    return true;
+  };
+  /** Busca de instituição do tema: todas do papel, por volume no mês, com volume e papéis. */
+  V2.pay.openPicker = function (anchor, role, month, onPick, skip, note) {
+    const months = V2.pay.meta.months || [];
+    const k = month && month !== V2.pay.WINDOW ? months.indexOf(month) : months.length - 1;
+    const vol = i => ((i.volume || {})[role] || [])[k] || 0;
+    const roles = i => i.roles.map(r => r === 'ini' ? 'iniciadora' : 'detentora').join(' e ');
+    V2.openInstitutionPicker(anchor, onPick, skip, {
+      list: (V2.pay.meta.institutions || []).filter(i => i.roles.includes(role)),
+      all: true, sort: (a, b) => vol(b) - vol(a), note,
+      detail: i => (vol(i) ? V2.fmtCompact(vol(i)) : 'sem transações') + ' · ' + roles(i),
+      placeholder: role === 'ini' ? 'Buscar iniciadora' : 'Buscar detentora',
+    });
+  };
+
+  // ── Dica ao passar o mouse ou focar (barras e pontos com data-tip; research R7) ──
+  let tipEl = null;
+  function showTip(el) {
+    if (!tipEl) { tipEl = document.createElement('div'); tipEl.className = 'pay-tip'; tipEl.setAttribute('role', 'tooltip'); document.body.appendChild(tipEl); }
+    tipEl.innerHTML = el.getAttribute('data-tip').split('\n').map((l, i) => i ? '<div>' + V2.esc(l) + '</div>' : '<b>' + V2.esc(l) + '</b>').join('');
+    tipEl.style.display = 'block';
+    const r = el.getBoundingClientRect();
+    const w = tipEl.offsetWidth, h = tipEl.offsetHeight;
+    const left = Math.max(8, Math.min(window.scrollX + r.left + r.width / 2 - w / 2, window.scrollX + document.documentElement.clientWidth - w - 8));
+    const top = window.scrollY + r.top - h - 8 < window.scrollY ? window.scrollY + r.bottom + 8 : window.scrollY + r.top - h - 8;
+    tipEl.style.left = left + 'px';
+    tipEl.style.top = top + 'px';
+  }
+  function hideTip() { if (tipEl) tipEl.style.display = 'none'; }
+  ['mouseover', 'focusin'].forEach(t => document.addEventListener(t, ev => {
+    const el = ev.target.closest && ev.target.closest('[data-tip]');
+    if (el) showTip(el); else if (t === 'mouseover') hideTip();
+  }));
+  document.addEventListener('focusout', hideTip);
+  document.addEventListener('scroll', hideTip, true);
+
+  /** Texto da dica de um mês: total, valor e falha por API. */
+  V2.pay.monthTip = function (m, ip, pa, fip, fpa) {
+    const r = v => v == null ? '—' : V2.fmtShare(v);
+    return V2.pay.monthName(m) + '\nTotal: ' + V2.fmtCompact(ip + pa) + ' por 30 dias' +
+      '\n' + V2.pay.label('payments') + ': ' + V2.fmtCompact(ip) + ' · falha ' + r(fip) +
+      '\n' + V2.pay.label('automatic-payments') + ': ' + V2.fmtCompact(pa) + ' · falha ' + r(fpa);
+  };
+  /** Legenda só com as APIs presentes (FR-040). */
+  V2.pay.legend = function (line, extra, present) {
+    const apis = present || V2.pay.APIS;
+    return '<div class="v2-legend">' + apis.map(a =>
+      '<span><span class="v2-dot" style="background:' + V2.pay.color(a, line) + '"></span>' + V2.esc(V2.pay.label(a)) + '</span>').join('') +
+      (extra || '') + '</div>';
+  };
+  /** Barras mensais empilhadas (Iniciação embaixo, Automático em cima). Cada barra é um botão:
+   *  dica com os valores e clique para escolher o mês (data-month). opts = { sel, fip, fpa }. */
+  V2.pay.stackBars = function (months, ip, pa, opts) {
+    opts = opts || {};
+    const tot = months.map((_, i) => ip[i] + pa[i]);
+    const max = Math.max(1, ...tot) * 1.08;
+    const cols = months.map((m, i) =>
+      '<button type="button" class="pay-bar' + (m === opts.sel ? ' sel' : '') + '" data-month="' + m + '" data-keep aria-pressed="' + (m === opts.sel) +
+        '" data-tip="' + V2.esc(V2.pay.monthTip(m, ip[i], pa[i], (opts.fip || [])[i], (opts.fpa || [])[i])) + '" aria-label="Escolher ' + V2.pay.monthName(m) + '">' +
+      '<span>' + barLabel(tot[i], max) + '</span>' +
+      '<span class="pay-stack" style="height:' + (tot[i] / max * 100).toFixed(1) + '%">' +
+        '<span style="background:' + V2.pay.color('automatic-payments') + ';height:' + (tot[i] ? pa[i] / tot[i] * 100 : 0).toFixed(1) + '%"></span>' +
+        '<span style="background:' + V2.pay.color('payments') + ';height:' + (tot[i] ? ip[i] / tot[i] * 100 : 0).toFixed(1) + '%"></span>' +
+      '</span></button>').join('');
+    return '<div class="pay-bars" role="group" aria-label="Transações por mês, empilhadas por API">' + cols + '</div>' +
+      '<div class="pay-xlabels">' + months.map(m => '<span' + (m === opts.sel ? ' class="sel"' : '') + '>' + V2.pay.mon(m) + '</span>').join('') + '</div>';
+  };
+  /** Fatia da Iniciação de Pagamento por mês; `sel` destaca o mês escolhido. */
+  V2.pay.shareRows = function (months, ip, pa, sel) {
+    return '<div class="pay-share">' + months.map((m, i) => {
+      const t = ip[i] + pa[i], s = t ? ip[i] / t : 0;
+      return '<div class="pay-share-row' + (m === sel ? ' sel' : '') + '"><span>' + V2.pay.mon(m) + '</span><div class="pay-split">' +
+        '<div style="width:' + (s * 100).toFixed(1) + '%;background:' + V2.pay.color('payments') + '"></div>' +
+        '<div style="width:' + (t ? (1 - s) * 100 : 0).toFixed(1) + '%;background:' + V2.pay.color('automatic-payments') + '"></div></div>' +
+        '<b>' + (t ? Math.round(s * 100) + '%' : '—') + '</b></div>';
+    }).join('') + '</div>';
+  };
+  /** Linhas de taxa por mês (SVG) com ponto em cada mês, valor no último e no escolhido, e dica por mês.
+   *  series = [{values: [fração|null], color, dash, label}]. */
+  V2.pay.lines = function (months, series, sel) {
+    const all = [].concat(...series.map(s => s.values)).filter(v => v != null);
+    const top = Math.max(0.1, Math.ceil(Math.max(0, ...all) * 10) / 10);
+    const step = months.length > 1 ? 440 / (months.length - 1) : 0;
+    const x = i => 50 + i * step;
+    const y = v => (180 - v / top * 140).toFixed(1);
+    const pct = v => V2.fmtShare(v);
+    const si = months.indexOf(sel), last = months.length - 1;
+    const path = s => {
+      let d = '', pen = false;
+      s.values.forEach((v, i) => {
+        if (v == null) { pen = false; return; }
+        d += (pen ? ' L' : ' M') + x(i).toFixed(1) + ',' + y(v);
+        pen = true;
+      });
+      const dots = s.dash ? '' : s.values.map((v, i) => v == null ? '' :
+        '<circle cx="' + x(i).toFixed(1) + '" cy="' + y(v) + '" r="' + (i === si ? 4.5 : 3) + '" fill="' + s.color + '"></circle>' +
+        ((i === last || i === si) ? '<text x="' + x(i).toFixed(1) + '" y="' + (Number(y(v)) - 8) + '" font-size="11" font-weight="700" fill="' + s.color +
+          '" text-anchor="middle">' + pct(v) + '</text>' : '')).join('');
+      return '<path d="' + d.trim() + '" fill="none" stroke="' + s.color + '" stroke-width="' + (s.dash ? 2 : 2.5) + '"' +
+        (s.dash ? ' stroke-dasharray="5 4"' : '') + '></path>' + dots;
+    };
+    const tip = i => V2.pay.monthName(months[i]) + series.map(s => '\n' + s.label + ': ' + (s.values[i] == null ? '—' : pct(s.values[i]))).join('');
+    const hits = months.map((m, i) => '<rect class="pay-hit" x="' + (x(i) - Math.max(step, 20) / 2).toFixed(1) + '" y="20" width="' + Math.max(step, 20).toFixed(1) +
+      '" height="170" fill="transparent" data-tip="' + V2.esc(tip(i)) + '"></rect>').join('');
+    return '<svg class="pay-lines" viewBox="0 0 520 210" role="img" aria-label="Taxa de falha por mês">' +
+      (si >= 0 ? '<rect x="' + (x(si) - 12).toFixed(1) + '" y="20" width="24" height="160" fill="var(--surface-2)"></rect>' : '') +
+      [0, 0.5, 1].map(f => '<line x1="50" x2="500" y1="' + y(top * f) + '" y2="' + y(top * f) + '" stroke="var(--divider)"></line>' +
+        '<text x="0" y="' + (Number(y(top * f)) + 4) + '" font-size="11" fill="var(--text-2)">' + Math.round(top * f * 100) + '%</text>').join('') +
+      series.map(path).join('') +
+      months.map((m, i) => '<text x="' + x(i).toFixed(1) + '" y="202" font-size="11" fill="var(--text-2)" text-anchor="middle"' +
+        (i === si ? ' font-weight="700"' : '') + '>' + V2.pay.mon(m) + '</text>').join('') + hits + '</svg>';
+  };
+  /** Frase do recorte: "Entre Google Pay e Nubank" (até 3 nomes, depois "e mais N"). */
+  V2.pay.scopePhrase = function (uuids) {
+    const n = uuids.map(u => (V2.pay.inst(u) || { short: u }).short);
+    if (!n.length) return '';
+    const shown = n.slice(0, 3), more = n.length - shown.length;
+    const list = more ? shown.join(', ') + ' e mais ' + more : shown.length > 1 ? shown.slice(0, -1).join(', ') + ' e ' + shown[shown.length - 1] : shown[0];
+    return n.length === 1 ? 'Em ' + list : 'Entre ' + list;
+  };
+  /** Funil do vínculo: degraus em trapézio com "↓ N% passam" entre eles. */
+  V2.pay.funnel = function (steps) {
+    const first = steps[0] ? steps[0].value : 0;
+    return '<div class="pay-funnel">' + steps.map((s, i) => {
+      const pass = i && steps[i - 1].value ? Math.round(s.value / steps[i - 1].value * 100) + '%' : null;
+      return '<div class="pay-fstep">' + (pass ? '<span class="v2-small v2-muted">↓ <b>' + pass + '</b> passam</span>' : '') +
+        '<div class="pay-fbar" style="width:' + Math.max(30, first ? s.value / first * 100 : 0).toFixed(1) + '%">' + V2.fmtCompact(s.value) + '</div>' +
+        '<span class="pay-flabel">' + V2.esc(s.label) + ' <span class="v2-small v2-muted">· ' + s.endpoint + (s.endpoint === 136 ? ' · inferido' : '') + '</span></span></div>';
+    }).join('') + '</div>';
   };
 })();

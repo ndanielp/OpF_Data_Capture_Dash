@@ -542,6 +542,14 @@ def run_payment_initiation_collection(
         log, (start_d, end_d),
     )
 
+    # Pré-agregação do tema Pagamentos do dashboard (feature 018).
+    _pw_con = scrapers.open_db(config.DB_PATH)
+    try:
+        scrapers.refresh_payment_weekly(_pw_con)
+    finally:
+        _pw_con.close()
+    log.info("payment_weekly atualizada.")
+
     duration = round(time.time() - t0, 1)
     summary = finalize_run(config.DB_PATH, run_id, total_upserted=(n_new + n_upd))
     log.info(f"=== Concluído em {duration}s ===")

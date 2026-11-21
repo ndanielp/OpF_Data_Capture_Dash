@@ -9,7 +9,8 @@ Rode depois da coleta e antes do sync:
 
 Reconstrói behavior_signals inteira para todo o histórico, a partir do que existe
 na base — não depende de a coleta ter terminado. Idempotente. Também reconstrói as
-pré-agregações api_group_weekly e api_status_weekly (Dashboard 2.0).
+pré-agregações api_group_weekly e api_status_weekly (Dashboard 2.0) e payment_weekly
+(tema Pagamentos).
 """
 
 from __future__ import annotations
@@ -103,6 +104,7 @@ def compute(con: sqlite3.Connection) -> dict:
     t0 = time.perf_counter()
     scrapers.refresh_api_endpoint_weekly(con)
     endpoint_secs = time.perf_counter() - t0
+    scrapers.refresh_payment_weekly(con)
     found, watch, meta = _detect_all(con)
     _write(con, found, watch, meta)
     by_type = Counter(s.signal_type for s in found)

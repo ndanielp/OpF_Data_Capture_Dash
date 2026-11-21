@@ -1,0 +1,302 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Quem paga com quem? · Pagamentos · Open Finance 2.0</title>
+<script>try{document.documentElement.dataset.theme=localStorage.getItem('opf:v2:theme')||'light'}catch(e){document.documentElement.dataset.theme='light'}</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" crossorigin="anonymous">
+<link rel="stylesheet" href="/static/v2/v2.css">
+<script src="/static/v2/shell.js"></script>
+<style>
+  .pm-layout { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: var(--sp-4); align-items: start; }
+  @media (max-width: 1100px) { .pm-layout { grid-template-columns: 1fr; } }
+  .pm-side { display: flex; flex-direction: column; gap: var(--sp-4); }
+  /* Linha do tempo: um botão por mês (o nome fica sobre a própria posição) + ‹ › e Reproduzir. */
+  .pm-time { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
+  .pm-months { display: flex; flex: 1; gap: 2px; background: var(--surface-2); border-radius: var(--r-lg); padding: 3px; min-width: 0; overflow-x: auto; }
+  .pm-months button { flex: 1 0 auto; min-width: 44px; min-height: 40px; border: 0; border-radius: var(--r-md); background: transparent; color: var(--text-2); cursor: pointer; font-size: var(--text-small); }
+  .pm-months button[aria-pressed="true"] { background: var(--text); color: var(--surface); font-weight: 700; }
+  .pm-scroll { overflow-x: auto; }
+  .pm-table { border-collapse: separate; border-spacing: 3px; width: 100%; font-size: var(--text-caption); }
+  .pm-table th { font-weight: 600; color: var(--text-2); text-align: center; padding: var(--sp-1); vertical-align: bottom; }
+  .pm-table th.row { text-align: right; white-space: nowrap; color: var(--text); }
+  .pm-table td { padding: 0; }
+  .pm-cell { display: block; width: 100%; min-width: 64px; min-height: 44px; border: 1px solid transparent; border-radius: var(--r-sm); cursor: pointer;
+             font: inherit; font-weight: 600; font-size: var(--text-caption); background: var(--track); color: var(--text); padding: 0 var(--sp-1); }
+  .pm-cell[aria-pressed="true"] { outline: 2px solid var(--text); outline-offset: 1px; }
+  .pm-cell.zero { color: var(--text-2); background: transparent; border-color: var(--divider); font-weight: 400; }
+  .pm-tot { text-align: center; font-weight: 700; color: var(--text); padding: var(--sp-1) var(--sp-2); }
+  .pm-kv { display: flex; justify-content: space-between; gap: var(--sp-2); font-size: var(--text-small); padding: var(--sp-1h) 0; border-top: 1px solid var(--divider); }
+  .pm-insights { margin: 0; padding-left: var(--sp-5); display: flex; flex-direction: column; gap: var(--sp-2); }
+</style>
+</head>
+<body>
+<header id="v2-header" class="v2-header"></header>
+<main class="v2-main">
+  <section class="v2-filterbar" id="filterbar" aria-label="Filtros"></section>
+  <div class="v2-title">
+    <h1>Quem paga com quem?</h1>
+    <p>Transações por 30 dias entre as maiores iniciadoras (linhas) e detentoras (colunas), mês a mês. Clique numa célula para ver o par.</p>
+  </div>
+  <div class="pm-layout">
+    <article class="v2-card" id="card-matrix"></article>
+    <aside class="pm-side">
+      <article class="v2-card" id="card-cell"></article>
+      <article class="v2-card" id="card-insights"></article>
+    </aside>
+  </div>
+</main>
+
+<script>
+(function () {
+  'use strict';
+  const COLORS = { vol: 'Volume', fail: 'Falha', grow: 'Crescimento' };
+  const SIZES = { 4: '4', 8: '8', 12: '12' };
+  const st = { color: 'vol', api: 'all', size: window.innerWidth < 760 ? '4' : '8', month: null, r: [], c: [], sel: null };
+  let flows = null, timer = null, scope = null, reqId = 0;
+
+  const fM = V2.fmtCompact;
+  const apis = () => st.api === 'all' ? V2.pay.APIS : [st.api];
+  const mi = () => Math.max(0, flows.months.indexOf(st.month));
+  const sides = () => [{ key: 'r', label: 'Linhas · iniciadoras', role: 'ini', picks: st.r }, { key: 'c', label: 'Colunas · detentoras', role: 'det', picks: st.c }];
+  const label = x => x.uuid ? x.name : x.name + ' (' + (x.others_count || 0) + ')';
+
+  /** Matriz do mês (índice k) somando as APIs do filtro. */
+  function view(k) {
+    const m = flows.months[k];
+    const ok = flows.rows.map(() => flows.cols.map(() => 0)), fail = flows.rows.map(() => flows.cols.map(() => 0));
+    apis().forEach(a => {
+      const g = flows.data[a][m];
+      g.ok.forEach((row, i) => row.forEach((v, j) => { ok[i][j] += v; fail[i][j] += g.fail[i][j]; }));
+    });
+    return { m, rows: flows.rows, cols: flows.cols, ok, fail };
+  }
+  const total = v => v.ok.reduce((s, r) => s + r.reduce((a, b) => a + b, 0), 0);
+  const rowSum = (v, i, kind) => v[kind][i].reduce((a, b) => a + b, 0);
+  const colSum = (v, j, kind) => v[kind].reduce((a, r) => a + r[j], 0);
+  const growth = (now, before) => before > 0 ? now / before - 1 : null;
+
+  function renderFilterbar() {
+    const apiOpts = Object.assign({ all: 'Todas' }, ...V2.pay.APIS.map(a => ({ [a]: V2.pay.label(a) })));
+    const sizeOff = st.r.length && st.c.length;
+    document.getElementById('filterbar').innerHTML =
+      '<div class="v2-fb-row"><div class="v2-fb-group">' +
+        (flows ? V2.pay.monthSelect(st.month, false) : '') +
+        '<fieldset class="v2-field"><legend>Cor da célula</legend>' + V2.seg('color', COLORS, st.color) + '</fieldset>' +
+        '<fieldset class="v2-field"><legend>API</legend>' + V2.seg('api', apiOpts, st.api) + '</fieldset>' +
+        (sizeOff ? '' : '<fieldset class="v2-field"><legend>Maiores</legend>' + V2.seg('size', SIZES, st.size) + '</fieldset>') +
+      '</div><button type="button" class="v2-btn v2-fb-export" id="f-export">Exportar CSV</button></div>' +
+      '<div class="v2-fb-row"><div class="v2-fb-group">' + V2.pay.scope(sides()) + '</div></div>' +
+      '<div class="v2-small v2-muted">Sem escolhas, a matriz mostra as maiores de cada lado. Escolha até 12 instituições por lado; o resto soma em "Outras".' +
+        (scope && scope.warn ? ' <span class="pay-warn">' + scope.warn + '</span>' : '') + '</div>';
+  }
+
+  function cellStyle(v, vPrev, i, j, maxOk, maxRate) {
+    const ok = v.ok[i][j], fl = v.fail[i][j];
+    if (!ok && !fl) return { cls: 'zero', txt: '—', bg: '' };
+    let p, color, txt;
+    if (st.color === 'vol') {
+      p = Math.sqrt(ok / maxOk); color = V2.pay.meta.heat.volume; txt = fM(ok);
+    } else if (st.color === 'fail') {
+      const r = V2.pay.rate(fl, ok); p = maxRate ? r / maxRate : 0; color = V2.pay.meta.heat.fail; txt = V2.fmtShare(r);
+    } else {
+      const g = vPrev ? growth(ok, vPrev.ok[i][j]) : null;
+      if (g == null) return { cls: '', txt: vPrev ? 'novo' : '—', bg: '' };
+      p = Math.min(1, Math.abs(g)); color = g >= 0 ? 'var(--up)' : 'var(--down)'; txt = V2.fmtPct(g);
+    }
+    const pct = Math.round(10 + p * 75);
+    return { cls: '', txt, bg: 'background:color-mix(in srgb, ' + color + ' ' + pct + '%, transparent);' + (pct > 50 ? 'color:var(--surface);' : '') };
+  }
+
+  function render() {
+    const k = mi(), v = view(k), vPrev = k > 0 ? view(k - 1) : null;
+    const maxOk = Math.max(1, ...v.ok.flat());
+    const tot = total(v);
+    const flat = v.fail.flat();
+    const rates = v.ok.flat().map((o, x) => o + flat[x] > 0 && o >= tot * 0.001 ? flat[x] / (o + flat[x]) : 0);
+    const maxRate = Math.max(0.01, ...rates);
+    const n = flows.months.length;
+    const totCell = (now, before, okSum, failSum) => st.color === 'fail' ? V2.fmtShare(V2.pay.rate(failSum, okSum))
+      : st.color === 'grow' ? (before == null ? '—' : V2.fmtPct(growth(now, before))) : fM(now);
+
+    const head = '<tr><th></th>' + v.cols.map(c => '<th scope="col">' + V2.esc(label(c)) + '</th>').join('') + '<th scope="col">Total</th></tr>';
+    const body = v.rows.map((r, i) => '<tr><th scope="row" class="row">' + V2.esc(label(r)) + '</th>' +
+      v.cols.map((c, j) => {
+        const s = cellStyle(v, vPrev, i, j, maxOk, maxRate);
+        const sel = st.sel && st.sel.i === i && st.sel.j === j;
+        return '<td><button type="button" class="pm-cell ' + s.cls + '" style="' + s.bg + '" data-i="' + i + '" data-j="' + j + '" data-keep aria-pressed="' + !!sel +
+          '" aria-label="' + V2.esc(r.name + ' para ' + c.name + ': ' + s.txt) + '">' + s.txt + '</button></td>';
+      }).join('') +
+      '<td class="pm-tot">' + totCell(rowSum(v, i, 'ok'), vPrev ? rowSum(vPrev, i, 'ok') : null, rowSum(v, i, 'ok'), rowSum(v, i, 'fail')) + '</td></tr>').join('');
+    const foot = '<tr><th scope="row" class="row">Total</th>' + v.cols.map((c, j) =>
+      '<td class="pm-tot">' + totCell(colSum(v, j, 'ok'), vPrev ? colSum(vPrev, j, 'ok') : null, colSum(v, j, 'ok'), colSum(v, j, 'fail')) + '</td>').join('') +
+      '<td class="pm-tot">' + totCell(tot, vPrev ? total(vPrev) : null, tot, flat.reduce((a, b) => a + b, 0)) + '</td></tr>';
+
+    const legend = st.color === 'vol' ? 'Cor mais forte = mais transações' : st.color === 'fail' ? 'Cor mais forte = mais falha · ' + V2.pay.FAIL_RULE
+      : 'Contra o mês anterior · azul = cresceu, laranja = caiu';
+    const apiTxt = st.api === 'all' ? '' : ' · ' + V2.pay.label(st.api);
+    const who = (st.r.length ? st.r.length + ' iniciadora(s) escolhida(s)' : st.size + ' maiores iniciadoras') + ' × ' +
+      (st.c.length ? st.c.length + ' detentora(s) escolhida(s)' : st.size + ' maiores detentoras');
+    document.getElementById('card-matrix').innerHTML =
+      V2.pay.head('Iniciadora × detentora em ' + V2.pay.monthName(v.m) + apiTxt, COLORS[st.color] + ' · transações por 30 dias · ' + who, 'matrix') +
+      '<div class="pm-time v2-noexport"><button type="button" class="v2-icon-btn" id="t-prev" aria-label="Mês anterior"' + (k === 0 ? ' disabled' : '') + '>‹</button>' +
+        '<div class="pm-months" role="group" aria-label="Mês">' + flows.months.map((m, x) =>
+          '<button type="button" data-tmonth="' + m + '" aria-pressed="' + (x === k) + '" aria-label="' + V2.pay.monthName(m) + '">' + V2.pay.mon(m) + '</button>').join('') + '</div>' +
+        '<button type="button" class="v2-icon-btn" id="t-next" aria-label="Próximo mês"' + (k === n - 1 ? ' disabled' : '') + '>›</button>' +
+        '<button type="button" class="v2-btn" id="t-play">' + (timer ? 'Pausar' : 'Reproduzir') + '</button></div>' +
+      '<div class="pm-scroll"><table class="pm-table"><thead>' + head + '</thead><tbody>' + body + foot + '</tbody></table></div>' +
+      '<div class="v2-legend"><span>Linhas: iniciadoras · colunas: detentoras · entre parênteses, quantas "Outras" soma</span><span>' + legend + '</span></div>' +
+      V2.pay.foot(V2.pay.RULE + ' · ' + V2.pay.MONTH_RULE + ' · as maiores pelas últimas 4 semanas');
+    renderCell(v, vPrev);
+    renderInsights(v);
+  }
+
+  function renderCell(v, vPrev) {
+    const el = document.getElementById('card-cell');
+    if (!st.sel || !v.rows[st.sel.i] || !v.cols[st.sel.j]) {
+      el.innerHTML = '<div class="v2-card-head"><div><h2>Par selecionado</h2><span class="v2-sub">Clique numa célula da matriz</span></div></div>' +
+        '<p class="v2-small v2-muted" style="margin:0">O detalhe mostra transações, falha, divisão por API e o peso do par na linha e na coluna.</p>';
+      return;
+    }
+    const { i, j } = st.sel, ok = v.ok[i][j], fl = v.fail[i][j];
+    const parts = V2.pay.APIS.map(a => apis().includes(a) ? flows.data[a][v.m].ok[i][j] : 0);
+    const before = vPrev ? vPrev.ok[i][j] : null;
+    const row = rowSum(v, i, 'ok'), col = colSum(v, j, 'ok');
+    const kv = (k, val) => '<div class="pm-kv"><span class="v2-muted">' + k + '</span><b>' + val + '</b></div>';
+    const present = V2.pay.APIS.filter((a, x) => parts[x] > 0);
+    el.innerHTML = '<div class="v2-card-head"><div><h2>' + V2.esc(v.rows[i].name) + ' → ' + V2.esc(v.cols[j].name) + '</h2><span class="v2-sub">' +
+      V2.pay.monthName(v.m) + ' · por 30 dias</span></div></div>' +
+      kv('Transações', fM(ok)) + kv('Falha', V2.pay.failCell(V2.pay.rate(fl, ok))) +
+      '<div class="pay-split" style="height:14px">' + V2.pay.APIS.map((a, x) => '<div style="width:' + (ok ? parts[x] / ok * 100 : 0).toFixed(1) +
+        '%;background:' + V2.pay.color(a) + '"></div>').join('') + '</div>' +
+      (present.length ? V2.pay.legend(false, '', present) : '') +
+      kv('Fatia na linha (' + V2.esc(v.rows[i].name) + ')', row ? V2.fmtShare(ok / row) : '—') +
+      kv('Fatia na coluna (' + V2.esc(v.cols[j].name) + ')', col ? V2.fmtShare(ok / col) : '—') +
+      kv('Vs mês anterior', before == null ? '—' : V2.fmtPct(growth(ok, before)));
+  }
+
+  function renderInsights(v) {
+    const v0 = view(0), tot = total(v), named = [];
+    v.rows.forEach((r, i) => v.cols.forEach((c, j) => {
+      if (r.uuid && c.uuid) named.push({ pair: r.name + ' → ' + c.name, ok: v.ok[i][j], fail: v.fail[i][j], first: v0.ok[i][j] });
+    }));
+    const out = [];
+    const big = named.slice().sort((a, b) => b.ok - a.ok)[0];
+    if (big && big.ok) out.push(big.pair + ' é o maior par: ' + fM(big.ok) + ' por 30 dias (' + V2.fmtShare(big.ok / tot) + ' do total).');
+    const risky = named.filter(x => x.ok >= tot * 0.01).map(x => Object.assign(x, { r: V2.pay.rate(x.fail, x.ok) }))
+      .filter(x => x.r != null).sort((a, b) => b.r - a.r)[0];
+    if (risky) out.push(risky.pair + ' tem a maior falha entre os pares com ao menos 1% do volume: ' + V2.fmtShare(risky.r) + '.');
+    if (mi() > 0) {
+      const grew = named.slice().sort((a, b) => (b.ok - b.first) - (a.ok - a.first))[0];
+      if (grew && grew.ok > grew.first) out.push(grew.pair + ' foi o par que mais cresceu desde ' + V2.pay.mon(flows.months[0]) + ': ' + fM(grew.first) + ' → ' + fM(grew.ok) + '.');
+    }
+    document.getElementById('card-insights').innerHTML = V2.pay.head('O que a matriz mostra', V2.pay.monthName(v.m) + (st.api === 'all' ? '' : ' · ' + V2.pay.label(st.api)), 'insights') +
+      (out.length ? '<ul class="pm-insights">' + out.map(t => '<li>' + V2.esc(t) + '</li>').join('') + '</ul>' : '<p class="v2-muted" style="margin:0">Sem transações neste mês.</p>') +
+      V2.pay.foot('Pares entre as linhas e colunas mostradas');
+  }
+
+  function stop() { if (timer) { clearInterval(timer); timer = null; } }
+  function go(k) {
+    st.month = flows.months[Math.max(0, Math.min(flows.months.length - 1, k))];
+    V2.pay.saveState(st);
+    renderFilterbar();
+    render();
+  }
+
+  async function load() {
+    const id = ++reqId;
+    const card = document.getElementById('card-matrix');
+    V2.setLoading(card, true);
+    try {
+      const q = new URLSearchParams({ size: st.size });
+      if (st.r.length) q.set('rows', st.r.join(','));
+      if (st.c.length) q.set('cols', st.c.join(','));
+      const f = await V2.fetchJSON('/api/v2/payments/flows?' + q);
+      if (id !== reqId) return;
+      flows = f;
+      if (V2.pay.unavailable(flows) || !flows.months.length) { card.innerHTML = V2.errorBox(V2.pay.UNAVAILABLE); return; }
+      if (!flows.months.includes(st.month)) st.month = flows.months[flows.months.length - 1];
+      V2.pay.saveState(st);
+      renderFilterbar();
+      render();
+    } catch (e) {
+      card.innerHTML = V2.errorBox(e.message);
+    } finally {
+      V2.setLoading(card, false);
+    }
+  }
+
+  const fb = document.getElementById('filterbar');
+  fb.addEventListener('click', ev => {
+    if (V2.pay.scopeClick(ev, sides(), st.month, (k, picks) => { st[k] = picks; st.sel = null; scope.warn = ''; renderFilterbar(); load(); })) return;
+    const seg = ev.target.closest('[data-seg] button');
+    if (seg) {
+      const k = seg.parentElement.dataset.seg;
+      st[k] = seg.dataset.v;
+      st.sel = null;
+      renderFilterbar();
+      if (k === 'size') load(); else if (flows) render();
+      return;
+    }
+    if (ev.target.closest('#f-export') && flows) {
+      const v = view(mi()), rows = [];
+      v.rows.forEach((r, i) => v.cols.forEach((c, j) => { if (v.ok[i][j] || v.fail[i][j]) rows.push({ r: label(r), c: label(c), ok: v.ok[i][j], fail: v.fail[i][j] }); }));
+      V2.exportCSV('pagamentos-matriz-' + v.m + '-' + st.api + '.csv', [
+        { label: 'Mês', value: () => v.m },
+        { label: 'Iniciadora', value: x => x.r },
+        { label: 'Detentora', value: x => x.c },
+        { label: 'Transações (30 dias)', value: x => Math.round(x.ok) },
+        { label: 'Falhas (30 dias)', value: x => Math.round(x.fail) },
+        { label: 'Falha', value: x => V2.pay.rate(x.fail, x.ok) },
+      ], rows);
+    }
+  });
+  fb.addEventListener('change', ev => {
+    if (ev.target.matches('[data-month-select]') && flows) { stop(); go(flows.months.indexOf(ev.target.value)); }
+  });
+
+  const main = document.querySelector('.v2-main');
+  main.addEventListener('click', ev => {
+    const cell = ev.target.closest('.pm-cell');
+    if (cell) {
+      const i = Number(cell.dataset.i), j = Number(cell.dataset.j);
+      st.sel = st.sel && st.sel.i === i && st.sel.j === j ? null : { i, j };
+      render();
+      return;
+    }
+    const tm = ev.target.closest('[data-tmonth]');
+    if (tm) { stop(); go(flows.months.indexOf(tm.dataset.tmonth)); return; }
+    if (ev.target.closest('#t-prev')) { stop(); go(mi() - 1); return; }
+    if (ev.target.closest('#t-next')) { stop(); go(mi() + 1); return; }
+    if (ev.target.closest('#t-play')) {
+      if (timer) { stop(); render(); return; }
+      if (mi() >= flows.months.length - 1) st.month = flows.months[0];
+      timer = setInterval(() => {
+        if (mi() >= flows.months.length - 1) { stop(); render(); return; }
+        go(mi() + 1);
+      }, 1200);
+      render();
+      return;
+    }
+    const b = ev.target.closest('[data-img]');
+    if (b) {
+      const card = document.getElementById(b.dataset.img === 'matrix' ? 'card-matrix' : 'card-insights');
+      V2.exportImage(card, { title: card.querySelector('h2').textContent, subtitle: 'Pagamentos · quem paga com quem',
+        note: V2.pay.RULE, filename: 'pagamentos-matriz-' + b.dataset.img + '.png' }).catch(e => alert(e.message));
+    }
+  });
+
+  V2.onThemeChange(() => { if (flows && flows.months.length) render(); });
+  V2.initShell('p-matriz').then(() => {
+    scope = V2.pay.readState(false);
+    Object.assign(st, { month: scope.month, r: scope.r, c: scope.c });
+    renderFilterbar();
+    load();
+  }).catch(e => { document.getElementById('card-matrix').innerHTML = V2.errorBox(e.message); });
+})();
+</script>
+</body>
+</html>

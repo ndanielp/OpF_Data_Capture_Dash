@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Como evolui? · Pagamentos · Open Finance 2.0</title>
+<script>try{document.documentElement.dataset.theme=localStorage.getItem('opf:v2:theme')||'light'}catch(e){document.documentElement.dataset.theme='light'}</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" crossorigin="anonymous">
+<link rel="stylesheet" href="/static/v2/v2.css">
+<script src="/static/v2/shell.js"></script>
+</head>
+<body>
+<header id="v2-header" class="v2-header"></header>
+<main class="v2-main">
+  <section class="v2-filterbar" id="filterbar" aria-label="Recorte da análise"></section>
+  <div class="v2-title">
+    <h1>Como evolui a iniciação de pagamentos?</h1>
+    <p id="subtitle">Por mês, normalizado para 30 dias. Leia de cima para baixo: quanto cresceu, quem puxou, como mudou o mix e se a qualidade acompanhou.</p>
+  </div>
+  <article class="v2-card" id="card-1"></article>
+  <article class="v2-card" id="card-2"></article>
+  <section class="v2-grid v2-grid-2">
+    <article class="v2-card" id="card-3"></article>
+    <article class="v2-card" id="card-4"></article>
+  </section>
+  <section class="pay-detail" id="jsr" aria-label="Detalhe da Jornada sem Redirecionamento"></section>
+</main>
+
+<script>
+(function () {
+  'use strict';
+  const st = { month: null, r: [], c: [], by: 'ini', from: null, to: null, jsr: false };
+  let flows = null, enr = null, scope = null, reqId = 0;
+
+  const fM = V2.fmtCompact;
+  const pc = x => Math.round(x * 100) + '%';
+  const p1 = x => x == null ? '—' : V2.fmtShare(x);
+  const sides = () => [{ key: 'r', label: 'Iniciadoras', role: 'ini', picks: st.r }, { key: 'c', label: 'Detentoras', role: 'det', picks: st.c }];
+
+  /** Soma de uma API no mês. Com instituições escolhidas num lado, a linha/coluna "Outras" daquele lado sai (FR-012). */
+  function sum(api, m, kind, only) {
+    const g = flows.data[api][m][kind], lastR = g.length - 1;
+    let s = 0;
+    for (let i = 0; i < g.length; i++) {
+      if (st.r.length && i === lastR) continue;
+      const lastC = g[i].length - 1;
+      for (let j = 0; j < g[i].length; j++) {
+        if (st.c.length && j === lastC) continue;
+        if (!only || only(i, j)) s += g[i][j];
+      }
+    }
+    return s;
+  }
+
+  function renderFilterbar() {
+    document.getElementById('filterbar').innerHTML =
+      '<div class="v2-fb-row"><div class="v2-fb-group">' + (flows ? V2.pay.monthSelect(st.month, false) : '') + '</div>' +
+        '<button type="button" class="v2-btn v2-fb-export" id="f-export">Exportar CSV</button></div>' +
+      '<div class="v2-fb-row"><div class="v2-fb-group">' + V2.pay.scope(sides()) + '</div></div>' +
+      '<div class="v2-small v2-muted">' + (st.r.length || st.c.length ? 'Os 4 passos consideram só as instituições escolhidas.' : 'Todo o ecossistema. Adicione instituições para analisar só elas.') +
+        (scope && scope.warn ? ' <span class="pay-warn">' + scope.warn + '</span>' : '') + '</div>';
+  }
+
+  function series() {
+    const M = flows.months;
+    const IP = M.map(m => sum('payments', m, 'ok')), PA = M.map(m => sum('automatic-payments', m, 'ok'));
+    const IPF = M.map(m => sum('payments', m, 'fail')), PAF = M.map(m => sum('automatic-payments', m, 'fail'));
+    return { M, IP, PA, T: IP.map((v, i) => v + PA[i]), FIP: IP.map((v, i) => V2.pay.rate(IPF[i], v)), FPA: PA.map((v, i) => V2.pay.rate(PAF[i], v)) };
+  }
+
+  function render() {
+    const s = series(), M = s.M, L = M.indexOf(st.month) >= 0 ? M.indexOf(st.month) : M.length - 1;
+    const sel = M[L], first = V2.pay.mon(M[0]), cur = V2.pay.mon(sel);
+    const pre = V2.pay.scopePhrase(st.r.concat(st.c));
+    const lead = t => pre ? pre + ': ' + t : t;   // o texto pode começar por nome próprio: não mexe na caixa
+    const empty = 'Sem transações em ' + V2.pay.monthName(sel) + ' no recorte escolhido.';
+    document.getElementById('subtitle').textContent = V2.pay.monthName(M[0]) + ' a ' + V2.pay.monthName(M[M.length - 1]) +
+      ', por mês e normalizado para 30 dias. Passe o mouse nas barras para ver os valores; clique para escolher o mês.';
+
+    // 1. Quanto cresceu?
+    const g = s.T[0] ? s.T[L] / s.T[0] - 1 : null;
+    const t1 = !s.T[L] ? empty : lead('De ' + first + ' a ' + cur + ', as transações ' + (g == null ? 'começaram' : g >= 0 ? 'cresceram ' + pc(g) : 'caíram ' + pc(-g)) +
+      ': de ' + fM(s.T[0]) + ' para ' + fM(s.T[L]) + ' por 30 dias. ' +
+      (s.PA[L] - s.PA[0] > s.IP[L] - s.IP[0] ? 'O Pagamento Automático respondeu pela maior parte da alta.' : 'A Iniciação de Pagamento respondeu pela maior parte da alta.'));
+    const sL = s.T[L] ? s.IP[L] / s.T[L] : 0;
+    const present = V2.pay.APIS.filter(a => (a === 'payments' ? s.IP : s.PA).some(v => v > 0));
+    document.getElementById('card-1').innerHTML = V2.pay.head('Quanto cresceu?', 'Transações por 30 dias · mês escolhido: ' + V2.pay.monthName(sel) +
+      (V2.pay.isPartial(sel) ? ' (parcial)' : ''), '1', 1) + V2.pay.take(t1) +
+      '<div class="pay-kpis"><div class="pay-kcol">' +
+        '<div><div class="v2-kpi-label">Transações em ' + cur + ' · 30 dias</div><div class="v2-kpi-value">' + fM(s.T[L]) + '</div><div class="v2-small v2-muted">' + first + ': ' + fM(s.T[0]) + '</div></div>' +
+        present.map(a => '<div><div class="v2-kpi-label"><span class="v2-dot" style="background:' + V2.pay.color(a) + '"></span> ' + V2.pay.label(a) + '</div>' +
+          '<div style="font-size:var(--text-metric);font-weight:700">' + fM(a === 'payments' ? s.IP[L] : s.PA[L]) + ' · ' + pc(a === 'payments' ? sL : 1 - sL) + '</div>' +
+          '<div class="v2-small v2-muted">falha ' + p1(a === 'payments' ? s.FIP[L] : s.FPA[L]) + '</div></div>').join('') +
+      '</div><div class="pay-scroll"><div>' + V2.pay.stackBars(M, s.IP, s.PA, { sel, fip: s.FIP, fpa: s.FPA }) + '</div></div></div>' +
+      V2.pay.legend(false, '<span>· ' + V2.pay.unitOf(Math.max(...s.T)) + '</span>', present) + V2.pay.foot(V2.pay.RULE + ' · ' + V2.pay.MONTH_RULE);
+
+    // 2. Quem puxou? (de / até)
+    const fi = M.indexOf(st.from) >= 0 ? M.indexOf(st.from) : 0, ti = M.indexOf(st.to) >= 0 ? M.indexOf(st.to) : M.length - 1;
+    const a0 = Math.min(fi, ti), a1 = Math.max(fi, ti);
+    const list = st.by === 'ini' ? flows.rows : flows.cols;
+    const picked = st.by === 'ini' ? st.r.length : st.c.length;
+    const deltas = list.map((x, k) => {
+      if (picked && k === list.length - 1) return null;
+      const only = st.by === 'ini' ? (i => i === k) : ((i, j) => j === k);
+      const tot = m => sum('payments', m, 'ok', only) + sum('automatic-payments', m, 'ok', only);
+      return { n: x.name + (x.others_count ? ' (' + x.others_count + ')' : ''), d: tot(M[a1]) - tot(M[a0]) };
+    }).filter(Boolean).sort((a, b) => b.d - a.d);
+    const maxD = Math.max(1, ...deltas.map(x => Math.abs(x.d)));
+    const totD = s.T[a1] - s.T[a0], top = deltas[0], worst = deltas[deltas.length - 1];
+    const fromTxt = V2.pay.mon(M[a0]), toTxt = V2.pay.mon(M[a1]);
+    const t2 = top && totD > 0 && top.d > 0
+      ? lead(top.n + ' respondeu por ' + pc(top.d / totD) + ' do crescimento de ' + fromTxt + ' a ' + toTxt + ' (+' + fM(top.d) + ').' +
+        (worst && worst.d < 0 ? ' Quem mais perdeu: ' + worst.n + ' (−' + fM(-worst.d) + ').' : ''))
+      : 'Sem crescimento de ' + fromTxt + ' a ' + toTxt + ' no recorte escolhido.';
+    const opt = (v, cur2) => M.map(m => '<option value="' + m + '"' + (m === cur2 ? ' selected' : '') + '>' + V2.pay.monthName(m) + '</option>').join('');
+    document.getElementById('card-2').innerHTML = V2.pay.head('Quem puxou o crescimento?', 'Variação de transações por 30 dias de ' + fromTxt + ' a ' + toTxt, '2', 2) +
+      '<div class="pay-compare v2-noexport">' + V2.seg('by', { ini: 'por iniciadora', det: 'por detentora' }, st.by) +
+        '<label class="v2-field"><span class="v2-label">De</span><select class="v2-select" data-cmp="from">' + opt(0, M[a0]) + '</select></label>' +
+        '<label class="v2-field"><span class="v2-label">Até</span><select class="v2-select" data-cmp="to">' + opt(0, M[a1]) + '</select></label></div>' +
+      V2.pay.take(t2) +
+      deltas.map(x => '<div class="pay-div"><b>' + V2.esc(x.n) + '</b>' +
+        '<div class="neg"><div style="width:' + (x.d < 0 ? -x.d / maxD * 100 : 0).toFixed(1) + '%;background:var(--down)"></div></div>' +
+        '<div class="pos"><div style="width:' + (x.d > 0 ? x.d / maxD * 100 : 0).toFixed(1) + '%;background:var(--up)"></div></div>' +
+        '<span class="v2-r"><b>' + (x.d >= 0 ? '+' : '−') + fM(Math.abs(x.d)) + '</b></span></div>').join('') +
+      V2.pay.foot('À esquerda, quem perdeu; à direita, quem ganhou · ' + V2.pay.MONTH_RULE);
+
+    // 3. Como mudou o mix?
+    const s0 = s.T[0] ? s.IP[0] / s.T[0] : 0;
+    let pk = 0; s.T.forEach((t, i) => { if (t && s.IP[i] / t > (s.T[pk] ? s.IP[pk] / s.T[pk] : 0)) pk = i; });
+    const t3 = !s.T[L] ? empty : lead('A Iniciação de Pagamento foi de ' + pc(s0) + ' em ' + first + ' para ' + pc(sL) + ' em ' + cur + ' (' + V2.fmtPp((sL - s0) * 100) + '), com pico de ' +
+      pc(s.T[pk] ? s.IP[pk] / s.T[pk] : 0) + ' em ' + V2.pay.mon(M[pk]) + '.');
+    document.getElementById('card-3').innerHTML = V2.pay.head('Como mudou o mix?', '% da Iniciação de Pagamento no total do mês', '3', 3) + V2.pay.take(t3) +
+      V2.pay.shareRows(M, s.IP, s.PA, sel) + V2.pay.legend(false, '', present) + V2.pay.foot(V2.pay.RULE);
+
+    // 4. A qualidade acompanhou?
+    const fa0 = s.FPA[0], faL = s.FPA[L];
+    const t4 = !s.T[L] ? empty : lead((s.PA.some(v => v) ? 'Falha do Pagamento Automático: ' + p1(fa0) + ' em ' + first + ' → ' + p1(faL) + ' em ' + cur + '. ' : '') +
+      (s.IP.some(v => v) ? 'Iniciação de Pagamento: ' + p1(s.FIP[0]) + ' → ' + p1(s.FIP[L]) + '.' : '') +
+      (faL != null && fa0 != null && faL - fa0 > 0.1 ? ' O volume cresceu, mas a falha do Automático cresceu junto.' : ''));
+    const lines = [];
+    if (present.includes('automatic-payments')) lines.push({ values: s.FPA, color: V2.pay.color('automatic-payments', true), label: V2.pay.label('automatic-payments') });
+    if (present.includes('payments')) lines.push({ values: s.FIP, color: V2.pay.color('payments', true), label: V2.pay.label('payments') });
+    document.getElementById('card-4').innerHTML = V2.pay.head('A qualidade acompanhou?', 'Taxa de falha na criação, por mês', '4', 4) + V2.pay.take(t4) +
+      V2.pay.lines(M, lines, sel) + V2.pay.legend(true, present.includes('automatic-payments') ? '<span>· Automático inclui novas tentativas</span>' : '', present) +
+      V2.pay.foot(V2.pay.FAIL_RULE);
+  }
+
+  function renderJsr() {
+    const el = document.getElementById('jsr');
+    if (!enr || V2.pay.unavailable(enr)) { el.innerHTML = ''; return; }
+    const mo = enr.monthly.filter(m => m.conversion != null);
+    const pick = mo.find(m => m.month === st.month) || mo[mo.length - 1], a = mo[0];
+    el.innerHTML = '<div class="pay-detail-head"><div><div class="v2-label" style="font-weight:600">Detalhe · só Jornada sem Redirecionamento (JSR)</div>' +
+      '<span>Conversão do vínculo de conta: <b>' + (pick ? V2.fmtShare(pick.conversion) : '—') + '</b> em ' + (pick ? V2.pay.mon(pick.month) : '—') +
+      (a && a !== pick ? ' (' + V2.fmtShare(a.conversion) + ' em ' + V2.pay.mon(a.month) + ')' : '') + ' · ecossistema, não segue o recorte acima</span></div>' +
+      '<button type="button" class="v2-btn" id="jsr-toggle" aria-expanded="' + st.jsr + '">' + (st.jsr ? 'Ocultar funil' : 'Ver funil do vínculo') + '</button></div>' +
+      (st.jsr ? '<div class="pay-detail-body">' + V2.pay.funnel(enr.steps) +
+        '<div class="v2-small v2-muted" style="display:flex;flex-direction:column;gap:var(--sp-2)"><span>Vínculo de conta com biometria (FIDO2), últimas 4 semanas, por 30 dias. ' +
+        'Pagamentos com redirecionamento não entram. A autorização no detentor não gera chamada: é inferida pelo pedido de parâmetros FIDO2.</span>' +
+        '<span>Vínculos encerrados (revogados ou rejeitados): <b>' + fM(enr.ended) + '</b>.</span></div></div>' : '');
+  }
+
+  function save() { V2.pay.saveState(st); }
+
+  async function load() {
+    const id = ++reqId;
+    const cards = ['card-1', 'card-2', 'card-3', 'card-4'].map(i => document.getElementById(i));
+    cards.forEach(c => V2.setLoading(c, true));
+    try {
+      const q = new URLSearchParams({ size: 8 });
+      if (st.r.length) q.set('rows', st.r.join(','));
+      if (st.c.length) q.set('cols', st.c.join(','));
+      const [f, e] = await Promise.all([V2.fetchJSON('/api/v2/payments/flows?' + q), enr ? Promise.resolve(enr) : V2.fetchJSON('/api/v2/payments/enrollment')]);
+      if (id !== reqId) return;
+      flows = f; enr = e;
+      if (V2.pay.unavailable(flows)) { cards[0].innerHTML = V2.errorBox(V2.pay.UNAVAILABLE); return; }
+      if (!flows.months.includes(st.month)) st.month = flows.months[flows.months.length - 1];
+      save();
+      renderFilterbar();
+      render();
+      renderJsr();
+    } catch (err) {
+      cards[0].innerHTML = V2.errorBox(err.message);
+    } finally {
+      cards.forEach(c => V2.setLoading(c, false));
+    }
+  }
+
+  const fb = document.getElementById('filterbar');
+  fb.addEventListener('click', ev => {
+    if (V2.pay.scopeClick(ev, sides(), st.month, (k, picks) => { st[k] = picks; scope.warn = ''; renderFilterbar(); load(); })) return;
+    if (ev.target.closest('#f-export') && flows) {
+      const s = series();
+      V2.exportCSV('pagamentos-evolucao.csv', [
+        { label: 'Mês', value: i => s.M[i] },
+        { label: 'Iniciação de Pagamento (30 dias)', value: i => Math.round(s.IP[i]) },
+        { label: 'Pagamento Automático (30 dias)', value: i => Math.round(s.PA[i]) },
+        { label: 'Total (30 dias)', value: i => Math.round(s.T[i]) },
+        { label: 'Fatia Iniciação', value: i => s.T[i] ? s.IP[i] / s.T[i] : null },
+        { label: 'Falha Iniciação', value: i => s.FIP[i] },
+        { label: 'Falha Automático', value: i => s.FPA[i] },
+      ], s.M.map((_, i) => i));
+    }
+  });
+  fb.addEventListener('change', ev => {
+    if (ev.target.matches('[data-month-select]')) { st.month = ev.target.value; save(); render(); renderJsr(); }
+  });
+
+  const main = document.querySelector('.v2-main');
+  main.addEventListener('click', ev => {
+    const bar = ev.target.closest('[data-month]');
+    if (bar) { st.month = bar.dataset.month; save(); renderFilterbar(); render(); renderJsr(); return; }
+    const seg = ev.target.closest('[data-seg="by"] button');
+    if (seg) { st.by = seg.dataset.v; render(); return; }
+    if (ev.target.closest('#jsr-toggle')) { st.jsr = !st.jsr; renderJsr(); return; }
+    const b = ev.target.closest('[data-img]');
+    if (b) {
+      const card = document.getElementById('card-' + b.dataset.img);
+      V2.exportImage(card, { title: card.querySelector('h2').textContent, subtitle: 'Pagamentos · como evolui',
+        note: card.querySelector('.pay-take').textContent, filename: 'pagamentos-evolucao-' + b.dataset.img + '.png' }).catch(e => alert(e.message));
+    }
+  });
+  main.addEventListener('change', ev => {
+    const c = ev.target.closest('[data-cmp]');
+    if (c) { st[c.dataset.cmp] = c.value; render(); }
+  });
+
+  V2.onThemeChange(() => { if (flows && !V2.pay.unavailable(flows)) { render(); renderJsr(); } });
+  V2.initShell('p-evolucao').then(() => {
+    scope = V2.pay.readState(false);
+    Object.assign(st, { month: scope.month, r: scope.r, c: scope.c });
+    renderFilterbar();
+    load();
+  }).catch(e => { document.getElementById('card-1').innerHTML = V2.errorBox(e.message); });
+})();
+</script>
+</body>
+</html>

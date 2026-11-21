@@ -321,6 +321,24 @@ def open_db(path: Path) -> sqlite3.Connection:
         )
     """)
 
+    # Tema Pagamentos do dashboard (feature 018): só os endpoints que o painel lê, por
+    # semana × iniciadora × detentora × status. Reconstruída por refresh_payment_weekly.
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS payment_weekly (
+            date              TEXT    NOT NULL,
+            receptor_uuid     TEXT    NOT NULL,
+            receptor          TEXT    NOT NULL DEFAULT '',
+            transmitter_uuid  TEXT    NOT NULL,
+            transmitter       TEXT    NOT NULL DEFAULT '',
+            api               TEXT    NOT NULL,
+            endpoint_id       INTEGER NOT NULL,
+            status            INTEGER NOT NULL,
+            total             INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (date, receptor_uuid, transmitter_uuid, endpoint_id, status)
+        )
+    """)
+    con.execute("CREATE INDEX IF NOT EXISTS idx_payment_weekly_ep_date ON payment_weekly(endpoint_id, date)")
+
     # Consentimentos ativos por receptor × transmissor (granularidade semanal).
     # PK composta garante upsert seguro por INSERT OR REPLACE.
     con.execute("""
@@ -589,6 +607,30 @@ def refresh_api_endpoint_weekly(con: sqlite3.Connection) -> None:
                ON e.date = a.date AND e.receptor_uuid = a.receptor_uuid AND e.api = a.api
         WHERE a.total - COALESCE(e.total, 0) > 0;
     """)
+
+
+# Criar iniciação (65, 129), consultas (66, 130) e etapas do vínculo de conta (133, 135, 136, 137, 139).
+PAYMENT_WEEKLY_ENDPOINTS: tuple[int, ...] = (65, 66, 129, 130, 133, 135, 136, 137, 139)
+
+
+def refresh_payment_weekly(con: sqlite3.Connection) -> None:
+    """Recalcula payment_weekly inteira a partir de payment_api_requests (feature 018).
+
+    Linhas sem detentora ficam de fora: seriam o total da API somado de novo aos pares.
+    Chamada no fim da coleta (run e run-pi) e em compute_signals.py.
+    """
+    ph = ",".join("?" * len(PAYMENT_WEEKLY_ENDPOINTS))
+    with con:
+        con.execute("DELETE FROM payment_weekly")
+        con.execute(f"""
+            INSERT INTO payment_weekly
+                (date, receptor_uuid, receptor, transmitter_uuid, transmitter, api, endpoint_id, status, total)
+            SELECT date, receptor_uuid, MAX(receptor), transmitter_uuid, MAX(transmitter), MAX(api),
+                   endpoint_id, status, SUM(total)
+            FROM payment_api_requests
+            WHERE endpoint_id IN ({ph}) AND transmitter_uuid <> '' AND receptor_uuid <> ''
+            GROUP BY date, receptor_uuid, transmitter_uuid, endpoint_id, status
+        """, PAYMENT_WEEKLY_ENDPOINTS)
 
 
 def upsert_consents(con: sqlite3.Connection, records: list[dict], fetched_at: str) -> int:
